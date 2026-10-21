@@ -1,18 +1,33 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
 
 	import MockSidebar from '$lib/components/chat/MockSidebar.svelte';
-	import { loadQaChats, type QaChat } from '$lib/data/qaConversations';
+	import type { FolderFormValue } from '$lib/components/chat/FolderModal.svelte';
+	import { loadQaChats, saveQaChats, type QaChat } from '$lib/data/qaConversations';
+	import { collectFolderTreeIds, createQaFolder, loadQaFolders, saveQaFolders, wouldCreateCycle, type QaFolder } from '$lib/data/qaFolders';
+	import { loadUserSettings } from '$lib/data/userSettings';
 
 	let { children } = $props();
 
 	let sidebarOpen = $state(true);
 	let modelId = $state($page.url.searchParams.get('model') ?? '');
-	let chats = $state<{ id: string; title: string; updatedAt: number }[]>([]);
+	let chats = $state<{ id: string; title: string; updatedAt: number; folderId?: string | null }[]>([]);
 	let searchChats = $state<QaChat[]>([]);
+	let folders = $state<QaFolder[]>([]);
+	let selectedFolderId = $state<string | null>(null);
 	let activeChatId = $state<string | null>($page.url.searchParams.get('chat'));
+	const userSettings = $state(loadUserSettings());
+
+	const refreshSidebar = () => {
+		const stored = loadQaChats();
+		searchChats = stored.chats;
+		chats = stored.chats.filter((chat) => !chat.archived).map(({ id, title, updatedAt, folderId }) => ({ id, title, updatedAt, folderId }));
+		folders = loadQaFolders();
+		activeChatId = $page.url.searchParams.get('chat') ?? stored.activeId;
+	};
+
+	afterNavigate(refreshSidebar);
 
 	const tabs = [
 		{ href: '/workspace/models', label: '模型' },
@@ -37,19 +52,6 @@
 
 	const isActiveTab = (href: string) => $page.url.pathname.startsWith(href);
 
-	onMount(() => {
-		const stored = loadQaChats();
-		searchChats = stored.chats;
-		chats = stored.chats.map((chat) => ({
-			id: chat.id,
-			title: chat.title,
-			updatedAt: chat.updatedAt
-		}));
-		if (!activeChatId) {
-			activeChatId = stored.activeId;
-		}
-	});
-
 	const goQa = (opts?: { newChat?: boolean; chatId?: string }) => {
 		const params = new URLSearchParams();
 		if (modelId) params.set('model', modelId);
@@ -59,6 +61,51 @@
 		}
 		const search = params.toString();
 		void goto(search ? `/qa?${search}` : '/qa');
+	};
+
+	const persistFolders = (next: QaFolder[]) => {
+		folders = next;
+		saveQaFolders(next);
+	};
+
+	const createFolder = (value: FolderFormValue, parentId: string | null = null) => {
+		const folder = createQaFolder(value.name, parentId, { systemPrompt: value.systemPrompt, backgroundImageUrl: value.backgroundImageUrl, knowledgeItems: value.knowledgeItems });
+		persistFolders([folder, ...folders]);
+		selectedFolderId = folder.id;
+	};
+
+	const updateFolder = (folderId: string, value: FolderFormValue) => persistFolders(folders.map((folder) => folder.id === folderId ? { ...folder, name: value.name, systemPrompt: value.systemPrompt, backgroundImageUrl: value.backgroundImageUrl, knowledgeItems: value.knowledgeItems, updatedAt: Date.now() } : folder));
+
+	const deleteFolder = (folderId: string, deleteContents: boolean) => {
+		const ids = collectFolderTreeIds(folders, folderId);
+		persistFolders(folders.filter((folder) => !ids.has(folder.id)));
+		const stored = loadQaChats();
+		const updated = deleteContents ? stored.chats.filter((chat) => !chat.folderId || !ids.has(chat.folderId)) : stored.chats.map((chat) => chat.folderId && ids.has(chat.folderId) ? { ...chat, folderId: null } : chat);
+		saveQaChats(updated, stored.activeId);
+		refreshSidebar();
+		if (selectedFolderId && ids.has(selectedFolderId)) selectedFolderId = null;
+	};
+
+	const moveChat = (chatId: string, folderId: string | null) => {
+		const stored = loadQaChats();
+		saveQaChats(stored.chats.map((chat) => chat.id === chatId ? { ...chat, folderId, updatedAt: Date.now() } : chat), stored.activeId);
+		refreshSidebar();
+	};
+
+	const moveFolder = (folderId: string, parentId: string | null) => {
+		if (!wouldCreateCycle(folders, folderId, parentId)) persistFolders(folders.map((folder) => folder.id === folderId ? { ...folder, parentId, updatedAt: Date.now() } : folder));
+	};
+
+	const exportFolder = (folderId: string) => {
+		const ids = collectFolderTreeIds(folders, folderId);
+		const folder = folders.find((item) => item.id === folderId);
+		const chats = loadQaChats().chats.filter((chat) => chat.folderId && ids.has(chat.folderId));
+		const url = URL.createObjectURL(new Blob([JSON.stringify({ folder, folders: folders.filter((item) => ids.has(item.id)), chats }, null, 2)], { type: 'application/json' }));
+		const anchor = document.createElement('a');
+		anchor.href = url;
+		anchor.download = `folder-${folder?.name || 'export'}-${Date.now()}.json`;
+		anchor.click();
+		URL.revokeObjectURL(url);
 	};
 </script>
 
@@ -70,15 +117,35 @@
 	{#if sidebarOpen}
 		<MockSidebar
 			{activeChatId}
+			{selectedFolderId}
 			{chats}
 			{searchChats}
+			{folders}
 			{modelId}
+			userName={userSettings.displayName}
+			avatarText={userSettings.avatarText}
+			statusEmoji={userSettings.statusEmoji}
+			statusMessage={userSettings.statusMessage}
 			activeNav="workspace"
 			onHome={() => goto('/agent-select')}
 			onNewChat={() => goQa({ newChat: true })}
-			onSelectChat={(chatId) => goQa({ chatId })}
+			onSelectChat={(chatId) => { activeChatId = chatId; selectedFolderId = searchChats.find((chat) => chat.id === chatId)?.folderId ?? null; goQa({ chatId }); }}
+			onSelectFolder={(folderId) => selectedFolderId = folderId}
 			onOpenNotes={() => goto(withParams('/notebook', { from: 'qa' }))}
 			onOpenWorkspace={() => goto(withParams('/workspace/models'))}
+			onSettings={() => goto('/qa?sidebar-action=settings')}
+			onArchivedChats={() => goto('/qa?sidebar-action=archived')}
+			onPlayground={() => goto('/playground')}
+			onAdmin={() => goto('/admin/users/overview')}
+			onShortcuts={() => goto('/qa?sidebar-action=shortcuts')}
+			onSignOut={() => goto('/welcome')}
+			onCreateFolder={createFolder}
+			onUpdateFolder={updateFolder}
+			onDeleteFolder={deleteFolder}
+			onToggleFolderExpanded={(folderId) => persistFolders(folders.map((folder) => folder.id === folderId ? { ...folder, expanded: !(folder.expanded ?? true) } : folder))}
+			onMoveChatToFolder={moveChat}
+			onMoveFolder={moveFolder}
+			onExportFolder={exportFolder}
 			onClose={() => {
 				sidebarOpen = false;
 			}}

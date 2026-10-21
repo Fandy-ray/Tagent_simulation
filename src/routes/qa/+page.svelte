@@ -369,6 +369,10 @@
 
 	onMount(() => {
 		userSettings = loadUserSettings();
+		const sidebarAction = $page.url.searchParams.get('sidebar-action');
+		settingsOpen = sidebarAction === 'settings';
+		archivedOpen = sidebarAction === 'archived';
+		shortcutsOpen = sidebarAction === 'shortcuts';
 		folders = loadQaFolders();
 		applyTheme(userSettings.theme);
 		applyTextScale(userSettings.textScale);

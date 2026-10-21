@@ -2,7 +2,7 @@
 	import PlusAlt from '$lib/components/icons/PlusAlt.svelte';
 	import ComponentIcon from '$lib/components/icons/Component.svelte';
 	import VoiceIcon from '$lib/components/icons/Voice.svelte';
-	import { listPrompts } from '$lib/data/workspaceResources';
+	import { listPrompts, listSkills, listTools } from '$lib/data/workspaceResources';
 	import InputMenu, { type InputAttachment } from './MessageInput/InputMenu.svelte';
 	import IntegrationsMenu from './MessageInput/IntegrationsMenu.svelte';
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
@@ -71,9 +71,43 @@
 	let imageGenerationEnabled = $state(false);
 	let codeInterpreterEnabled = $state(false);
 	let selectedToolIds = $state<string[]>([]);
+	let selectedFilterIds = $state<string[]>([]);
 	let recording = $state(false);
 	let callOpen = $state(false);
 	let commandIndex = $state(0);
+	let valvesTarget = $state<{ type: 'tool' | 'filter'; id: string; name: string } | null>(null);
+	let valvesDraft = $state('');
+	let valvesSaved = $state('');
+
+	const tools = listTools().map((tool) => ({ id: tool.id, name: tool.name, description: tool.description }));
+	const filters = listSkills().map((skill) => ({ id: skill.id, name: skill.name, description: skill.description }));
+	const valvesStorageKey = (target: { type: string; id: string }) => `tagentnote.valves.${target.type}.${target.id}`;
+	const defaultValves = (target: { type: string; id: string }) =>
+		JSON.stringify(
+			target.type === 'tool'
+				? { priority: 0, timeout: 30, allow_network: false }
+				: { priority: 0, enabled: true, model: '' },
+			null,
+			2
+		);
+
+	const openValves = (target: { type: 'tool' | 'filter'; id: string; name: string }) => {
+		valvesTarget = target;
+		valvesDraft = localStorage.getItem(valvesStorageKey(target)) ?? defaultValves(target);
+		valvesSaved = '';
+	};
+
+	const saveValves = () => {
+		if (!valvesTarget) return;
+		try {
+			const parsed: unknown = JSON.parse(valvesDraft || '{}');
+			if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('invalid');
+			localStorage.setItem(valvesStorageKey(valvesTarget), JSON.stringify(parsed, null, 2));
+			valvesSaved = 'Valves 已保存（本地 mock）';
+		} catch {
+			valvesSaved = '请输入有效的 JSON 对象';
+		}
+	};
 
 	const canSendWhileGenerating = $derived(enableMessageQueue && generating);
 	const showVoiceMode = $derived(!prompt.trim() && attachments.length === 0 && !generating);
@@ -137,6 +171,7 @@
 		if (imageGenerationEnabled) parts.push('[图像生成]');
 		if (codeInterpreterEnabled) parts.push('[代码解释器]');
 		if (selectedToolIds.length) parts.push(`[工具:${selectedToolIds.join(',')}]`);
+		if (selectedFilterIds.length) parts.push(`[过滤器:${selectedFilterIds.join(',')}]`);
 		if (attachments.length) {
 			parts.push(
 				`[附件:${attachments.map((a) => a.name).join(' | ')}]`
@@ -319,7 +354,6 @@
 		textareaElement?.focus();
 	};
 
-	export { focus };
 </script>
 
 <div
@@ -375,7 +409,7 @@
 			</div>
 		{/if}
 
-		{#if webSearchEnabled || imageGenerationEnabled || codeInterpreterEnabled || selectedToolIds.length}
+		{#if webSearchEnabled || imageGenerationEnabled || codeInterpreterEnabled || selectedToolIds.length || selectedFilterIds.length}
 			<div class="flex flex-wrap gap-1.5 px-2.5 pt-2">
 				{#if webSearchEnabled}
 					<span class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] text-sky-300">联网搜索</span>
@@ -386,11 +420,18 @@
 				{#if codeInterpreterEnabled}
 					<span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300">代码解释器</span>
 				{/if}
-				{#if selectedToolIds.length}
-					<span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300">
-						工具 {selectedToolIds.length}
+				{#each selectedFilterIds as filterId (filterId)}
+					<span class="inline-flex items-center gap-1 rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-300">
+						<span class="max-w-40 truncate">{filters.find((item) => item.id === filterId)?.name ?? filterId}</span>
+						<button type="button" class="shrink-0 text-fuchsia-400/70 hover:text-fuchsia-200" aria-label="移除该过滤器" onclick={() => (selectedFilterIds = selectedFilterIds.filter((id) => id !== filterId))}>×</button>
 					</span>
-				{/if}
+				{/each}
+				{#each selectedToolIds as toolId (toolId)}
+					<span class="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300">
+						<span class="max-w-40 truncate">{tools.find((item) => item.id === toolId)?.name ?? toolId}</span>
+						<button type="button" class="shrink-0 text-emerald-400/70 hover:text-emerald-200" aria-label="移除该工具" onclick={() => (selectedToolIds = selectedToolIds.filter((id) => id !== toolId))}>×</button>
+					</span>
+				{/each}
 			</div>
 		{/if}
 
@@ -461,6 +502,10 @@
 					bind:imageGenerationEnabled
 					bind:codeInterpreterEnabled
 					bind:selectedToolIds
+					bind:selectedFilterIds
+					{tools}
+					{filters}
+					onShowValves={openValves}
 					onClose={focus}
 				>
 					<ComponentIcon className="size-[18px]" strokeWidth="1.5" />
@@ -564,3 +609,34 @@
 		onSubmit(content);
 	}}
 />
+
+{#if valvesTarget}
+	<div
+		class="fixed inset-0 z-[130] flex items-center justify-center bg-black/60 p-4"
+		role="presentation"
+		onclick={(event) => {
+			if (event.target === event.currentTarget) valvesTarget = null;
+		}}
+	>
+		<div class="w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-900 p-5 text-gray-100 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="input-valves-title" tabindex="-1">
+			<div class="flex items-start justify-between gap-3">
+				<div>
+					<h2 id="input-valves-title" class="text-lg font-semibold">Valves 设置</h2>
+					<p class="mt-1 text-xs text-gray-400">{valvesTarget.name} · {valvesTarget.type === 'tool' ? '工具' : '过滤器'}配置，仅保存在本地</p>
+				</div>
+				<button class="rounded-lg p-1 text-gray-400 hover:bg-gray-800 hover:text-white" onclick={() => (valvesTarget = null)} aria-label="关闭">×</button>
+			</div>
+			<textarea
+				class="mt-4 min-h-48 w-full resize-y rounded-lg border border-gray-700 bg-[#111827] p-3 font-mono text-xs text-gray-100 outline-none focus:border-blue-500"
+				bind:value={valvesDraft}
+				spellcheck="false"
+				aria-label="Valves JSON"
+			></textarea>
+			{#if valvesSaved}<p class="mt-2 text-xs {valvesSaved.includes('无效') ? 'text-red-400' : 'text-emerald-400'}" role="status">{valvesSaved}</p>{/if}
+			<div class="mt-4 flex justify-end gap-2">
+				<button type="button" class="rounded-lg px-3 py-2 text-sm text-gray-300 hover:bg-gray-800" onclick={() => { if (!valvesTarget) return; valvesDraft = defaultValves(valvesTarget); valvesSaved = ''; }}>恢复默认</button>
+				<button type="button" class="rounded-lg bg-white px-4 py-2 text-sm font-medium text-gray-900 hover:bg-gray-200" onclick={saveValves}>保存 Valves</button>
+			</div>
+		</div>
+	</div>
+{/if}
