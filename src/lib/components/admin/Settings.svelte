@@ -6,6 +6,7 @@
 	import AdminAgentModels from '$lib/components/admin/AgentModels.svelte';
 	import AdminEvaluationSettings from '$lib/components/admin/EvaluationSettings.svelte';
 	import AdminIntegrations from '$lib/components/admin/Integrations.svelte';
+	import AdminDocumentsSettings from '$lib/components/admin/DocumentsSettings.svelte';
 
 	type SettingItem = { key: string; label: string; description: string; kind: 'toggle' | 'text' | 'number' | 'select' | 'textarea'; options?: string[]; value: boolean | string | number; section?: string };
 	type SettingTab = { id: string; title: string; keywords: string[]; items: SettingItem[] };
@@ -313,6 +314,8 @@
 					<AdminEvaluationSettings />
 				{:else if selectedTab === 'integrations'}
 					<AdminIntegrations />
+				{:else if selectedTab === 'documents'}
+					<AdminDocumentsSettings />
 				{:else}
 					<header class="sticky top-0 z-10 flex items-center justify-between bg-white/95 py-2 backdrop-blur dark:bg-gray-900/95">
 						<div><h1 class="text-lg font-medium">{currentTab.title}</h1>{#if selectedTab !== 'general'}<p class="mt-0.5 text-xs text-gray-500">管理平台的{currentTab.title}相关配置</p>{/if}</div>
