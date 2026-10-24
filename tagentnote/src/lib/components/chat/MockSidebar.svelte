@@ -264,7 +264,7 @@
 </script>
 
 <aside
-	class="flex h-screen w-[260px] shrink-0 flex-col overflow-hidden border-r border-white/[0.04] bg-gray-900 text-sm text-gray-200 select-none"
+	class="fixed inset-y-0 left-0 z-40 flex h-screen w-[260px] shrink-0 flex-col overflow-hidden border-r border-white/[0.04] bg-gray-900 text-sm text-gray-200 shadow-2xl shadow-black/50 select-none md:static md:z-auto md:shadow-none"
 >
 	<header class="flex h-12 shrink-0 items-center gap-2 px-2">
 		<button

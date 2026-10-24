@@ -40,6 +40,7 @@
 	import MockNavbar from '$lib/components/chat/MockNavbar.svelte';
 	import MockPlaceholder from '$lib/components/chat/MockPlaceholder.svelte';
 	import MockSidebar from '$lib/components/chat/MockSidebar.svelte';
+	import { isNarrowScreen } from '$lib/utils/viewport';
 	import { buildQaCitations, enrichCitationsWithPages } from '$lib/data/citations';
 	import {
 		countCharacters,
@@ -378,7 +379,15 @@
 		}
 	};
 
+	/** 窄屏上侧栏盖在对话上：选完对话、新建对话之后就收起来，别让它一直挡着 */
+	const closeSidebarIfNarrow = () => {
+		if (isNarrowScreen()) {
+			sidebarOpen = false;
+		}
+	};
+
 	onMount(() => {
+		closeSidebarIfNarrow();
 		userSettings = loadUserSettings();
 		folders = loadQaFolders();
 		applyTheme(userSettings.theme);
@@ -614,6 +623,31 @@
 		if (messagesContainer) {
 			messagesContainer.scrollTop = messagesContainer.scrollHeight;
 		}
+	};
+
+	/**
+	 * 整块出来的卡片（出题、批改）：尽量滚到底，但不能把卡片的开头滚出可视区。
+	 * 一律滚到底的话，长卡片的标题和头像会落到可视区上方，紧贴着论文任务栏，
+	 * 看着像被任务栏挡住了上沿。逐字输出的回答不走这里，照旧跟着往下滚。
+	 */
+	const revealMessageStart = async (messageId: string) => {
+		await tick();
+		if (!messagesContainer) {
+			return;
+		}
+		const bottom = messagesContainer.scrollHeight - messagesContainer.clientHeight;
+		const el = messagesContainer.querySelector<HTMLElement>(
+			`[data-message-id="${CSS.escape(messageId)}"]`
+		);
+		if (!el) {
+			messagesContainer.scrollTop = bottom;
+			return;
+		}
+		const top =
+			el.getBoundingClientRect().top -
+			messagesContainer.getBoundingClientRect().top +
+			messagesContainer.scrollTop;
+		messagesContainer.scrollTop = Math.max(0, Math.min(bottom, top - 12));
 	};
 
 	const finishStreamingMessages = () => {
@@ -1844,7 +1878,7 @@
 		});
 		generating = false;
 		commitActive();
-		void scrollToBottom();
+		void revealMessageStart(assistantId);
 
 		if (messageQueue.length > 0) {
 			const queued = messageQueue[0];
@@ -2237,8 +2271,14 @@
 			statusMessage={userSettings.statusMessage}
 			activeNav="chats"
 			onHome={returnToSelect}
-			onNewChat={createEmptyChat}
-			onSelectChat={selectChat}
+			onNewChat={() => {
+				createEmptyChat();
+				closeSidebarIfNarrow();
+			}}
+			onSelectChat={(...args: Parameters<typeof selectChat>) => {
+				selectChat(...args);
+				closeSidebarIfNarrow();
+			}}
 			onSelectFolder={handleSelectFolder}
 			onOpenNotes={openNotes}
 			onSettings={openSettings}
@@ -2271,6 +2311,15 @@
 				sidebarOpen = false;
 			}}
 		/>
+		<!-- 窄屏时侧栏盖在内容上，点旁边这层遮罩就收起 -->
+		<button
+			type="button"
+			class="fixed inset-0 z-30 bg-black/50 md:hidden"
+			aria-label="收起侧栏"
+			onclick={() => {
+				sidebarOpen = false;
+			}}
+		></button>
 	{/if}
 
 	<section class="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-gray-900">

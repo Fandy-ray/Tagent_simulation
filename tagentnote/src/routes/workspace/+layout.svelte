@@ -7,6 +7,7 @@
 
 	import MockSidebar from '$lib/components/chat/MockSidebar.svelte';
 	import { loadQaChats, type QaChat } from '$lib/data/qaConversations';
+	import { isNarrowScreen } from '$lib/utils/viewport';
 
 	let { children } = $props();
 
@@ -38,6 +39,10 @@
 	const isActiveTab = (href: string) => $page.url.pathname.startsWith(href);
 
 	onMount(() => {
+		// 窄屏上侧栏盖在内容上，默认收起（见 $lib/utils/viewport）
+		if (isNarrowScreen()) {
+			sidebarOpen = false;
+		}
 		const stored = loadQaChats();
 		searchChats = stored.chats;
 		chats = stored.chats.map((chat) => ({
@@ -81,6 +86,14 @@
 				sidebarOpen = false;
 			}}
 		/>
+		<button
+			type="button"
+			class="fixed inset-0 z-30 bg-black/50 md:hidden"
+			aria-label="收起侧栏"
+			onclick={() => {
+				sidebarOpen = false;
+			}}
+		></button>
 	{/if}
 
 	<section class="relative flex min-w-0 flex-1 flex-col bg-gray-900">

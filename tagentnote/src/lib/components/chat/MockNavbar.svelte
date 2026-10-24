@@ -215,7 +215,11 @@
 >
 	<div class="flex w-full items-center px-1.5 pr-1">
 		<div class="mx-auto flex w-full max-w-full bg-transparent px-1.5 pt-0.5 md:px-2">
-			<div class="flex w-full max-w-full items-center">
+			<!-- 按顶栏自己的宽度排版：侧栏、控制面板一开，它就窄了，窗口宽度说明不了问题。
+			     < 28rem 时收起「临时对话」「数据」（设置里都有），知识库只留图标、模型名截短；
+			     还放不下就让右边这一组整体折到第二行——宁可多一行，也不能有点不到的按钮。
+			     以前是控制面板一开就把模式切换和知识库整个藏掉，窄屏上右边的图标照样挤出屏幕 -->
+			<div class="@container flex w-full max-w-full flex-wrap items-center">
 				{#if !sidebarOpen}
 					<div
 						class="mt-1 mr-1 flex flex-none -translate-x-0.5 items-center self-start text-gray-400"
@@ -254,7 +258,7 @@
 									<button
 										type="button"
 										id="model-selector-0-button"
-										class="hover:bg-gray-850 flex max-w-[240px] items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm text-gray-200 transition"
+										class="hover:bg-gray-850 flex max-w-[72px] items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm text-gray-200 transition @md:max-w-[240px]"
 										onclick={toggleModelMenu}
 										aria-expanded={modelMenuOpen}
 										aria-haspopup="listbox"
@@ -281,66 +285,62 @@
 					</div>
 				</div>
 
-				<div class="flex min-w-0 flex-none items-center self-start text-gray-400">
-					{#if !controlsOpen}
-						<div
-							class="mt-1 mr-1 inline-flex rounded-full border border-white/10 bg-white/[0.03] p-0.5 text-[11px]"
-							role="group"
-							aria-label={$i18n.t('Assist Mode')}
+				<div class="ml-auto flex min-w-0 flex-none items-center self-start text-gray-400">
+					<!-- 模式切换一直显示：以前控制面板一打开它就跟着消失，想换到论文助手得先关面板 -->
+					<div
+						class="mt-1 mr-1 inline-flex rounded-full border border-white/10 bg-white/[0.03] p-0.5 text-[11px]"
+						role="group"
+						aria-label={$i18n.t('Assist Mode')}
+					>
+						<button
+							type="button"
+							class={`rounded-full px-2 py-1 transition @md:px-2.5 ${
+								assistMode === 'qa' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-gray-200'
+							}`}
+							onclick={() => onAssistModeChange('qa')}
 						>
-							<button
-								type="button"
-								class={`rounded-full px-2.5 py-1 transition ${
-									assistMode === 'qa'
-										? 'bg-white/10 text-white'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onclick={() => onAssistModeChange('qa')}
-							>
-								{$i18n.t('QA Mode')}
-							</button>
-							<button
-								type="button"
-								class={`rounded-full px-2.5 py-1 transition ${
-									assistMode === 'paper'
-										? 'bg-amber-500/20 text-amber-100'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onclick={() => onAssistModeChange('paper')}
-							>
-								{$i18n.t('Paper Assistant')}
-							</button>
-						</div>
+							{$i18n.t('QA Mode')}
+						</button>
+						<button
+							type="button"
+							class={`rounded-full px-2 py-1 transition @md:px-2.5 ${
+								assistMode === 'paper'
+									? 'bg-amber-500/20 text-amber-100'
+									: 'text-gray-400 hover:text-gray-200'
+							}`}
+							onclick={() => onAssistModeChange('paper')}
+						>
+							{$i18n.t('Paper Assistant')}
+						</button>
+					</div>
 
-						<div class="relative mr-1" bind:this={collectionTriggerEl}>
-							<button
-								type="button"
-								class="mt-1 flex max-w-[180px] items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] leading-none text-gray-200 transition hover:bg-white/[0.08]"
-								onclick={toggleCollectionMenu}
-								title={$i18n.t('Current Knowledge Base')}
-								aria-expanded={collectionMenuOpen}
+					<div class="relative mr-1" bind:this={collectionTriggerEl}>
+						<button
+							type="button"
+							class="mt-1 flex max-w-[180px] items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] leading-none text-gray-200 transition hover:bg-white/[0.08]"
+							onclick={toggleCollectionMenu}
+							title={$i18n.t('Current Knowledge Base')}
+							aria-expanded={collectionMenuOpen}
+						>
+							<svg
+								class="size-3 shrink-0"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.8"
+								aria-hidden="true"
 							>
-								<svg
-									class="size-3 shrink-0"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="1.8"
-									aria-hidden="true"
-								>
-									<path
-										d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
-									></path>
-								</svg>
-								<span class="truncate">{currentCollection.name}</span>
-							</button>
-						</div>
-					{/if}
+								<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+								></path>
+							</svg>
+							<span class="hidden truncate @md:inline">{currentCollection.name}</span>
+						</button>
+					</div>
 
 					{#if temporaryChat && hasMessages}
 						<button
 							type="button"
-							class="hover:bg-gray-850 flex cursor-pointer rounded-xl px-2 py-2 text-gray-400 transition hover:text-white"
+							class="hover:bg-gray-850 hidden cursor-pointer rounded-xl px-2 py-2 text-gray-400 transition hover:text-white @md:flex"
 							onclick={onSaveTemporaryChat}
 							title={$i18n.t('Save Temporary Chat')}
 							aria-label={$i18n.t('Save Temporary Chat')}
@@ -365,7 +365,7 @@
 					{:else if !hasMessages || temporaryChat}
 						<button
 							type="button"
-							class={`hover:bg-gray-850 flex cursor-pointer rounded-xl px-2 py-2 transition ${
+							class={`hover:bg-gray-850 hidden cursor-pointer rounded-xl px-2 py-2 transition @md:flex ${
 								temporaryChat ? 'text-amber-200' : 'text-gray-400 hover:text-white'
 							}`}
 							onclick={onToggleTemporaryChat}
@@ -409,7 +409,7 @@
 
 					<button
 						type="button"
-						class="hover:bg-gray-850 flex cursor-pointer rounded-xl px-2 py-2 transition"
+						class="hover:bg-gray-850 flex cursor-pointer rounded-xl px-1.5 py-2 transition @md:px-2"
 						onclick={onOpenExam}
 						title={$i18n.t('Smart Assessment')}
 						aria-label={$i18n.t('Smart Assessment')}
@@ -432,7 +432,7 @@
 
 					<button
 						type="button"
-						class={`hover:bg-gray-850 flex cursor-pointer rounded-xl px-2 py-2 transition ${
+						class={`hover:bg-gray-850 flex cursor-pointer rounded-xl px-1.5 py-2 transition @md:px-2 ${
 							controlsOpen ? 'text-white' : 'text-gray-400 hover:text-white'
 						}`}
 						onclick={onToggleControls}
@@ -459,7 +459,7 @@
 
 					<button
 						type="button"
-						class="hover:bg-gray-850 flex cursor-pointer rounded-xl px-2 py-2 text-gray-400 transition hover:text-white"
+						class="hover:bg-gray-850 hidden cursor-pointer rounded-xl px-2 py-2 text-gray-400 transition hover:text-white @md:flex"
 						onclick={onOpenData}
 						title="数据"
 						aria-label="数据"
