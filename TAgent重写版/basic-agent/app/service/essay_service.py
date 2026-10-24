@@ -1,9 +1,10 @@
-"""小论文批改与逐句批注。
+"""小论文批改与逐句批注的门面：检查输入、拿闸门、跑图、整理结果。
 
-两个入口，共用一套核心：
+三个入口，流程本身在 app/agent/graphs/ 里：
 
-- review_paper()      答疑里的论文辅助：三维并发打分 + 条件下钻出高亮
-- annotate_answer()   整卷大题的逐句批注：按需单独发一轮
+- review_paper()      答疑里的论文辅助：三维并发打分 + 条件下钻出高亮（essay.py）
+- propose_topic()     答疑论文模式里的出题（essay.py）
+- annotate_answer()   整卷大题的逐句批注：按需单独发一轮（annotate.py）
 
 「渐进式披露」在这里是两层意思：
 1. **输出**上——不是每句都评，而是定额挑最值得说的几处；
@@ -15,65 +16,40 @@
 
 from __future__ import annotations
 
-import time
-from concurrent.futures import ThreadPoolExecutor
-
+from app.agent.graphs.annotate import ANNOTATE_GRAPH
+from app.agent.graphs.essay import ESSAY_GRAPH, write_topic
+from app.agent.runtime import AgentDeps
 from app.config import (
     ANNOTATE_LLM_BUDGET,
     ANNOTATE_LLM_TIMEOUT,
     ANNOTATE_MIN_ANSWER_CHARS,
     ANNOTATE_MIN_ATTEMPT_TIMEOUT,
-    ESSAY_CONTEXT_CHAR_LIMIT,
     ESSAY_LLM_BUDGET,
-    ESSAY_LLM_TIMEOUT,
     ESSAY_MAX_CHARS,
-    ESSAY_MAX_FLAGGED_PARAGRAPHS,
-    ESSAY_MIN_ATTEMPT_TIMEOUT,
     ESSAY_MIN_CHARS,
     ESSAY_TOPIC_LLM_BUDGET,
-    ESSAY_TOPIC_LLM_TIMEOUT,
     ESSAY_TOPIC_MAX_SUGGESTED_CHARS,
-    ESSAY_TOPIC_MIN_ATTEMPT_TIMEOUT,
     ESSAY_TOPIC_MIN_SUGGESTED_CHARS,
 )
-from app.errors.exam_errors import InvalidExamRequestError, UpstreamLLMError
-from app.agent.graphs.annotate import ANNOTATE_GRAPH, annotate_sentences
-from app.agent.runtime import AgentDeps
-from app.infra.llm_json import call_json_llm
+from app.errors.exam_errors import InvalidExamRequestError
 from app.prompts.essay_prompts import (
-    build_annotation_prompt,
-    build_dimension_prompt,
     build_essay_answer_annotation_prompt,
-    build_topic_prompt,
     dimension_order,
 )
 from app.schema.essay import (
-    MAX_ISSUES,
-    MAX_PRAISES,
     Annotation,
     AnnotationGradeContext,
     EssayTopic,
-    LLMAnnotationBatch,
-    LLMDimension,
-    LLMEssayTopic,
     PaperReview,
-    attach_spans,
     build_dimension,
     numbered_text,
     quick_scan,
-    validate_annotations,
-    validate_dimension,
     weighted_score,
 )
 from app.schema.provider import ModelProvider
 from app.util.text import split_sentences
 
 
-# 需要参考材料的维度。language 只看文字本身，给它材料纯属浪费 token 和时间。
-_NEEDS_CONTEXT = {"content", "argument"}
-# 只有论证维度顺带报可疑段落——它本来就要通读全文，这一步是白捡的，
-# 不必单独跑一轮「找可疑段落」。
-_REPORTS_FLAGS = "argument"
 # 出题时学生没给方向就用它检索：search("") 在向量库与 OpenNoteBook 两边的行为都不可控
 _TOPIC_FALLBACK_QUERY = "系统建模与仿真 课程核心概念"
 
@@ -106,115 +82,28 @@ class EssayService:
                 "请分段提交"
             )
 
-        numbered = numbered_text(sentences)
-        started = time.monotonic()
-        deadline = started + ESSAY_LLM_BUDGET
-
+        # 截止时间从进门算起，排队等闸门的时间也算在预算里
+        deps = self._deps(provider, budget_seconds=ESSAY_LLM_BUDGET)
         with self.llm_gate.acquire():
-            context = self._context_for(topic, source, notebook_ids)
-
-            budget = max(0.0, deadline - time.monotonic())
-            # 与 generate_exam / generate_flash_deck 同一套余量算法：call_json_llm
-            # 在 remaining < attempt_timeout + 5 时直接判预算不足抛 504，
-            # 这里的 -15 就是留给它的余量，别减小。
-            attempt_timeout = min(
-                ESSAY_LLM_TIMEOUT, max(ESSAY_MIN_ATTEMPT_TIMEOUT, budget - 15.0)
+            result = ESSAY_GRAPH.invoke(
+                {
+                    "source": source,
+                    "topic": topic,
+                    "notebook_ids": notebook_ids,
+                    "sentences": sentences,
+                },
+                context=deps,
             )
 
-            def run_dimension(dimension: str) -> tuple[str, LLMDimension]:
-                prompt = build_dimension_prompt(
-                    dimension,
-                    numbered,
-                    topic=topic,
-                    context=context if dimension in _NEEDS_CONTEXT else "",
-                    want_flags=(dimension == _REPORTS_FLAGS),
-                )
-                client = self.client_factory.get(
-                    provider, timeout_seconds=int(attempt_timeout), max_retries=0
-                ).bind(max_tokens=900)
-                result = call_json_llm(
-                    client,
-                    prompt,
-                    LLMDimension,
-                    attempt_timeout=attempt_timeout,
-                    budget_seconds=budget,
-                    # **必须**走 post_validate，不能拿到结果之后在外面校验：
-                    # 模型把要点换个说法抄回来是常事，那是该重试的情形。
-                    # 放在圈外校验，一次不合格就直接 500 了（实测踩过）。
-                    post_validate=lambda value, d=dimension: validate_dimension(value, d),
-                )
-                return dimension, result
-
-            names = list(dimension_order())
-            with ThreadPoolExecutor(max_workers=len(names)) as pool:
-                graded = dict(pool.map(run_dimension, names))
-
-            annotations = self._drill_down(
-                graded[_REPORTS_FLAGS].flagged_paragraphs,
-                sentences,
-                provider,
-                deadline,
-            )
-
-        dimensions = [build_dimension(name, graded[name]) for name in names]
+        graded = result["graded"]
+        dimensions = [build_dimension(name, graded[name]) for name in dimension_order()]
         return PaperReview(
             word_count=scan.characters,
             quick_scan=scan,
             dimensions=dimensions,
-            annotations=annotations,
+            annotations=result["annotations"],
             score=weighted_score(dimensions),
             overall_comment=graded["content"].comment,
-        )
-
-    def _context_for(self, topic: str | None, source: str, notebook_ids) -> str:
-        """按题目（没题目就按正文开头）检索材料，用来判「是否用上课程内容」。
-
-        检索失败不该让整次批改失败——语言维度根本不需要材料，另两维没材料也
-        还能评，只是「用上课程概念」那条判得保守些。
-        """
-        query = (topic or "").strip() or source[:120]
-        try:
-            documents = self.knowledge_base.search(query, k=3, notebook_ids=notebook_ids)
-        except Exception:
-            return ""
-        pieces = [d.page_content[:600] for d in documents]
-        joined = "\n\n---\n\n".join(pieces)
-        return joined[:ESSAY_CONTEXT_CHAR_LIMIT]
-
-    def _drill_down(
-        self,
-        flagged: list[int],
-        sentences,
-        provider: ModelProvider,
-        deadline: float,
-    ) -> list[Annotation]:
-        """条件触发的第四轮：没被点名就一轮都不发。"""
-        paragraphs = {p for p in flagged if p > 0}
-        if not paragraphs or not sentences:
-            return []
-        # 只限制批注目标；全文仍作为上下文提供，避免把前文已给的参数误判缺失。
-        paragraphs = set(sorted(paragraphs)[:ESSAY_MAX_FLAGGED_PARAGRAPHS])
-
-        focused = [s for s in sentences if s.paragraph in paragraphs]
-        if not focused:
-            return []
-
-        prompt = build_annotation_prompt(
-            numbered_text(focused),
-            full_text=numbered_text(sentences),
-            focus="这几段是通读后觉得问题最集中的部分。",
-            max_issues=MAX_ISSUES,
-            max_praises=MAX_PRAISES,
-        )
-        # 和大题批注、下一轮的文件编辑是同一个节点；截止时间沿用整次批改的
-        return annotate_sentences(
-            self._deps(provider, deadline=deadline),
-            prompt,
-            focused,
-            max_issues=MAX_ISSUES,
-            max_praises=MAX_PRAISES,
-            limit=ESSAY_LLM_TIMEOUT,
-            floor=ESSAY_MIN_ATTEMPT_TIMEOUT,
         )
 
     # ====================== 答疑论文模式：出题 ======================
@@ -229,30 +118,9 @@ class EssayService:
         检索不到材料也照样出题（出课程通用题），grounded 如实告诉前端——
         这一步失败会让学生连题都拿不到，比题目泛一点更糟。
         """
-        started = time.monotonic()
-        budget = ESSAY_TOPIC_LLM_BUDGET
-        attempt_timeout = min(
-            ESSAY_TOPIC_LLM_TIMEOUT, max(ESSAY_TOPIC_MIN_ATTEMPT_TIMEOUT, budget - 15.0)
-        )
-
+        deps = self._deps(provider, budget_seconds=ESSAY_TOPIC_LLM_BUDGET)
         with self.llm_gate.acquire():
-            context = self._context_for(hint, _TOPIC_FALLBACK_QUERY, notebook_ids)
-            prompt = build_topic_prompt(
-                context,
-                hint,
-                min_chars=ESSAY_TOPIC_MIN_SUGGESTED_CHARS,
-                max_chars=ESSAY_TOPIC_MAX_SUGGESTED_CHARS,
-            )
-            client = self.client_factory.get(
-                provider, timeout_seconds=int(attempt_timeout), max_retries=0
-            ).bind(max_tokens=500)
-            result = call_json_llm(
-                client,
-                prompt,
-                LLMEssayTopic,
-                attempt_timeout=attempt_timeout,
-                budget_seconds=max(0.0, budget - (time.monotonic() - started)),
-            )
+            result, context = write_topic(deps, hint, _TOPIC_FALLBACK_QUERY, notebook_ids)
 
         return EssayTopic(
             title=result.title,

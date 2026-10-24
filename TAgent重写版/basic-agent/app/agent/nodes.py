@@ -50,3 +50,25 @@ def json_call(
         post_validate=post_validate,
         start_time=started,
     )
+
+
+def search_text(
+    deps: AgentDeps,
+    query: str,
+    *,
+    k: int,
+    piece_chars: int,
+    char_limit: int,
+    notebook_ids: list[str] | None = None,
+) -> str:
+    """检索并拼成一段参考材料。检索失败给空串，不让整次运行跟着失败。
+
+    只给「材料是辅助」的链路用（批改、出小论文题）：没材料也还能评、还能出题，
+    只是判得保守些、题目泛一些。出卷没材料就出不了题，走 sample_exam_context。
+    """
+    try:
+        documents = deps.knowledge_base.search(query, k=k, notebook_ids=notebook_ids)
+    except Exception:
+        return ""
+    joined = "\n\n---\n\n".join(d.page_content[:piece_chars] for d in documents)
+    return joined[:char_limit]

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import types
 
 import pytest
@@ -124,6 +126,23 @@ def test_fires_exactly_one_call_per_dimension():
     make_service(llm).review_paper(PAPER, "排队论", TEST_PROVIDER)
     assert set(llm.dimension_prompts()) == set(RUBRIC_POINTS)
     assert len(llm.prompts) == 3, "没被点名就不该有第四轮"
+
+
+class SlowLLM(ScriptedLLM):
+    """每一维都慢 0.3 秒：串行要 0.9 秒，并发只要 0.3 秒出头。"""
+
+    async def ainvoke(self, prompt):
+        await asyncio.sleep(0.3)
+        return await super().ainvoke(prompt)
+
+
+def test_the_three_dimensions_run_at_the_same_time():
+    # 批改的总耗时是三维里最慢的那一维，不是三维相加
+    llm = SlowLLM()
+    started = time.perf_counter()
+    make_service(llm).review_paper(PAPER, None, TEST_PROVIDER)
+    assert time.perf_counter() - started < 0.6
+    assert len(llm.prompts) == 3
 
 
 def test_language_dimension_gets_no_material():
