@@ -2,7 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { loadKatex } from '$lib/data/math';
 
-	import { generateFlashDeck } from '$lib/apis/agent';
+	import { streamFlashDeck } from '$lib/apis/agent';
 	import FlashCard from '$lib/components/quiz/FlashCard.svelte';
 	import { formatDuration } from '$lib/data/exam';
 	import MathText from '$lib/components/MathText.svelte';
@@ -20,12 +20,13 @@
 		stats,
 		type FlashSession
 	} from '$lib/data/flash';
+	import { appendCards } from '$lib/data/flashStream';
 
 	type Phase = 'generating' | 'studying' | 'summary' | 'failed';
 
 	/**
 	 * 客户端等待上限。后端 FLASH_LLM_BUDGET=200s 已经封了顶，这里只是"服务端
-	 * 再也不会回话了"的兜底（实测正常出卡 6~10 秒，这条基本不该触发）。
+	 * 再也不会回话了"的兜底（实测第一张 1 秒左右到、整组 3 秒左右写完，这条基本不该触发）。
 	 */
 	const CLIENT_TIMEOUT_MS = 240_000;
 
@@ -65,6 +66,10 @@
 	let ticker: ReturnType<typeof setInterval> | null = null;
 	let controller: AbortController | null = null;
 	let failure = $state('');
+	/** 后面还有卡在路上（边写边给，第一张到了就开始刷） */
+	let incoming = $state(false);
+	/** 已经在刷了、后面的卡却没出来时的说明；不打断刷卡，只在进度旁边提一句 */
+	let cutNote = $state('');
 
 	let card = $derived(session ? currentCard(session) : null);
 	let summary = $derived(session ? stats(session) : null);
@@ -85,8 +90,10 @@
 		return () => onLeavingCost('');
 	});
 
+	// 还在出卡时总数后面带个 +：后面还有
+	let more = $derived(incoming ? '+' : '');
 	let position = $derived(
-		session && card ? `${session.known.length + 1}/${session.deck.cards.length}` : ''
+		session && card ? `${session.known.length + 1}/${session.deck.cards.length}${more}` : ''
 	);
 
 	let dots = $derived.by(() => {
@@ -153,8 +160,10 @@
 		}, CLIENT_TIMEOUT_MS);
 
 		failure = '';
+		cutNote = '';
 		phase = 'generating';
 		session = null;
+		incoming = true;
 		resetCardState();
 		elapsed = 0;
 		stopTicker();
@@ -164,31 +173,67 @@
 
 		// 等模型出题的这几秒顺手把 KaTeX 下好（$lib/data/math 的 loadKatex），题目出来时公式不先闪一下原文
 		void loadKatex();
-		void generateFlashDeck(modelId, topic, notebookIds, signal)
-			.then((deck) => {
+		void streamFlashDeck(modelId, topic, notebookIds, signal, (event) => {
+			if (signal.aborted) {
+				return;
+			}
+			if (event.type === 'deck') {
+				onTitle(event.title);
+				session = createSession({
+					deck_id: event.deck_id,
+					title: event.title,
+					total_cards: 0,
+					cards: []
+				});
+			} else if (event.type === 'title' && session) {
+				onTitle(event.title);
+				session = { ...session, deck: { ...session.deck, title: event.title } };
+			} else if (event.type === 'card' && session) {
+				session = appendCards(session, [event.card]);
+				// 第一张到了就开始刷，后面的边刷边到
+				if (phase === 'generating') {
+					stopTicker();
+					phase = 'studying';
+				}
+			}
+		})
+			.then(() => {
 				clearTimeout(ceiling);
 
 				if (signal.aborted) {
 					return;
 				}
 
-				stopTicker();
-				onTitle(deck.title);
-				session = createSession(deck);
-				phase = 'studying';
+				incoming = false;
+				if (phase === 'generating') {
+					// 后端一张没出成会报错，正常走不到这里；万一走到了也别一直转圈
+					stopTicker();
+					failure = '这一轮没有出卡，请重试。';
+					phase = 'failed';
+					return;
+				}
+				finishIfDrained();
 			})
 			.catch((error: unknown) => {
 				clearTimeout(ceiling);
 
-				if (timedOut) {
-					stopTicker();
-					failure = '等了 4 分钟还没出卡，basic-agent 可能没在正常回话。';
-					phase = 'failed';
+				// 超时与"用户主动取消/面板卸载"都会 abort，先看是不是超时
+				if (!timedOut && signal.aborted) {
+					// 主动取消或面板已卸载：这一轮不该再改任何状态
 					return;
 				}
 
-				// 主动取消或面板已卸载：这一轮不该再改任何状态
-				if (signal.aborted) {
+				const message = timedOut
+					? '等了 4 分钟还没出完卡，basic-agent 可能没在正常回话。'
+					: error instanceof Error
+						? error.message
+						: '出卡失败，请重试。';
+				incoming = false;
+
+				if (phase !== 'generating') {
+					// 已经在刷了：不打断，先刷已经到的这几张
+					cutNote = `后面的卡没出来（${message.replace(/[。.]$/, '')}），先刷已经到的这几张。`;
+					finishIfDrained();
 					return;
 				}
 
@@ -197,9 +242,17 @@
 				// 最常见的触发是 429（并发闸门满）——而"取消"只能掐断浏览器这边，
 				// 服务端那次还在跑、名额还占着，于是取消后立刻重试必然 429、
 				// 必然被弹回去，看起来就像点一下自己退回去了。
-				failure = error instanceof Error ? error.message : '出卡失败，请重试。';
+				failure = message;
 				phase = 'failed';
 			});
+	};
+
+	/** 卡都到齐了、已经到的又都刷完了：这一轮才算结束 */
+	const finishIfDrained = () => {
+		if (phase === 'studying' && session && session.queue.length === 0 && !incoming) {
+			session = { ...session, endedAt: session.endedAt ?? Date.now() };
+			phase = 'summary';
+		}
 	};
 
 	const cancel = () => {
@@ -248,10 +301,8 @@
 
 		session = advance(session, outcome);
 		resetCardState();
-
-		if (session.queue.length === 0) {
-			phase = 'summary';
-		}
+		// 已经到的刷完了、后面还有在路上的：留在刷卡页等下一张
+		finishIfDrained();
 	};
 
 	const rotate = (direction: 1 | -1) => {
@@ -292,7 +343,8 @@
 	};
 
 	const onKeydown = (event: KeyboardEvent) => {
-		if (phase !== 'studying' || event.isComposing) {
+		// 刷完已经到的、等下一张的时候没有当前卡，按键一律不理
+		if (phase !== 'studying' || !card || event.isComposing) {
 			return;
 		}
 
@@ -374,7 +426,7 @@
 
 		<p class="max-w-sm text-xs leading-relaxed text-gray-500">
 			三片同时向模型发问，每片只拿三分之一的材料 —— 既是提速的办法，也让三片不容易撞到同一个考点。
-			服务端不分段回报，所以这里只报总用时；具体多久取决于你选的模型。
+			第一张写好就先给你，其余的边刷边到。
 		</p>
 
 		<button
@@ -433,6 +485,22 @@
 			</button>
 		</div>
 	</div>
+{:else if phase === 'studying' && session && !card}
+	<div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+		<svg
+			class="size-6 animate-spin text-blue-500"
+			viewBox="0 0 24 24"
+			fill="none"
+			aria-hidden="true"
+		>
+			<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
+			></circle>
+			<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
+			></path>
+		</svg>
+		<div class="text-sm text-gray-300">已经到的 {session.known.length} 张刷完了</div>
+		<div class="text-xs text-gray-500">后面的卡还在写，下一张马上到</div>
+	</div>
 {:else if phase === 'studying' && session && card}
 	<div class="flex h-full min-h-0 flex-col">
 		<!-- 窄屏（<640px）竖排：模式切换在上、进度在下。并排时进度那一栏会被挤扁，
@@ -448,10 +516,14 @@
 
 				<div class="mt-1 flex justify-between font-mono text-[11px] text-gray-500">
 					<span>
-						已过 {summary?.known ?? 0} / {summary?.total ?? 0} · 待重练 {summary?.pendingAgain ?? 0}
+						已过 {summary?.known ?? 0} / {summary?.total ?? 0}{more} · 待重练 {summary?.pendingAgain ??
+							0}
 					</span>
-					<span>{summary?.pct ?? 0}%</span>
+					<span>{incoming ? '还在出卡' : `${summary?.pct ?? 0}%`}</span>
 				</div>
+				{#if cutNote}
+					<p class="mt-1 text-[11px] leading-relaxed text-amber-300">{cutNote}</p>
+				{/if}
 			</div>
 
 			<div
@@ -611,6 +683,10 @@
 		<div class="mt-2.5 font-mono text-6xl leading-none font-bold text-blue-500">
 			{summary.firstTry}<span class="text-lg text-gray-400"> / {summary.total}</span>
 		</div>
+
+		{#if cutNote}
+			<p class="mt-2 max-w-md text-xs leading-relaxed text-amber-300">{cutNote}</p>
+		{/if}
 
 		<p class="mt-2 text-sm text-gray-400">
 			{#if summary.struggled === 0}

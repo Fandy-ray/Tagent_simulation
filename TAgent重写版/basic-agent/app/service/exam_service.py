@@ -11,7 +11,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+import uuid
+from typing import Any, Iterator
 
 from app.config import (
     EXAM_LLM_BUDGET,
@@ -19,8 +21,10 @@ from app.config import (
     FLASH_LLM_BUDGET,
 )
 from app.errors.exam_errors import (
+    ExamServiceError,
     InvalidExamRequestError,
     ModelMismatchError,
+    UpstreamLLMError,
 )
 from app.agent.graphs.exam import EXAM_GRAPH
 from app.agent.graphs.flash import FLASH_GRAPH
@@ -38,11 +42,18 @@ from app.schema.exam import (
     to_public,
     verdict_from_score,
 )
+from app.schema.exam_quality import violations
 from app.schema.flash import (
+    FLASH_DEFAULT_TITLE,
+    CardDeduper,
     PublicFlashDeck,
+    build_card,
+    public_card,
     to_public_deck,
 )
 from app.schema.provider import ModelProvider
+
+log = logging.getLogger(__name__)
 
 
 def _build_exam_overall_comment(
@@ -125,6 +136,72 @@ class ExamService:
         # 那时再开一个独立的 ExamCache 实例——绝不能借用 exam_cache，
         # review_exam 会对取出的对象调 all_questions()，卡组掉进去就是类型混淆。
         return to_public_deck(deck)
+
+    def stream_flash_deck(
+        self,
+        topic: str | None,
+        provider: ModelProvider,
+        notebook_ids: list[str] | None = None,
+    ) -> Iterator[dict]:
+        """边写边给的闪卡组：每张卡写完、过了质量检查和去重就交出去。
+
+        依次交出：
+        - {"type": "deck", "deck_id", "title"}：材料已抽到、各片已经发出去；
+        - {"type": "title", "title"}：模型写出了卡组标题（第一张卡之前或之后都可能）；
+        - {"type": "card", "card"}：一张公开卡（带答案，同 to_public_deck），编号按到达先后；
+        - {"type": "done", "total_cards"}。
+
+        第一项之前的错误（闸门满、没有材料）原样抛出，路由层先取第一项，这类错误
+        就还是普通的 429 / 422。之后某一片失败：已经发出卡就照常收尾（学生手上
+        已经在刷了），一张都没发出才抛。
+
+        和 generate_flash_deck 的差别只在最后一步：卡按到达先后发，不再整组交错；
+        张数不设下限（发出去的已经在学生手上了），一张没有才算失败。
+        """
+        deps = self._deps(provider, FLASH_LLM_BUDGET)
+        deck_id = str(uuid.uuid4())
+        with self.llm_gate.acquire():
+            stream = FLASH_GRAPH.stream(
+                {"topic": topic, "notebook_ids": notebook_ids, "stream": True},
+                context=deps,
+                stream_mode=["custom", "updates"],
+            )
+            deduper = CardDeduper()
+            sent = 0
+            titled = False
+            try:
+                for mode, chunk in stream:
+                    if mode == "updates":
+                        if "deal" in chunk:
+                            yield {"type": "deck", "deck_id": deck_id, "title": FLASH_DEFAULT_TITLE}
+                        continue
+                    kind, value = chunk
+                    if kind == "title":
+                        title = (value or "").strip()
+                        if title and not titled:
+                            titled = True
+                            yield {"type": "title", "title": title}
+                        continue
+                    reasons = violations(value)
+                    if reasons:
+                        log.info("丢弃一张闪卡（%s）", "；".join(reasons))
+                        continue
+                    if not deduper.admit(value):
+                        continue
+                    sent += 1
+                    card = public_card(build_card(value, f"F{sent}"))
+                    yield {"type": "card", "card": card.model_dump()}
+            except ExamServiceError as exc:
+                if not sent:
+                    raise
+                log.warning("闪卡有一片没写完（%s），用已经发出的 %d 张收尾", exc, sent)
+            finally:
+                # 学生中途离开时也走这里：LangGraph 会等正在写的那几片写完才返回
+                # （各片几秒内就写完），闸门名额随后释放
+                stream.close()
+        if not sent:
+            raise UpstreamLLMError("生成的闪卡质量不达标，请重试")
+        yield {"type": "done", "total_cards": sent}
 
     def _deps(self, provider: ModelProvider, budget_seconds: float) -> AgentDeps:
         """一次运行的依赖。截止时间从进门算起，排队等闸门的时间也算在预算里。"""

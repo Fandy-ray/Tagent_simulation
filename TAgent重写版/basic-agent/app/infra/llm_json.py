@@ -21,12 +21,14 @@ import logging
 import re
 import threading
 import time
+import types
 from typing import Callable, Optional
 
 import openai
 
 from app.config import AgentConfig
 from app.errors.exam_errors import ExamBusyError, UpstreamLLMError, UpstreamTimeoutError
+from app.util.text import content_text
 
 log = logging.getLogger(__name__)
 
@@ -144,6 +146,46 @@ def invoke_with_deadline(
         if inner is not None and not inner.done():
             _register_orphan(inner, loop)
         raise
+
+
+class StreamingClient:
+    """把 ainvoke 换成边收边读：每收到一块就交给 reader，收完照样返回整条消息。
+
+    给「写完一项先用一项」的调用用（闪卡第一张立马出，见 app/agent/nodes.py
+    json_call_streaming）。call_json_llm 的超时、重试、校验一行不改：它看到的仍是一个
+    ainvoke 返回整条消息的对象，超时取消的也照样是底层那次请求。
+
+    每次 ainvoke（包括重试）先调 open_reader() 拿一个新的 reader，上一次读了一半的
+    状态不会带进下一次。reader 在后台事件循环的线程里被调用，里面别做慢事。
+    """
+
+    def __init__(self, llm, open_reader: Callable[[], Callable[[str], None]]):
+        self._llm = llm
+        self._open_reader = open_reader
+
+    @property
+    def kwargs(self):
+        # _with_more_tokens 靠它读出原来给的输出额度
+        return getattr(self._llm, "kwargs", None)
+
+    def bind(self, **kwargs):
+        return StreamingClient(self._llm.bind(**kwargs), self._open_reader)
+
+    async def ainvoke(self, prompt):
+        read = self._open_reader()
+        if not hasattr(self._llm, "astream"):
+            # 不会流式的替身（单测）：整段当成一块
+            message = await self._llm.ainvoke(prompt)
+            read(content_text(message.content))
+            return message
+        whole = None
+        async for chunk in self._llm.astream(prompt):
+            # 消息块相加会把正文接起来、把 finish_reason 这些元数据并进来
+            whole = chunk if whole is None else whole + chunk
+            piece = content_text(chunk.content)
+            if piece:
+                read(piece)
+        return whole if whole is not None else types.SimpleNamespace(content="", response_metadata={})
 
 
 def invoke_legacy_llm(runnable, input_data, timeout_seconds: float):

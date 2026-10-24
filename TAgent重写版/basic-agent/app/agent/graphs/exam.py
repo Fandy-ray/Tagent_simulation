@@ -42,10 +42,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import Send
 
-from app.agent.nodes import json_call
+from app.agent.nodes import json_call, sample_quiz_material
 from app.agent.runtime import AgentDeps
 from app.config import EXAM_CONTEXT_SEPARATOR, EXAM_LLM_TIMEOUT, EXAM_MIN_ATTEMPT_TIMEOUT
-from app.errors.exam_errors import InvalidExamRequestError, UpstreamLLMError
+from app.errors.exam_errors import UpstreamLLMError
 from app.prompts.exam_prompts import (
     LANE_CORE,
     LANE_OTHER,
@@ -118,26 +118,11 @@ class WriteTask(TypedDict):
     lane: str | None  # 填空选择那几路：管不管核心概念
 
 
-# 论文片段的来源标记（app/rag/references.py）
-_PAPER_SOURCE = "reference"
-
-
 def _sample(state: ExamState, runtime: Runtime[AgentDeps]) -> dict:
-    pieces = [
-        (text, source)
-        for text, source in runtime.context.knowledge_base.sample_exam_pieces(
-            state.get("topic"), notebook_ids=state.get("notebook_ids")
-        )
-        if (text or "").strip()
-    ]
-    if not pieces:
-        # 和闪卡一样当场回 422。不拦的话各路照样去调模型，「仅依据参考材料出题」
-        # 却没有材料，白等一轮之后多半是 502，学生还不知道是笔记本选错了
-        raise InvalidExamRequestError("所选知识范围里没有可出题的材料，请换一个笔记本或来源")
-    texts = [text for text, _ in pieces]
-    # 填空、选择只分非论文片段；一片教材都没有（例如只选了论文）时只好全用上
-    primary = [text for text, source in pieces if source != _PAPER_SOURCE]
-    return {"context": EXAM_CONTEXT_SEPARATOR.join(texts), "objective_material": primary or texts}
+    texts, objective = sample_quiz_material(
+        runtime.context, state.get("topic"), state.get("notebook_ids")
+    )
+    return {"context": EXAM_CONTEXT_SEPARATOR.join(texts), "objective_material": objective}
 
 
 def _fan_out(state: ExamState) -> list[Send]:

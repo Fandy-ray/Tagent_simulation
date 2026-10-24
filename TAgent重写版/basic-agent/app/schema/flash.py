@@ -17,9 +17,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated, List, Literal, Optional, Union
+import logging
+from typing import Annotated, Any, List, Literal, Optional, Union
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 # _ClozeBase / _normalize_* 带下划线，是 exam.py 对"模块外部"的提示；
 # flash.py 是同包里刻意共享这套契约的兄弟模块，复用它们正是为了不让
@@ -33,6 +34,8 @@ from app.schema.exam import (
     _normalize_exact_answer,
     _normalize_text_answer,
 )
+
+log = logging.getLogger(__name__)
 
 
 FLASH_DEFAULT_TITLE = "知识点闪卡"
@@ -66,19 +69,48 @@ class DraftFlashChoice(_ChoiceBase):
     points: Optional[float] = None
 
 
+def _keep_valid(items: Any, item_cls: Any) -> Any:
+    """一片里坏了一张（比如没挖空），只丢这一张，不让整片重来。
+
+    闪卡是边写边给的（app/agent/nodes.py json_call_streaming）：写完一张就校验一张、
+    合格的已经发到学生手上了。整片因为另一张坏卡重来，重来那一轮又会出一批同一片
+    材料上的卡，和已经发出去的撞考点。整卡组的张数下限另在组卡时兜。
+    """
+    if not isinstance(items, list):
+        return items
+    kept = []
+    for item in items:
+        try:
+            kept.append(item_cls.model_validate(item))
+        except ValidationError as exc:
+            log.info("闪卡片里丢掉一张不合格的：%s", exc.errors()[0].get("msg", "") if exc.errors() else "")
+    return kept
+
+
 class FlashClozeShardDraft(StrictModel):
     """填空片的输出。**故意不校验张数**：某片少给一张不该让整次出卷失败，
-    去重之后统一按 FLASH_DECK_MIN_CARDS 兜底（在 service 层判定）。"""
+    去重之后统一按 FLASH_DECK_MIN_CARDS 兜底（在 service 层判定）。
+    坏掉的单张丢掉，一张不剩才算这一片失败（重试）。"""
 
     title: str = FLASH_DEFAULT_TITLE
     cloze: List[DraftFlashCard] = Field(min_length=1)
 
+    @field_validator("cloze", mode="before")
+    @classmethod
+    def _drop_broken(cls, items):
+        return _keep_valid(items, DraftFlashCard)
+
 
 class FlashChoiceShardDraft(StrictModel):
-    """选择片的输出。同样不校验张数。"""
+    """选择片的输出。同样不校验张数，同样只丢坏掉的单张。"""
 
     title: str = FLASH_DEFAULT_TITLE
     choice: List[DraftFlashChoice] = Field(min_length=1)
+
+    @field_validator("choice", mode="before")
+    @classmethod
+    def _drop_broken(cls, items):
+        return _keep_valid(items, DraftFlashChoice)
 
 
 DraftFlashItem = Union[DraftFlashCard, DraftFlashChoice]
@@ -162,36 +194,33 @@ def to_public_deck(deck: PrivateFlashDeck) -> PublicFlashDeck:
     **边界**：这条路径只服务闪卡。整卷的 to_public() 不受影响，也不要给它
     加任何带答案的投影——那边的分数是要计入判卷结果的。
     """
-    cards: List[object] = []
-    for card in deck.cards:
-        if isinstance(card, FlashChoiceCard):
-            cards.append(
-                PublicFlashChoiceCard(
-                    id=card.id,
-                    question=card.question,
-                    options=list(card.options),
-                    correct_index=card.correct_index,
-                    explanation=card.explanation,
-                )
-            )
-        else:
-            cards.append(
-                PublicFlashCard(
-                    id=card.id,
-                    cue=card.cue,
-                    text=card.text,
-                    accept=list(card.accept),
-                    accept_normalized=normalized_accept(card.accept, card.match_mode),
-                    match_mode=card.match_mode,
-                    explanation=card.explanation,
-                )
-            )
-
+    cards = [public_card(card) for card in deck.cards]
     return PublicFlashDeck(
         deck_id=deck.deck_id,
         title=deck.title,
         total_cards=len(cards),
         cards=cards,
+    )
+
+
+def public_card(card: Union[FlashClozeCard, FlashChoiceCard]) -> Union[PublicFlashCard, PublicFlashChoiceCard]:
+    """一张卡的公开投影（带答案，理由见 to_public_deck）。边写边发时一张一张地用。"""
+    if isinstance(card, FlashChoiceCard):
+        return PublicFlashChoiceCard(
+            id=card.id,
+            question=card.question,
+            options=list(card.options),
+            correct_index=card.correct_index,
+            explanation=card.explanation,
+        )
+    return PublicFlashCard(
+        id=card.id,
+        cue=card.cue,
+        text=card.text,
+        accept=list(card.accept),
+        accept_normalized=normalized_accept(card.accept, card.match_mode),
+        match_mode=card.match_mode,
+        explanation=card.explanation,
     )
 
 
@@ -215,6 +244,25 @@ def _dedupe_key(card: DraftFlashItem) -> tuple[str, str]:
     return answer, _normalize_text_answer(card.text)
 
 
+class CardDeduper:
+    """按考点去重，先到先得。一次给一张，边写边发时也能用。"""
+
+    def __init__(self) -> None:
+        self._answers: set[str] = set()
+        self._stems: set[str] = set()
+
+    def admit(self, card: DraftFlashItem) -> bool:
+        """这张卡的考点没见过就收下（记住它）并返回 True；撞了返回 False。"""
+        answer, stem = _dedupe_key(card)
+        if (answer and answer in self._answers) or (stem and stem in self._stems):
+            return False
+        if answer:
+            self._answers.add(answer)
+        if stem:
+            self._stems.add(stem)
+        return True
+
+
 def dedupe_cards(cards: List[DraftFlashItem]) -> List[DraftFlashItem]:
     """按考点去重，保留先到的一张。
 
@@ -222,21 +270,8 @@ def dedupe_cards(cards: List[DraftFlashItem]) -> List[DraftFlashItem]:
     prompt 反而更重复，所以只能在这里事后收拾）。填空与选择放在同一个
     命名空间里比对——「λ/μ 叫什么」出成填空还是选择，都是同一个考点。
     """
-    seen_answers: set[str] = set()
-    seen_stems: set[str] = set()
-    kept: List[DraftFlashItem] = []
-
-    for card in cards:
-        answer, stem = _dedupe_key(card)
-        if (answer and answer in seen_answers) or (stem and stem in seen_stems):
-            continue
-        if answer:
-            seen_answers.add(answer)
-        if stem:
-            seen_stems.add(stem)
-        kept.append(card)
-
-    return kept
+    deduper = CardDeduper()
+    return [card for card in cards if deduper.admit(card)]
 
 
 def interleave(cloze: List, choice: List) -> List:
@@ -265,34 +300,30 @@ def interleave(cloze: List, choice: List) -> List:
 
 def normalize_deck(cards: List[DraftFlashItem], title: str, deck_id: str) -> PrivateFlashDeck:
     """草稿 → 私有卡组：后端编号 F1..Fn，分值恒为 1（题号不信 LLM 输出）。"""
-    built: List[object] = []
-    for index, card in enumerate(cards):
-        if isinstance(card, DraftFlashChoice):
-            built.append(
-                FlashChoiceCard(
-                    id=f"F{index + 1}",
-                    question=card.question,
-                    options=card.options,
-                    correct_index=card.correct_index,
-                    explanation=card.explanation,
-                    points=1,
-                )
-            )
-        else:
-            built.append(
-                FlashClozeCard(
-                    id=f"F{index + 1}",
-                    cue=card.cue,
-                    text=card.text,
-                    accept=card.accept,
-                    match_mode=card.match_mode,
-                    explanation=card.explanation,
-                    points=1,
-                )
-            )
-
     return PrivateFlashDeck(
         deck_id=deck_id,
         title=(title or "").strip() or FLASH_DEFAULT_TITLE,
-        cards=built,
+        cards=[build_card(card, f"F{index + 1}") for index, card in enumerate(cards)],
+    )
+
+
+def build_card(card: DraftFlashItem, card_id: str) -> Union[FlashClozeCard, FlashChoiceCard]:
+    """一张草稿 → 一张私有卡。编号由调用方给，分值恒为 1。"""
+    if isinstance(card, DraftFlashChoice):
+        return FlashChoiceCard(
+            id=card_id,
+            question=card.question,
+            options=card.options,
+            correct_index=card.correct_index,
+            explanation=card.explanation,
+            points=1,
+        )
+    return FlashClozeCard(
+        id=card_id,
+        cue=card.cue,
+        text=card.text,
+        accept=card.accept,
+        match_mode=card.match_mode,
+        explanation=card.explanation,
+        points=1,
     )

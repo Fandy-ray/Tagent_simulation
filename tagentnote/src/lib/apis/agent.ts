@@ -5,10 +5,19 @@ import { learnerHeaders } from '$lib/data/learner';
 import type { AnswerAnnotations, EssayTopic, PaperReview } from '$lib/data/essay';
 import type { ExamReview, PublicExam, ReviewResult } from '$lib/data/exam';
 import type { FlashDeck } from '$lib/data/flash';
+import { parseEvent, splitLines, type FlashStreamEvent } from '$lib/data/flashStream';
 
 // 试卷相关的形状统一在 $lib/data 里声明（后端 pydantic 保证），这里只做转发，
 // 免得同一份契约在 api 层和组件里各写一遍还写不一样。
-export type { AnswerAnnotations, EssayTopic, ExamReview, FlashDeck, PaperReview, PublicExam };
+export type {
+	AnswerAnnotations,
+	EssayTopic,
+	ExamReview,
+	FlashDeck,
+	FlashStreamEvent,
+	PaperReview,
+	PublicExam
+};
 
 export type AgentModel = {
 	id: string;
@@ -453,25 +462,28 @@ export async function generateExam(
 }
 
 /**
- * 闪卡出卡。与 generateExam 是同一套参数与错误映射，只是后端那边只出能本地判定的
- * 题型（填空 + 选择），按材料分片并发。
+ * 闪卡出卡，边写边给（后端 /quiz/flash/stream，一行一个 JSON）。每来一行就交给 onEvent，
+ * 第一张卡写好就到、不等整组：实测第一张 1 秒左右，整组 3 秒左右写完。正常读完返回总张数。
  *
- * 耗时不写死：实测在 DeepSeek 上闪卡与整卷都是十秒上下，差距在**判卷**——闪卡没有
- * 判卷往返，整卷提交后还要再等模型一轮。（app/config.py 里那组几十秒的旧压测数据
- * 出自另一个没记名字的模型，别拿来当承诺。）
+ * 卡片**带答案**（accept / accept_normalized / explanation）—— 翻面就是给用户看答案，
+ * 判定也在浏览器本地做，所以没有配套的判卷接口。
  *
- * 返回的卡片**带答案**（accept / accept_normalized / explanation）—— 翻面就是
- * 给用户看答案，判定也在浏览器本地做，所以没有配套的判卷接口。
+ * 出错一律抛出，调用方看自己收没收到过卡再决定怎么办：
+ * - 第一行之前的错误（闸门满 429、没有材料 422）是普通的错误响应，同 agentFetch；
+ * - 之后的错误后端放在最后一行 {"type":"error"}；
+ * - 流读到一半断了、没等到结束那一行就没了，也算出错；
+ * - 用户主动停止的 AbortError 原样抛出。
  */
-export async function generateFlashDeck(
+export async function streamFlashDeck(
 	model: string,
-	topic?: string,
-	notebookIds?: string[],
-	signal?: AbortSignal
-): Promise<FlashDeck> {
-	const payload = await agentFetch<{ data: FlashDeck }>('/quiz/flash/generate', {
+	topic: string | undefined,
+	notebookIds: string[] | undefined,
+	signal: AbortSignal,
+	onEvent: (event: FlashStreamEvent) => void
+): Promise<number> {
+	const response = await agentRequest(`${agentBase()}/quiz/flash/stream`, {
 		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
+		headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
 		signal,
 		body: JSON.stringify({
 			model,
@@ -480,11 +492,76 @@ export async function generateFlashDeck(
 		})
 	});
 
-	if (!payload.data?.deck_id || !payload.data.cards?.length) {
-		throw new Error('出卡失败：没有返回闪卡。');
+	if (!response.ok) {
+		const payload = await response.json().catch(() => ({}));
+		if (pageUnloading) {
+			throw unloadAbort();
+		}
+		const code = (payload as { error?: { code?: string } })?.error?.code;
+		throw new AgentRequestError(
+			errorMessage(payload, statusFallback(response.status)),
+			response.status,
+			code
+		);
 	}
 
-	return payload.data;
+	if (!response.body) {
+		throw new Error('出卡失败：没有收到闪卡。');
+	}
+
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let rest = '';
+
+	/** 交出这几行；读到结束那一行返回总张数，否则返回 null */
+	const deliver = (lines: string[]) => {
+		for (const line of lines) {
+			const event = parseEvent(line);
+			if (!event) {
+				continue;
+			}
+			if (event.type === 'error') {
+				throw new AgentRequestError(event.message || '出卡失败，请重试。', 502, event.code);
+			}
+			onEvent(event);
+			if (event.type === 'done') {
+				return event.total_cards;
+			}
+		}
+		return null;
+	};
+
+	while (true) {
+		let chunk: ReadableStreamReadResult<Uint8Array>;
+		try {
+			chunk = await reader.read();
+		} catch (error) {
+			if (error instanceof DOMException && error.name === 'AbortError') {
+				throw error;
+			}
+			if (pageUnloading) {
+				throw unloadAbort();
+			}
+			throw new Error('出卡中途断开了：网络连接断开，恢复后可以重试。', { cause: error });
+		}
+
+		if (chunk.done) {
+			break;
+		}
+
+		const split = splitLines(rest, decoder.decode(chunk.value, { stream: true }));
+		rest = split.rest;
+		const total = deliver(split.lines);
+		if (total !== null) {
+			return total;
+		}
+	}
+
+	const total = deliver(splitLines(rest, '\n').lines);
+	if (total !== null) {
+		return total;
+	}
+	throw new Error('出卡中途断开了：没等到最后几张，可以重试。');
 }
 
 export async function reviewExam(

@@ -326,6 +326,7 @@ FLASH_SHARD_COUNT = FLASH_CLOZE_SHARDS + FLASH_CHOICE_SHARDS
 FLASH_SHARD_CARD_RANGE = (3, 4)
 # 三片并发看不到彼此，撞考点在所难免，去重后张数会掉。低于这个数才算失败，
 # 不要设成 shard_count * card_range[0]，那样一旦去掉两张就整次报错。
+# 只管一次拿完的接口；边写边给的发出去就在学生手上了，一张没有才算失败。
 FLASH_DECK_MIN_CARDS = 6
 FLASH_CONTEXT_CHAR_LIMIT = 1600  # 每片
 FLASH_LLM_TIMEOUT = 90

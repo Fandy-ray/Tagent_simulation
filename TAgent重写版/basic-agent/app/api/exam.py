@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from flask import Blueprint
+import itertools
+import json
+import logging
+
+from flask import Blueprint, Response, stream_with_context
 
 from app.api.deps import get_essay_service, get_exam_service, select_provider
 from app.api.learner import (
@@ -24,11 +28,12 @@ from app.api.validators import (
 )
 from app.config import IDEMPOTENT_REPLAY_SECONDS
 from app.errors.api_errors import ModelNotFoundError
-from app.errors.exam_errors import ExamGoneError
+from app.errors.exam_errors import ExamGoneError, ExamServiceError
 from app.util.singleflight import SingleFlight, fingerprint
 
 
 blueprint = Blueprint("exam", __name__)
+log = logging.getLogger(__name__)
 
 # 同样内容的请求只算一次（为什么见 app/util/singleflight.py）。
 # 出卷、出卡、出题只合并「正在跑的」：学生主动点「再来一套」「重新出题」要的是新的。
@@ -87,6 +92,52 @@ def generate_flash():
         learner=learner,
     )
     return envelope(result, provider)
+
+
+@blueprint.post("/quiz/flash/stream")
+def stream_flash():
+    """闪卡边写边给：一行一个 JSON（NDJSON），第一张卡写好就到，不等整组。
+
+    各行的样子见 ExamService.stream_flash_deck，出错时最后一行是
+    {"type": "error", "message", "code"}。
+
+    先在这里取出第一行再开始回响应：闸门满、没有材料这类错误在第一行之前就会抛，
+    照旧回 429 / 422 的错误体，前端按普通请求失败处理。
+
+    不走 _once 合并：流没法分给两个请求。学生连点由前端兜（再点一次会先掐掉上一次）。
+    """
+    payload = exam_json_body()
+    provider = select_provider(payload.get("model"))
+    topic, notebook_ids = exam_topic(payload), optional_notebook_ids(payload)
+    events = get_exam_service().stream_flash_deck(topic, provider, notebook_ids=notebook_ids)
+    first = next(events)
+
+    def lines():
+        try:
+            for event in itertools.chain([first], events):
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+        except GeneratorExit:
+            raise
+        except ExamServiceError as exc:
+            yield json.dumps({"type": "error", "message": exc.message, "code": exc.code}, ensure_ascii=False) + "\n"
+        except Exception:
+            log.exception("闪卡流中途出错")
+            yield json.dumps(
+                {"type": "error", "message": "出卡中途出错了，请重试。", "code": "internal_error"},
+                ensure_ascii=False,
+            ) + "\n"
+        finally:
+            events.close()
+
+    response = Response(
+        stream_with_context(lines()),
+        mimetype="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+    # 响应还没开始读就被丢掉时（客户端已经走了），lines() 根本没跑起来、它的 finally
+    # 也不会跑；events 已经拿着闸门名额停在第一行，得在这里关
+    response.call_on_close(events.close)
+    return response
 
 
 @blueprint.post("/quiz/exam/review")
