@@ -54,24 +54,27 @@
 				<feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
 			</filter>
 		</defs>
+		<!-- 节点只摆在外圈，连线也绕开正中间的文字区（画布里大约 x 280~620、y 190~410）。
+		     原来「仿真引擎」「知识图谱」两个点正好落在大标题和比赛名称上 -->
 		<!-- connector lines -->
-		<line class="node-line" x1="120" y1="180" x2="350" y2="300" />
-		<line class="node-line" x1="350" y1="300" x2="580" y2="200" />
-		<line class="node-line" x1="580" y1="200" x2="780" y2="350" />
-		<line class="node-line" x1="350" y1="300" x2="300" y2="460" />
-		<line class="node-line" x1="580" y1="200" x2="650" y2="420" />
+		<line class="node-line" x1="120" y1="140" x2="170" y2="380" />
+		<line class="node-line" x1="170" y1="380" x2="240" y2="520" />
+		<line class="node-line" x1="120" y1="140" x2="760" y2="130" />
+		<line class="node-line" x1="760" y1="130" x2="790" y2="400" />
+		<line class="node-line" x1="790" y1="400" x2="650" y2="520" />
+		<line class="node-line" x1="240" y1="520" x2="650" y2="520" />
 		<!-- nodes -->
-		<circle class="node-dot" cx="120" cy="180" r="7" filter="url(#glow)" />
-		<circle class="node-dot" cx="350" cy="300" r="10" filter="url(#glow)" />
-		<circle class="node-dot" cx="580" cy="200" r="8" filter="url(#glow)" />
-		<circle class="node-dot" cx="780" cy="350" r="6" filter="url(#glow)" />
-		<circle class="node-dot" cx="300" cy="460" r="6" filter="url(#glow)" />
-		<circle class="node-dot" cx="650" cy="420" r="7" filter="url(#glow)" />
+		<circle class="node-dot" cx="120" cy="140" r="7" filter="url(#glow)" />
+		<circle class="node-dot" cx="170" cy="380" r="10" filter="url(#glow)" />
+		<circle class="node-dot" cx="760" cy="130" r="8" filter="url(#glow)" />
+		<circle class="node-dot" cx="790" cy="400" r="6" filter="url(#glow)" />
+		<circle class="node-dot" cx="240" cy="520" r="6" filter="url(#glow)" />
+		<circle class="node-dot" cx="650" cy="520" r="7" filter="url(#glow)" />
 		<!-- labels -->
-		<text class="node-label" x="100" y="165">系统模型</text>
-		<text class="node-label" x="330" y="285">仿真引擎</text>
-		<text class="node-label" x="560" y="185">知识图谱</text>
-		<text class="node-label" x="790" y="345">智能体</text>
+		<text class="node-label" x="100" y="125">系统模型</text>
+		<text class="node-label" x="80" y="410">仿真引擎</text>
+		<text class="node-label" x="735" y="115">知识图谱</text>
+		<text class="node-label" x="805" y="405">智能体</text>
 	</svg>
 
 	<!-- main content -->
