@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import operator
 from typing import Annotated, Any, TypedDict
 
@@ -40,6 +41,8 @@ from app.schema.exam import LLMGradeBatch, LLMGradeItem, validate_grade_batch
 from app.util.text import chunked
 
 
+log = logging.getLogger(__name__)
+
 _PROMPTS = {"essay": build_essay_grade_prompt, "cloze": build_cloze_grade_prompt}
 
 
@@ -54,14 +57,27 @@ class BatchTask(TypedDict):
     chunk: list[dict[str, Any]]
 
 
+def _reference_for(knowledge_base, question: str) -> list[str]:
+    """给一道大题找几段参考材料。找不到就不给，照样判。
+
+    材料只是判分时的参考（评分要点和参考答案才是依据）。只配了一个知识来源时
+    它挂了 search 会直接抛错，不能因此让整张卷子判不出来。
+    """
+    try:
+        documents = knowledge_base.search(question, k=3)
+    except Exception as exc:
+        log.warning("判卷时检索参考材料失败，这道题不带材料判：%s", exc)
+        return []
+    return [d.page_content[:600] for d in documents]
+
+
 def _prepare(state: GradeState, runtime: Runtime[AgentDeps]) -> dict:
     """给每道大题配几段参考材料，再按题型切批。"""
     essays, clozes = [], []
     for item in state["items"]:
         if item["type"] == "essay":
-            documents = runtime.context.knowledge_base.search(item["question"], k=3)
-            item = {**item, "knowledge_context": [d.page_content[:600] for d in documents]}
-            essays.append(item)
+            reference = _reference_for(runtime.context.knowledge_base, item["question"])
+            essays.append({**item, "knowledge_context": reference})
         else:
             clozes.append(item)
     batches = [("essay", chunk) for chunk in chunked(essays, GRADE_ESSAY_BATCH)]

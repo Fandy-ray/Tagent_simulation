@@ -348,6 +348,27 @@ def test_grading_batches_run_at_the_same_time():
     assert all(r.feedback == "好" for r in review.results if r.type == "essay")
 
 
+def test_a_failed_reference_search_does_not_fail_grading():
+    # 只配一个知识来源时它挂了 search 会抛错；参考材料只是辅助，照样判
+    class DownKnowledgeBase(FakeKnowledgeBase):
+        def search(self, _query, *, k=3):
+            raise RuntimeError("笔记本服务连不上")
+
+    exam = make_exam("wiring-exam-down")
+    client = ScriptedGradeLLM({
+        "items": [{"question_id": "E1", "score_ratio": 0.5, "feedback": "覆盖部分要点"}],
+        "overall_comment": "",
+    })
+    cache = ExamCache()
+    cache.put(exam.exam_id, StoredExam(exam=exam, served_model_id=TEST_PROVIDER.served_model_id))
+    sim = ExamService(DownKnowledgeBase(), StaticFactory(client), exam_cache=cache,
+                      llm_gate=LLMGate(max_concurrent=2))
+    review = sim.review_exam(exam.exam_id, {"E1": "事件调度、时钟推进"}, TEST_PROVIDER)
+    by_id = {result.id: result for result in review.results}
+    assert by_id["E1"].feedback == "覆盖部分要点"
+    assert '"knowledge_context": []' in client.prompts[0]
+
+
 def test_grade_llm_wrong_ids_retry_then_502():
     exam = make_exam("wiring-exam-3")
     client = ScriptedGradeLLM(

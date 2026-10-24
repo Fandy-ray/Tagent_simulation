@@ -161,7 +161,7 @@ def _drill_down(state: EssayState, runtime: Runtime[AgentDeps]) -> dict:
         max_issues=MAX_ISSUES,
         max_praises=MAX_PRAISES,
     )
-    # 和大题批注、下一轮的文件编辑是同一个节点；截止时间沿用整次批改的
+    # 和大题批注是同一个节点；截止时间沿用整次批改的
     return {
         "annotations": annotate_sentences(
             runtime.context,

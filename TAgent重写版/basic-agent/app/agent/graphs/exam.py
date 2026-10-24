@@ -48,6 +48,7 @@ from langgraph.runtime import Runtime
 
 from app.agent.nodes import json_call
 from app.agent.runtime import AgentDeps
+from app.errors.exam_errors import InvalidExamRequestError
 from app.config import (
     EXAM_LLM_TIMEOUT,
     EXAM_MIN_ATTEMPT_TIMEOUT,
@@ -205,11 +206,14 @@ class ExamState(TypedDict, total=False):
 
 
 def _sample(state: ExamState, runtime: Runtime[AgentDeps]) -> dict:
-    return {
-        "context": runtime.context.knowledge_base.sample_exam_context(
-            state.get("topic"), notebook_ids=state.get("notebook_ids")
-        )
-    }
+    context = runtime.context.knowledge_base.sample_exam_context(
+        state.get("topic"), notebook_ids=state.get("notebook_ids")
+    )
+    if not (context or "").strip():
+        # 和闪卡一样当场回 422。不拦的话三段照样去调模型，「仅依据参考材料出题」
+        # 却没有材料，白等一轮之后多半是 502，学生还不知道是笔记本选错了
+        raise InvalidExamRequestError("所选知识范围里没有可出题的材料，请换一个笔记本或来源")
+    return {"context": context}
 
 
 def _essay(state: ExamState, runtime: Runtime[AgentDeps]) -> dict:

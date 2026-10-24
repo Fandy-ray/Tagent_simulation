@@ -321,3 +321,14 @@ def test_cloze_and_choice_do_not_wait_for_a_slow_essay_stage():
     essay_end = llm.last("essay", "end")
     assert llm.first("cloze", "start") < essay_end, "填空等大题做完才开始"
     assert llm.first("choice", "start") < essay_end, "选择等大题做完才开始"
+
+
+def test_empty_material_is_a_request_error_before_any_model_call():
+    # 和闪卡一致：选了个空笔记本就当场 422，不去白调三段模型
+    from app.errors.exam_errors import InvalidExamRequestError
+    from tests.test_flash_service import EmptyKnowledgeBase
+
+    llm = PlanningLLM()
+    with pytest.raises(InvalidExamRequestError):
+        make_service(EmptyKnowledgeBase(), llm).generate_exam("排队论", TEST_PROVIDER)
+    assert llm.prompts == []
