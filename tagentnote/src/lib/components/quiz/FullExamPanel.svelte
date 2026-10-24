@@ -5,6 +5,7 @@
 	import { AgentRequestError, annotateExamAnswer, generateExam, reviewExam } from '$lib/apis/agent';
 	import MathText from '$lib/components/MathText.svelte';
 	import AnnotatedText from '$lib/components/essay/AnnotatedText.svelte';
+	import { cueRepeatsText } from '$lib/data/cue';
 	import {
 		ANNOTATE_MIN_ANSWER_CHARS,
 		annotationLabel,
@@ -617,10 +618,12 @@
 									</div>
 
 									{#if currentQuestion.type === 'cloze'}
-										<div class="mb-3 text-sm text-gray-400">
-											<!-- 填空题的提示句里也常有公式（$\lambda$ 之类），同样要渲染，不能原样露出 TeX -->
-											<MathText value={currentQuestion.cue} />
-										</div>
+										{#if !cueRepeatsText(currentQuestion.cue, currentQuestion.text)}
+											<div class="mb-3 text-sm text-gray-400">
+												<!-- 填空题的提示句里也常有公式（$\lambda$ 之类），同样要渲染，不能原样露出 TeX -->
+												<MathText value={currentQuestion.cue} />
+											</div>
+										{/if}
 
 										<div class="text-lg leading-relaxed font-medium">
 											{#each currentQuestion.text.split('____') as part, index (index)}
@@ -869,9 +872,11 @@
 
 									{#if currentResultQuestion}
 										{#if currentResultQuestion.type === 'cloze'}
-											<div class="mb-2 text-sm text-gray-400">
-												<MathText value={currentResultQuestion.cue} />
-											</div>
+											{#if !cueRepeatsText(currentResultQuestion.cue, currentResultQuestion.text)}
+												<div class="mb-2 text-sm text-gray-400">
+													<MathText value={currentResultQuestion.cue} />
+												</div>
+											{/if}
 
 											<div class="leading-relaxed font-medium">
 												<MathText value={currentResultQuestion.text} />

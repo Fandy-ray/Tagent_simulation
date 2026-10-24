@@ -1,5 +1,6 @@
 <script lang="ts">
 	import MathText from '$lib/components/MathText.svelte';
+	import { cueRepeatsText } from '$lib/data/cue';
 	import { LETTERS } from '$lib/data/exam';
 	import type { FlashCard } from '$lib/data/flash';
 
@@ -100,9 +101,11 @@
 					<div
 						class="flex min-h-0 flex-1 flex-col [justify-content:safe_center] overflow-y-auto py-4"
 					>
-						<div class="shrink-0 text-sm text-gray-400">
-							<MathText value={card.cue} />
-						</div>
+						{#if !cueRepeatsText(card.cue, card.text)}
+							<div class="shrink-0 text-sm text-gray-400">
+								<MathText value={card.cue} />
+							</div>
+						{/if}
 
 						<div class="mt-2.5 shrink-0 text-lg leading-relaxed font-medium">
 							<MathText value={before} /><span
