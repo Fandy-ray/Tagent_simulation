@@ -29,7 +29,7 @@ from pydantic import (
 # ====================== 全局约束常量（出题 prompt 与校验共用） ======================
 TOTAL_POINTS = 100
 # 全卷 16~21 题：题量够铺满试卷版面，客观题占比提高后单题分值下降，
-# 判错一道的损失变小，配合分批判分（ExamService._grade_batches）保证判分稳定。
+# 判错一道的损失变小，配合分批判分（app/agent/graphs/grade.py）保证判分稳定。
 CLOZE_COUNT_RANGE = (8, 10)
 CHOICE_COUNT_RANGE = (6, 8)
 ESSAY_COUNT_RANGE = (2, 3)

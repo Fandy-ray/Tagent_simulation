@@ -95,7 +95,7 @@ def make_exam(exam_id="wiring-exam-1"):
 class ScriptedGradeLLM:
     """按批作答的假模型。
 
-    判分已按题型分批（见 ExamService._grade_batches），每批的 ID 集合都要精确
+    判分已按题型分批（见 app/agent/graphs/grade.py），每批的 ID 集合都要精确
     匹配，所以默认只回本批待评 JSON 中的题号——照搬整份 payload 会被
     validate_grade_batch 判为"多余 ID"。verbatim=True 用于故意回错题号的用例。
     """

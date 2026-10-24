@@ -183,24 +183,11 @@ class EssayService:
         return result["annotations"]
 
     # ====================== 共用 ======================
-    def _deps(
-        self,
-        provider: ModelProvider,
-        *,
-        budget_seconds: float | None = None,
-        deadline: float | None = None,
-    ) -> AgentDeps:
-        """一次运行的依赖。传 budget_seconds 就从现在起算，传 deadline 就沿用它。"""
-        if deadline is None:
-            return AgentDeps.start(
-                knowledge_base=self.knowledge_base,
-                client_factory=self.client_factory,
-                provider=provider,
-                budget_seconds=budget_seconds or 0.0,
-            )
-        return AgentDeps(
+    def _deps(self, provider: ModelProvider, *, budget_seconds: float) -> AgentDeps:
+        """一次运行的依赖。截止时间从现在起算，整次运行（含下钻）共用这一个。"""
+        return AgentDeps.start(
             knowledge_base=self.knowledge_base,
             client_factory=self.client_factory,
             provider=provider,
-            deadline=deadline,
+            budget_seconds=budget_seconds,
         )
