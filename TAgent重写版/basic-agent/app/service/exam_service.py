@@ -262,36 +262,21 @@ class ExamService:
                 EXAM_LLM_TIMEOUT, max(EXAM_MIN_ATTEMPT_TIMEOUT, budget - 15.0)
             )
 
-            # 先定考点，再分头出题。三段并发时彼此看不见对方出了什么，
-            # 不先规划的话同一个考点会被问两遍（实测：填空问「ρ 的计算公式」，
-            # 选择又问「ρ 的表达式」）。事后去重做不到——两道题的文字并不相同。
+            # 先定考点，再分头出题——但**只给填空和选择**，大题不等规划。
             #
-            # 这和 config.py 里「把已考清单塞回 prompt 反而更重复」那条结论不冲突：
-            # 那说的是**串行**地把前一段结果传给后一段；这里是一次性定好、切成
-            # 互不相交的三份，三段照旧并发。代价是多一个模型来回。
-            wants = [CLOZE_COUNT_RANGE[1], CHOICE_COUNT_RANGE[1], ESSAY_COUNT_RANGE[1]]
-            # 开关与实测数据见 config.EXAM_PLAN_POINTS
-            plan = _plan_points(
-                self.client_factory,
-                provider,
-                context,
-                topic,
-                sum(wants),
-                attempt_timeout=attempt_timeout,
-                budget=budget,
-                started=started,
-            ) if EXAM_PLAN_POINTS else []
-            assigned = split_plan(plan, wants) if plan else [None, None, None]
-            # 某段分到的考点少于它的题数下限时，**不给它清单**，让它自由出题。
-            # 规划被要求「宁可少给也不要硬凑」，所以常常只返回十几个考点，
-            # 分到填空段就不够出 8 道；硬按清单出会出到刚好下限，
-            # 再被违规过滤删掉一两道就跌破下限、整段重试、最后 502（实测过）。
-            stages = tuple(
-                spec._replace(
-                    points=points if points and len(points) >= spec.minimum else None
-                )
-                for spec, points in zip(stages_spec, assigned)
-            )
+            # 为什么要规划：三段并发时彼此看不见，同一个考点会被问两遍（实测：
+            # 填空问「ρ 的计算公式」，选择又问「ρ 的表达式」），事后去重做不到。
+            # 这和 config.py 里「把已考清单塞回 prompt 反而更重复」不冲突：那是**串行**
+            # 传结果；这里是一次性定好、切成互不相交的几份，各段照旧并发。
+            #
+            # 为什么大题不等：实测一次出卷的时间线是
+            #   规划 1.9s → 填空 5.8s / 选择 5.4s / 大题 8.1s，总 10.3s
+            # 大题最慢、决定总耗时，而它又最不需要规划——三道大题靠「计算 / 建模 /
+            # 对比各一道」本来就不重复，跨段撞考点出在填空和选择之间。
+            # 让大题从 0 秒起步、和规划并行，关键路径就从「规划 + 大题」
+            # 变成 max(大题, 规划 + 填空)。
+            cloze_spec, choice_spec, essay_spec = stages_spec
+            wants = [CLOZE_COUNT_RANGE[1], CHOICE_COUNT_RANGE[1]]
 
             def run_stage(stage: "Stage"):
                 build_prompt, model_cls, max_tokens, field, minimum, points = stage
@@ -315,11 +300,34 @@ class ExamService:
                     ),
                 )
 
-            with ThreadPoolExecutor(max_workers=len(stages)) as pool:
-                # 任何一段抛错都在这里原样冒出来（504/502/429 的语义保持不变）
-                parts = list(pool.map(run_stage, stages))
+            def assign(spec: "Stage", points):
+                # 某段分到的考点少于它的题数下限时，**不给它清单**，让它自由出题。
+                # 规划被要求「宁可少给也不要硬凑」，常常只返回十几个考点；硬按清单
+                # 出会出到刚好下限，删掉一两道就跌破下限、重试、最后 502（实测过）。
+                return spec._replace(
+                    points=points if points and len(points) >= spec.minimum else None
+                )
 
-            cloze_part, choice_part, essay_part = parts
+            with ThreadPoolExecutor(max_workers=len(stages_spec)) as pool:
+                essay_future = pool.submit(run_stage, essay_spec)  # 不等规划
+                # 开关与实测数据见 config.EXAM_PLAN_POINTS
+                plan = _plan_points(
+                    self.client_factory,
+                    provider,
+                    context,
+                    topic,
+                    sum(wants),
+                    attempt_timeout=attempt_timeout,
+                    budget=budget,
+                    started=started,
+                ) if EXAM_PLAN_POINTS else []
+                cloze_points, choice_points = split_plan(plan, wants) if plan else (None, None)
+                cloze_future = pool.submit(run_stage, assign(cloze_spec, cloze_points))
+                choice_future = pool.submit(run_stage, assign(choice_spec, choice_points))
+                # 任何一段抛错都在这里原样冒出来（504/502/429 的语义保持不变）
+                cloze_part = cloze_future.result()
+                choice_part = choice_future.result()
+                essay_part = essay_future.result()
             draft = GeneratedExamDraft(
                 title=cloze_part.title,
                 cloze=_clean(cloze_part.cloze, "填空", CLOZE_COUNT_RANGE[1]),

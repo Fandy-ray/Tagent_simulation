@@ -164,29 +164,81 @@ async def _exam_body(prompt: str):
     return types.SimpleNamespace(content=json.dumps(payload, ensure_ascii=False))
 
 
-def test_planning_runs_once_before_the_three_stages():
+def _kind(prompt: str) -> str:
+    if "**填空题**" in prompt:
+        return "cloze"
+    if "**选择题**" in prompt:
+        return "choice"
+    return "essay"
+
+
+def test_planning_runs_once_and_gates_only_cloze_and_choice():
     llm = PlanningLLM()
     make_service(ShardedKnowledgeBase(), llm).generate_exam("排队论", TEST_PROVIDER)
     assert len(llm.plan_prompts()) == 1, "规划该只跑一次"
     assert len(llm.stage_prompts()) == 3
-    assert llm.prompts[0] == llm.plan_prompts()[0], "规划要在三段之前"
+
+    order = ["plan" if "只列考点" in p else _kind(p) for p in llm.prompts]
+    plan_at = order.index("plan")
+    assert order.index("cloze") > plan_at, "填空要等规划"
+    assert order.index("choice") > plan_at, "选择要等规划"
 
 
-def test_each_stage_is_told_a_different_set_of_points():
+def test_cloze_and_choice_are_told_disjoint_points():
+    # 跨段撞考点出在填空和选择之间（实测：填空问「ρ 的计算公式」、选择又问「ρ 的表达式」）
     llm = PlanningLLM()
     make_service(ShardedKnowledgeBase(), llm).generate_exam("排队论", TEST_PROVIDER)
 
-    assigned = []
+    assigned = {}
     for prompt in llm.stage_prompts():
-        assert "本段只在下面这些考点范围内出题" in prompt, "考点清单没进 prompt"
-        assigned.append({p for p in llm.points if f"- {p}\n" in prompt})
+        kind = _kind(prompt)
+        if kind == "essay":
+            continue
+        assert "本段只在下面这些考点范围内出题" in prompt, f"{kind} 段没拿到考点清单"
+        assigned[kind] = {p for p in llm.points if f"- {p}\n" in prompt}
 
-    for i in range(len(assigned)):
-        for j in range(i + 1, len(assigned)):
-            assert not (assigned[i] & assigned[j]), (
-                f"第 {i} 段和第 {j} 段分到了同一个考点：{assigned[i] & assigned[j]}"
-            )
-    assert all(assigned), "有段落一个考点都没分到"
+    assert assigned["cloze"] and assigned["choice"]
+    assert not (assigned["cloze"] & assigned["choice"]), "填空和选择分到了同一个考点"
+
+
+def test_essay_gets_no_points_list():
+    # 大题靠「计算 / 建模 / 对比各一道」保证不重复，不需要规划
+    llm = PlanningLLM()
+    make_service(ShardedKnowledgeBase(), llm).generate_exam("排队论", TEST_PROVIDER)
+    (essay,) = [p for p in llm.stage_prompts() if _kind(p) == "essay"]
+    assert "本段只在下面这些考点范围内出题" not in essay
+
+
+def test_essay_does_not_wait_for_the_plan():
+    """大题从 0 秒起步，和规划并行。
+
+    实测时间线：规划 1.9s → 大题 8.1s，串行时总耗时 10.3s。大题最慢、决定总耗时，
+    让它等规划就是白白把规划那 1.9 秒加到关键路径上。这条守的是「并行」本身：
+    以后谁把它改回先规划后出题，这里会红。
+    """
+    import threading
+    import time as _time
+
+    events: list[tuple[str, str, float]] = []
+    lock = threading.Lock()
+
+    class SlowPlanLLM(PlanningLLM):
+        async def ainvoke(self, prompt):
+            kind = "plan" if "只列考点" in prompt else _kind(prompt)
+            with lock:
+                events.append((kind, "start", _time.monotonic()))
+            if kind == "plan":
+                await __import__("asyncio").sleep(0.4)
+            result = await super().ainvoke(prompt)
+            with lock:
+                events.append((kind, "end", _time.monotonic()))
+            return result
+
+    make_service(ShardedKnowledgeBase(), SlowPlanLLM()).generate_exam("排队论", TEST_PROVIDER)
+
+    at = {(k, e): t for k, e, t in events}
+    assert at[("essay", "start")] < at[("plan", "end")], "大题等规划做完才开始——又退回串行了"
+    assert at[("cloze", "start")] >= at[("plan", "end")], "填空没等规划"
 
 
 def test_a_failed_plan_still_produces_an_exam():
@@ -201,10 +253,10 @@ def test_a_failed_plan_still_produces_an_exam():
         assert "本段只在下面这些考点范围内出题" not in prompt
 
 
-def test_planning_asks_for_as_many_points_as_the_exam_has_questions():
+def test_planning_asks_only_for_cloze_and_choice_points():
     llm = PlanningLLM()
     make_service(ShardedKnowledgeBase(), llm).generate_exam("排队论", TEST_PROVIDER)
-    total = CLOZE_COUNT_RANGE[1] + CHOICE_COUNT_RANGE[1] + ESSAY_COUNT_RANGE[1]
+    total = CLOZE_COUNT_RANGE[1] + CHOICE_COUNT_RANGE[1]
     assert f"**最多** {total} 个考点" in llm.plan_prompts()[0]
 
 
