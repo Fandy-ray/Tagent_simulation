@@ -92,7 +92,7 @@ def test_empty_plan_yields_empty_groups():
 
 @pytest.fixture(autouse=True)
 def _enable_planning(monkeypatch):
-    monkeypatch.setattr("app.service.exam_service.EXAM_PLAN_POINTS", True)
+    monkeypatch.setattr("app.agent.graphs.exam.EXAM_PLAN_POINTS", True)
 
 
 class PlanningLLM:
@@ -281,3 +281,43 @@ def test_a_stage_with_enough_points_is_still_constrained():
     make_service(ShardedKnowledgeBase(), llm).generate_exam("排队论", TEST_PROVIDER)
     cloze_prompt = next(p for p in llm.stage_prompts() if "**填空题**" in p)
     assert "本段只在下面这些考点范围内出题" in cloze_prompt
+
+
+class TimelineLLM(PlanningLLM):
+    """记下每次调用的起止时刻；slow 里点名的题型睡一会儿。"""
+
+    def __init__(self, slow=None, **kwargs):
+        super().__init__(**kwargs)
+        self.slow = slow or {}
+        self.events: list[tuple[str, str, float]] = []
+
+    async def ainvoke(self, prompt):
+        import asyncio
+        import time as _time
+
+        kind = "plan" if "只列考点" in prompt else _kind(prompt)
+        self.events.append((kind, "start", _time.monotonic()))
+        await asyncio.sleep(self.slow.get(kind, 0))
+        result = await super().ainvoke(prompt)
+        self.events.append((kind, "end", _time.monotonic()))
+        return result
+
+    def first(self, kind, edge):
+        return min(t for k, e, t in self.events if k == kind and e == edge)
+
+    def last(self, kind, edge):
+        return max(t for k, e, t in self.events if k == kind and e == edge)
+
+
+def test_cloze_and_choice_do_not_wait_for_a_slow_essay_stage():
+    """填空、选择只等规划，不等大题。
+
+    LangGraph 一轮一轮推进：规划要是和大题同在一轮，填空、选择就得等大题
+    做完才开始，关键路径变成「大题 + 填空」。所以它俩和规划放进一张子图，
+    子图和大题同一轮并行。谁把子图拆回平铺，这里会红。
+    """
+    llm = TimelineLLM(slow={"essay": 0.5})
+    make_service(ShardedKnowledgeBase(), llm).generate_exam("排队论", TEST_PROVIDER)
+    essay_end = llm.last("essay", "end")
+    assert llm.first("cloze", "start") < essay_end, "填空等大题做完才开始"
+    assert llm.first("choice", "start") < essay_end, "选择等大题做完才开始"

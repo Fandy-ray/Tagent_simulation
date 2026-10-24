@@ -1,7 +1,7 @@
 
 import pytest
 
-from app.service import exam_service
+from app.infra import llm_json
 from app.service.exam_service import ExamService
 from app.schema.exam import (
     CHOICE_COUNT_RANGE,
@@ -92,7 +92,7 @@ def simulator() -> ExamService:
 
 def test_exam_generation_uses_selected_provider_and_locks_model(monkeypatch):
     sim = simulator()
-    monkeypatch.setattr(exam_service, "call_json_llm", lambda *_args, **_kwargs: draft())
+    monkeypatch.setattr(llm_json, "call_json_llm", lambda *_args, **_kwargs: draft())
 
     public_exam = sim.generate_exam("主题", provider("model-a"))
 
@@ -105,7 +105,7 @@ def test_exam_generation_uses_selected_provider_and_locks_model(monkeypatch):
 
 def test_exam_review_rejects_a_different_model_before_grading(monkeypatch):
     sim = simulator()
-    monkeypatch.setattr(exam_service, "call_json_llm", lambda *_args, **_kwargs: draft())
+    monkeypatch.setattr(llm_json, "call_json_llm", lambda *_args, **_kwargs: draft())
     public_exam = sim.generate_exam(None, provider("model-a"))
 
     with pytest.raises(ModelMismatchError) as exc_info:
