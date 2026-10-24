@@ -26,7 +26,6 @@ from app.config import (
     DEFAULT_KNOWLEDGE_FILE,
     DEFAULT_TEXT_DB_DIR,
     EXAM_CONTEXT_CHAR_LIMIT,
-    EXAM_CONTEXT_SEPARATOR,
     EXAM_MMR_FETCH_K,
     EXAM_MMR_LAMBDA,
     EXAM_TEXTBOOK_MIN_SHARE,
@@ -347,10 +346,6 @@ class KnowledgeBase:
         # 答疑返回出处时要说是第几章第几页（app/rag/citations.py）
         annotate_book_locations(content, chunks)
         return chunks
-    def sample_exam_context(self, topic: str | None = None, notebook_ids: list[str] | None = None) -> str:
-        """Select diverse knowledge chunks and cap the prompt context size."""
-        return EXAM_CONTEXT_SEPARATOR.join(text for text, _ in self.sample_exam_pieces(topic, notebook_ids))
-
     def sample_exam_pieces(
         self, topic: str | None = None, notebook_ids: list[str] | None = None
     ) -> list[tuple[str, str]]:

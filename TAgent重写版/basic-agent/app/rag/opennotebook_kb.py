@@ -1,7 +1,6 @@
 """OpenNotebook 知识库适配器。
 
-只实现 service 会调用的几个方法：retrieve / search / chunks / sample_exam_pieces
-（sample_exam_context 是把它拼成一段的版本）。
+只实现 service 会调用的几个方法：retrieve / search / chunks / sample_exam_pieces。
 建向量索引是 OpenNotebook 自己的事，这里不落 FAISS。
 """
 
@@ -16,7 +15,7 @@ from urllib.parse import urlsplit
 import httpx
 from langchain_core.documents import Document
 
-from app.config import EXAM_CONTEXT_CHAR_LIMIT, EXAM_CONTEXT_SEPARATOR, EXAM_SAMPLE_K
+from app.config import EXAM_CONTEXT_CHAR_LIMIT, EXAM_SAMPLE_K
 from app.rag.knowledge_base import select_quiz_documents
 
 
@@ -128,11 +127,6 @@ class OpenNotebookKnowledgeBase:
                     raise OpenNotebookError("OpenNotebook 没有可出题的笔记或来源。")
                 self._chunks = documents
             return self._chunks
-
-    def sample_exam_context(
-        self, topic: str | None = None, notebook_ids: list[str] | None = None
-    ) -> str:
-        return EXAM_CONTEXT_SEPARATOR.join(text for text, _ in self.sample_exam_pieces(topic, notebook_ids))
 
     def sample_exam_pieces(
         self, topic: str | None = None, notebook_ids: list[str] | None = None

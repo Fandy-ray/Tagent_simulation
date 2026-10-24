@@ -67,13 +67,10 @@ class FakeSource:
             raise RuntimeError(f"{self.name} down")
         return [type("Doc", (), {"page_content": self.text, "metadata": {"h1": self.name}})()]
 
-    def sample_exam_context(self, topic=None, notebook_ids=None):
+    def sample_exam_pieces(self, topic=None, notebook_ids=None):
         if self.fail:
             raise RuntimeError(f"{self.name} down")
-        return f"{self.name}:{topic or 'all'}:{self.text}"
-
-    def sample_exam_pieces(self, topic=None, notebook_ids=None):
-        return [(self.sample_exam_context(topic, notebook_ids), self.name)]
+        return [(f"{self.name}:{topic or 'all'}:{self.text}", self.name)]
 
 
 def test_opennotebook_retrieve_and_chunks():
@@ -104,7 +101,7 @@ def test_opennotebook_retrieve_and_chunks():
 
     chunks = kb.chunks()
     assert [doc.metadata["h1"] for doc in chunks] == ["笔记A", "教材"]
-    assert "到达率" in kb.sample_exam_context("排队")
+    assert any("到达率" in text for text, _ in kb.sample_exam_pieces("排队"))
 
 
 def test_opennotebook_falls_back_to_text_search():
@@ -139,7 +136,7 @@ def test_composite_skips_failed_source():
     context, documents = composite.retrieve("延迟")
     assert context.startswith("local:")
     assert documents[0].page_content.startswith("local:")
-    assert composite.sample_exam_context("延迟").startswith("local:")
+    assert composite.sample_exam_pieces("延迟")[0][0].startswith("local:")
     assert composite.describe()["kind"] == "composite"
 
 

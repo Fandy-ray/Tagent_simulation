@@ -164,7 +164,7 @@ class RAGConcurrencyTest(unittest.TestCase):
         self.knowledge_base.vectorstore = vectorstore
         self.knowledge_base._knowledge_chunks = [Document(page_content="fallback", metadata={"h1": "fallback"})]
 
-        context = self.knowledge_base.sample_exam_context("queueing theory")
+        context = "\n".join(text for text, _ in self.knowledge_base.sample_exam_pieces("queueing theory"))
 
         # 先捞候选池，再按来源配额挑回 EXAM_SAMPLE_K*2 个；lambda 偏相关
         self.assertEqual(
@@ -185,7 +185,7 @@ class RAGConcurrencyTest(unittest.TestCase):
         self.knowledge_base.vectorstore = FakeExamVectorStore([])
         self.knowledge_base._knowledge_chunks = documents
 
-        context = self.knowledge_base.sample_exam_context()
+        context = "\n".join(text for text, _ in self.knowledge_base.sample_exam_pieces())
 
         for index in range(config.EXAM_SAMPLE_K):
             self.assertIn(f"chapter-content-{index}", context)

@@ -11,8 +11,6 @@ import threading
 import time
 from typing import Any, Callable
 
-from app.config import EXAM_CONTEXT_SEPARATOR
-
 
 log = logging.getLogger(__name__)
 
@@ -143,11 +141,6 @@ class CompositeKnowledgeBase:
         if not documents:
             raise RuntimeError("没有可出题的知识片段。" + (" ".join(errors) if errors else ""))
         return documents
-
-    def sample_exam_context(
-        self, topic: str | None = None, notebook_ids: list[str] | None = None
-    ) -> str:
-        return EXAM_CONTEXT_SEPARATOR.join(text for text, _ in self.sample_exam_pieces(topic, notebook_ids))
 
     def sample_exam_pieces(
         self, topic: str | None = None, notebook_ids: list[str] | None = None

@@ -156,7 +156,7 @@ def test_candidate_pool_is_larger_than_what_gets_picked():
     from app.config import EXAM_SAMPLE_K
 
     store = FakeVectorStore()
-    make_kb(store).sample_exam_context("排队论")
+    make_kb(store).sample_exam_pieces("排队论")
 
     (call,) = store.calls
     assert call["k"] > EXAM_SAMPLE_K * 2, (
@@ -166,12 +166,12 @@ def test_candidate_pool_is_larger_than_what_gets_picked():
 
 def test_retrieval_asks_for_relevance_over_diversity():
     store = FakeVectorStore()
-    make_kb(store).sample_exam_context("排队论")
+    make_kb(store).sample_exam_pieces("排队论")
     assert store.calls[0]["lambda_mult"] > 0.5, "默认 0.5 对短主题太散，必须显式调高"
 
 
 def test_textbook_actually_survives_into_the_context():
     # 端到端那一步：论文占压倒多数时，拼出来的材料里仍然要有教材
     store = FakeVectorStore()
-    context = make_kb(store).sample_exam_context("排队论")
-    assert "教材片段" in context, "配额没生效，拼出来的全是论文"
+    pieces = make_kb(store).sample_exam_pieces("排队论")
+    assert any("教材片段" in text for text, _ in pieces), "配额没生效，挑出来的全是论文"

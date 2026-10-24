@@ -76,9 +76,6 @@ class RecordingFactory:
 class FakeKnowledgeBase:
     """只提供 ExamService 真正用到的那一个方法，不碰嵌入模型。"""
 
-    def sample_exam_context(self, topic=None, notebook_ids=None) -> str:
-        return "教材内容"
-
     def sample_exam_pieces(self, topic=None, notebook_ids=None):
         return [("教材内容", "textbook")]
 

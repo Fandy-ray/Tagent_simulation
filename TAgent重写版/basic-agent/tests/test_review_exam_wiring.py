@@ -151,9 +151,6 @@ class FakeKnowledgeBase:
     def retrieve(self, _query, notebook_ids=None):
         return "教材片段", []
 
-    def sample_exam_context(self, topic=None, notebook_ids=None) -> str:
-        return "教材片段"
-
     def search(self, _query, *, k=3):
         return [types.SimpleNamespace(page_content="教材片段")]
 

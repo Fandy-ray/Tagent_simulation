@@ -114,7 +114,10 @@ class AgentConfig:
     """服务级配置。由 from_env() 在启动时构造一次，之后只读。"""
 
     host: str = "127.0.0.1"
-    port: int = 5000
+    # 5001：前端代理（tagentnote/vite.config.ts）写死了这个端口，一键脚本也会改成它；
+    # 5000 在 macOS 上常年被「隔空播放接收器」占着。以前默认 5000，照 .env.runtime.example
+    # 手配、不走一键脚本的人前端一律 502
+    port: int = 5001
     use_waitress: bool = True
     # 流式回答整段占一个线程。8 个线程时 12 人同时提问，后 4 人的首字要等 6 秒多，
     # 连 /health 都跟着卡住（压测 S7）。这些线程都在等网络，多开很便宜。
@@ -173,7 +176,7 @@ class AgentConfig:
             knowledge_source = "local"
         return cls(
             host=_env("BASIC_AGENT_HOST", "AGENT_HOST", default="127.0.0.1"),
-            port=int(_env("BASIC_AGENT_PORT", "AGENT_PORT", default="5000")),
+            port=int(_env("BASIC_AGENT_PORT", "AGENT_PORT", default="5001")),
             use_waitress=os.getenv("USE_WAITRESS", "1") == "1",
             waitress_threads=int(os.getenv("WAITRESS_THREADS", "100")),
             admin_token=os.getenv("AGENT_ADMIN_TOKEN", ""),
@@ -319,10 +322,10 @@ GRADE_MIN_ATTEMPT_TIMEOUT = 20
 # 配 4500 字上下文（老那轮压测里中位 55.3s，出处见本段开头的警示）；闪卡把
 # 两个变量同时砍到三分之一——每片 3~4 张卡配 ~1600 字材料，三片并发发出。
 #
-# 分片数是按那组老数据定的。2026-09-11 在 DeepSeek 上实测，闪卡 6~10s、整卷
-# 8~9s，两者已经拉不开差距——**拆闪卡的理由现在是交互形态（只出能本地判定的
-# 题型、随时开随时停），不再是快**。前端文案已据此去掉了所有秒数，这里同理：
-# 不要再把"目标 20~30s"当成对用户的承诺写进 UI。
+# 分片数是按那组老数据定的。2026-09-11 在 DeepSeek 上实测闪卡 6~10s、整卷 8~9s；
+# 之后整卷七路并行、闪卡边写边给（2026-10-25：整卷中位 4 秒左右，闪卡第一张 1 秒、
+# 整组 3 秒）。拆闪卡的理由一直是交互形态（只出能本地判定的题型、随时开随时停）。
+# 秒数随上游时段波动很大，不要把它当成对用户的承诺写进 UI。
 #
 # 依据与整卷"三段并行"是同一条：单次调用的输出 token 量与上下文长度才是
 # 主要耗时来源（见上面 EXAM_CONTEXT_CHAR_LIMIT 的注释：6000 字上下文单段

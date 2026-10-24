@@ -1,6 +1,5 @@
 import { env } from '$env/dynamic/public';
 
-import { type Citation } from '$lib/data/knowledge';
 import { learnerHeaders } from '$lib/data/learner';
 import type { AnswerAnnotations, EssayTopic, PaperReview } from '$lib/data/essay';
 import type { ExamReview, PublicExam, ReviewResult } from '$lib/data/exam';
@@ -30,19 +29,6 @@ export type AgentModel = {
 export type AgentModelList = {
 	object: 'list';
 	data: AgentModel[];
-};
-
-export type AgentRagResponse = {
-	code: number;
-	msg: string;
-	data: {
-		user_question: string;
-		final_answer: string;
-		retrieved_context?: string;
-		step_log?: string[];
-		citations?: Citation[];
-	};
-	model: string;
 };
 
 export const agentBase = () => (env.PUBLIC_AGENT_URL?.trim() || '/agent-api').replace(/\/$/, '');
@@ -163,42 +149,6 @@ async function agentFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function getAgentModels(): Promise<AgentModelList> {
 	return agentFetch<AgentModelList>('/v1/models');
-}
-
-const knowledgeCitation = (): Citation => ({
-	id: 'retrieved',
-	collectionId: 'knowledge',
-	collectionName: '知识库',
-	fileId: 'retrieved',
-	title: '检索到的知识片段',
-	kind: 'note',
-	href: '#'
-});
-
-export async function queryAgentRag(
-	question: string,
-	model: string,
-	_collectionId?: string
-): Promise<AgentRagResponse> {
-	const payload = await agentFetch<AgentRagResponse>('/rag/query', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			model,
-			user_question: question,
-			notebook_ids: _collectionId ? [_collectionId] : undefined
-		})
-	});
-
-	if (!payload.data?.citations) {
-		const context = payload.data?.retrieved_context?.trim();
-		payload.data = {
-			...payload.data,
-			citations: context ? [knowledgeCitation()] : []
-		};
-	}
-
-	return payload;
 }
 
 export type AgentChatResult = {
