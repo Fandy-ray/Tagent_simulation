@@ -378,6 +378,13 @@ ESSAY_TOPIC_MIN_ATTEMPT_TIMEOUT = 20
 ESSAY_TOPIC_MIN_SUGGESTED_CHARS = 500
 ESSAY_TOPIC_MAX_SUGGESTED_CHARS = 2000
 
+# 文件编辑的修改建议（app/agent/graphs/edit.py，这一轮只铺路、还没接路由）。
+# 下面是**初值，没有实测过**：比批注多写一整句改写，超时和输出额度给宽一点。
+# 下一轮接上界面时照上面几段的做法实测再定，把模型和日期写进来。
+EDIT_LLM_TIMEOUT = 60
+EDIT_MIN_ATTEMPT_TIMEOUT = 20
+EDIT_MAX_SUGGESTIONS = 5
+
 
 # ====================== LLM 闸门的排队 ======================
 #
