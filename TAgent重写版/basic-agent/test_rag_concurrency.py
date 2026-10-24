@@ -54,8 +54,8 @@ class FakeExamVectorStore:
         self.documents = documents
         self.calls = []
 
-    def max_marginal_relevance_search(self, query, *, k, fetch_k):
-        self.calls.append((query, k, fetch_k))
+    def max_marginal_relevance_search(self, query, *, k, fetch_k, lambda_mult=0.5):
+        self.calls.append((query, k, fetch_k, lambda_mult))
         return self.documents
 
 
@@ -166,8 +166,13 @@ class RAGConcurrencyTest(unittest.TestCase):
 
         context = self.knowledge_base.sample_exam_context("queueing theory")
 
-        # 候选池 20 不变；k 多取一倍备用（论文窗口去重后往后补），前 EXAM_SAMPLE_K 个与以前相同
-        self.assertEqual(vectorstore.calls, [("queueing theory", config.EXAM_SAMPLE_K * 2, 20)])
+        # 先捞候选池，再按来源配额挑回 EXAM_SAMPLE_K*2 个；lambda 偏相关
+        self.assertEqual(
+            vectorstore.calls,
+            [("queueing theory", config.EXAM_MMR_FETCH_K, config.EXAM_MMR_FETCH_K, config.EXAM_MMR_LAMBDA)],
+        )
+        # 候选池必须比要挑的多，配额才有挑的余地（第一版接线就栽在这里）
+        self.assertGreater(config.EXAM_MMR_FETCH_K, config.EXAM_SAMPLE_K * 2)
         for index in range(3):
             self.assertIn(f"topic-result-{index}", context)
         self.assertNotIn("fallback", context)
