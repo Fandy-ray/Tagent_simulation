@@ -13,8 +13,11 @@ prompt 里写了约束不等于模型会守。实测填「排队论」出来的�
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Iterable
+
+log = logging.getLogger(__name__)
 
 
 # 指代参考材料的说法。学生手里只有题干，这些词一出现题就没法做。
@@ -125,3 +128,37 @@ def drop_violating(questions: Iterable[Any]) -> tuple[list[Any], list[tuple[Any,
         else:
             kept.append(question)
     return kept, dropped
+
+
+def require_clean_enough(part: Any, field: str, minimum: int) -> None:
+    """删掉违规题之后还得够数，否则让 call_json_llm 重试这一段。
+
+    放在 post_validate 里（而不是拿到结果后在外面判）才能复用它的重试圈；
+    放外面就只能要么将就用坏题、要么直接报错。
+    """
+    kept, _ = drop_violating(getattr(part, field, []) or [])
+    if len(kept) < minimum:
+        raise ValueError(
+            f"{field} 段可用题目只剩 {len(kept)} 道（少于 {minimum} 道）："
+            "题目大多指代了学生看不到的材料，或把答案写在了题干里"
+        )
+
+
+def clean_questions(questions: list, label: str, limit: int | None = None) -> list:
+    """删掉违规题，并把删了什么记进日志——出题质量得能被看见。
+
+    limit 是最终题数上限：分段草稿允许模型多给几道当余量（DRAFT_OVERSHOOT），
+    删完还多出来的在这里裁掉，最终试卷仍然严格落在 COUNT_RANGE 内。
+    """
+    kept, dropped = drop_violating(questions or [])
+    for question, reasons in dropped:
+        log.info(
+            "丢弃一道%s题（%s）：%s",
+            label,
+            "；".join(reasons),
+            str(getattr(question, "text", None) or getattr(question, "question", ""))[:60],
+        )
+    if limit is not None and len(kept) > limit:
+        log.info("%s题多出 %d 道（模型给的余量），裁掉", label, len(kept) - limit)
+        kept = kept[:limit]
+    return kept

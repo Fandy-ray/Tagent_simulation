@@ -1,7 +1,9 @@
 """闪卡出卡链路：分片、材料互不相同、去重兜底、缓存隔离、路由接线。"""
 
+import asyncio
 import json
 import re
+import time
 import types
 
 import pytest
@@ -170,6 +172,30 @@ def test_generates_one_call_per_shard_with_distinct_material():
     assert all(materials[i] & materials[j] == set()
                for i in range(len(materials)) for j in range(i + 1, len(materials)))
     assert deck.total_cards == 12
+
+
+class SlowShardLLM(ScriptedShardLLM):
+    """每片都慢，且第一片（材料0）最慢、最后才回来。"""
+
+    async def ainvoke(self, prompt):
+        await asyncio.sleep(0.45 if "材料0 " in prompt else 0.3)
+        return await super().ainvoke(prompt)
+
+
+def test_shards_run_at_the_same_time():
+    # 出卡组的总耗时是最慢的那一片，不是各片相加
+    started = time.perf_counter()
+    make_service(ShardedKnowledgeBase(), SlowShardLLM()).generate_flash_deck(None, TEST_PROVIDER)
+    assert time.perf_counter() - started < 0.8
+
+
+def test_deck_keeps_the_deal_order_when_the_first_shard_finishes_last():
+    # 各片完成的先后不定；卡组要按发牌顺序拼，第一张永远来自第一片
+    deck = make_service(ShardedKnowledgeBase(), SlowShardLLM()).generate_flash_deck(
+        None, TEST_PROVIDER
+    )
+    assert deck.cards[0].type == "cloze"
+    assert deck.cards[0].text.startswith("第 0-0 句")
 
 
 def test_uses_deck_mode_prompt():

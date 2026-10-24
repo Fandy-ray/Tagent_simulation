@@ -19,7 +19,6 @@ from typing import Any, NamedTuple
 
 from app.config import (
     EXAM_PLAN_POINTS,
-    EXAM_CONTEXT_SEPARATOR,
     EXAM_LLM_BUDGET,
     EXAM_LLM_TIMEOUT,
     EXAM_MIN_ATTEMPT_TIMEOUT,
@@ -28,21 +27,14 @@ from app.config import (
     GRADE_LLM_BUDGET,
     GRADE_LLM_TIMEOUT,
     GRADE_MIN_ATTEMPT_TIMEOUT,
-    FLASH_CONTEXT_CHAR_LIMIT,
-    FLASH_DECK_MIN_CARDS,
     FLASH_LLM_BUDGET,
-    FLASH_LLM_TIMEOUT,
-    FLASH_MIN_ATTEMPT_TIMEOUT,
-    FLASH_CHOICE_SHARDS,
-    FLASH_CLOZE_SHARDS,
-    FLASH_SHARD_CARD_RANGE,
-    FLASH_SHARD_COUNT,
 )
 from app.errors.exam_errors import (
     InvalidExamRequestError,
     ModelMismatchError,
-    UpstreamLLMError,
 )
+from app.agent.graphs.flash import FLASH_GRAPH
+from app.agent.runtime import AgentDeps
 from app.infra.llm_json import call_json_llm
 from app.prompts.exam_prompts import (
     build_exam_plan_prompt,
@@ -53,7 +45,7 @@ from app.prompts.exam_prompts import (
     build_essay_grade_prompt,
 )
 from app.repository.exam_cache import ExamCache, LLMGate, StoredExam
-from app.schema.exam_quality import drop_violating
+from app.schema.exam_quality import clean_questions, require_clean_enough
 from app.schema.exam import (
     CHOICE_COUNT_RANGE,
     ExamPlan,
@@ -79,17 +71,11 @@ from app.schema.exam import (
     verdict_from_score,
 )
 from app.schema.flash import (
-    DraftFlashChoice,
-    FlashChoiceShardDraft,
-    FlashClozeShardDraft,
     PublicFlashDeck,
-    dedupe_cards,
-    interleave,
-    normalize_deck,
     to_public_deck,
 )
 from app.schema.provider import ModelProvider
-from app.util.text import chunked, deal_shards
+from app.util.text import chunked
 
 
 def _build_exam_overall_comment(
@@ -169,40 +155,6 @@ def _plan_points(
     except Exception as exc:
         log.warning("考点规划失败，三段按老样子各自出题：%s", exc)
         return []
-
-
-def _require_clean_enough(part: Any, field: str, minimum: int) -> None:
-    """删掉违规题之后还得够数，否则让 call_json_llm 重试这一段。
-
-    放在 post_validate 里（而不是拿到结果后在外面判）才能复用它的重试圈；
-    放外面就只能要么将就用坏题、要么直接报错。
-    """
-    kept, _ = drop_violating(getattr(part, field, []) or [])
-    if len(kept) < minimum:
-        raise ValueError(
-            f"{field} 段可用题目只剩 {len(kept)} 道（少于 {minimum} 道）："
-            "题目大多指代了学生看不到的材料，或把答案写在了题干里"
-        )
-
-
-def _clean(questions: list, label: str, limit: int | None = None) -> list:
-    """删掉违规题，并把删了什么记进日志——出题质量得能被看见。
-
-    limit 是最终题数上限：分段草稿允许模型多给几道当余量（DRAFT_OVERSHOOT），
-    删完还多出来的在这里裁掉，最终试卷仍然严格落在 COUNT_RANGE 内。
-    """
-    kept, dropped = drop_violating(questions or [])
-    for question, reasons in dropped:
-        log.info(
-            "丢弃一道%s题（%s）：%s",
-            label,
-            "；".join(reasons),
-            str(getattr(question, "text", None) or getattr(question, "question", ""))[:60],
-        )
-    if limit is not None and len(kept) > limit:
-        log.info("%s题多出 %d 道（模型给的余量），裁掉", label, len(kept) - limit)
-        kept = kept[:limit]
-    return kept
 
 
 class ExamService:
@@ -295,7 +247,7 @@ class ExamService:
                     # 守的是「违规题删掉之后还够不够数」，而不是「有没有违规题」。
                     # 后者会让一段里出一道坏题就整段重来，白等一轮模型；
                     # 实际大多数时候删掉一两道仍然够数，直接用就行。
-                    post_validate=lambda value, f=field, m=minimum: _require_clean_enough(
+                    post_validate=lambda value, f=field, m=minimum: require_clean_enough(
                         value, f, m
                     ),
                 )
@@ -330,9 +282,9 @@ class ExamService:
                 essay_part = essay_future.result()
             draft = GeneratedExamDraft(
                 title=cloze_part.title,
-                cloze=_clean(cloze_part.cloze, "填空", CLOZE_COUNT_RANGE[1]),
-                choice=_clean(choice_part.choice, "选择", CHOICE_COUNT_RANGE[1]),
-                essay=_clean(essay_part.essay, "解答", ESSAY_COUNT_RANGE[1]),
+                cloze=clean_questions(cloze_part.cloze, "填空", CLOZE_COUNT_RANGE[1]),
+                choice=clean_questions(choice_part.choice, "选择", CHOICE_COUNT_RANGE[1]),
+                essay=clean_questions(essay_part.essay, "解答", ESSAY_COUNT_RANGE[1]),
             )
             exam = normalize_draft(draft, str(uuid.uuid4()))
         self.exam_cache.put(
@@ -347,114 +299,28 @@ class ExamService:
         provider: ModelProvider,
         notebook_ids: list[str] | None = None,
     ) -> PublicFlashDeck:
-        """闪卡组：填空 + 选择两类，按材料分片并发，卡组不计分。
-
-        与 generate_exam 的分段是同一条思路再往下切一层。整卷的填空段一次要
-        8~10 张、配 4500 字上下文；闪卡把"每次调用的输出量"和"上下文长度"同时
-        砍到三分之一——每片 3~4 张配 ~1600 字材料，几片并发。
-
-        分片的材料**互不相同**：sample_exam_context 返回的是若干片段用
-        EXAM_CONTEXT_SEPARATOR 拼起来的，这里切回去轮流发牌。这是并发分片不撞
-        考点的主要手段——整卷那边实测过"把已考知识点清单塞回 prompt"，结果是
-        重复更多，所以不走那条路，改在事后 dedupe_cards 兜底。
-
-        大题不进闪卡：写一段话没法当场判，而"当场知道对错"正是闪卡的全部意义。
-        """
-        operation_started = time.monotonic()
-        deadline = operation_started + FLASH_LLM_BUDGET
+        """闪卡组：填空 + 选择两类，按材料分片并发，卡组不计分。流程见 app/agent/graphs/flash.py。"""
+        deps = self._deps(provider, FLASH_LLM_BUDGET)
+        # 闸门照旧按「一次出卡组」计一个名额，上游并发峰值 = 容量 × FLASH_SHARD_COUNT
         with self.llm_gate.acquire():
-            context = self.knowledge_base.sample_exam_context(topic, notebook_ids=notebook_ids)
-            shards = deal_shards(
-                context,
-                FLASH_SHARD_COUNT,
-                separator=EXAM_CONTEXT_SEPARATOR,
-                char_limit=FLASH_CONTEXT_CHAR_LIMIT,
-            )
-            if not shards:
-                raise InvalidExamRequestError(
-                    "所选知识范围里没有可出题的材料，请换一个笔记本或来源"
-                )
-
-            cloze_stage = (build_cloze_prompt, FlashClozeShardDraft)
-            choice_stage = (build_choice_prompt, FlashChoiceShardDraft)
-            stages = [cloze_stage] * FLASH_CLOZE_SHARDS + [choice_stage] * FLASH_CHOICE_SHARDS
-
-            lo, hi = FLASH_SHARD_CARD_RANGE
-            if len(shards) < len(stages):
-                # 知识库太小、切不出这么多片。宁可少发几次，也不能让两片拿同一份
-                # 材料——那等于自找重复。填空优先，还剩位置再给选择留一片。
-                keep = len(shards)
-                stages = [cloze_stage] if keep == 1 else [cloze_stage] * (keep - 1) + [choice_stage]
-                # 每片多出几张，卡组规模才不会跟着分片数一起缩水
-                scale = FLASH_SHARD_COUNT / keep
-                lo = min(int(round(lo * scale)), 10)
-                hi = min(int(round(hi * scale)), 12)
-
-            started = time.monotonic()
-            budget = max(0.0, deadline - started)
-            # 与 generate_exam 同一套余量算法：call_json_llm 在
-            # remaining < attempt_timeout + 5 时直接判预算不足抛 504，
-            # 这里的 -15 就是留给它的余量，别减小。
-            attempt_timeout = min(
-                FLASH_LLM_TIMEOUT, max(FLASH_MIN_ATTEMPT_TIMEOUT, budget - 15.0)
-            )
-
-            def run_shard(job):
-                (build_prompt, model_cls), shard_context = job
-                client = self.client_factory.get(
-                    provider,
-                    timeout_seconds=int(attempt_timeout),
-                    max_retries=0,
-                ).bind(max_tokens=2500)
-                return call_json_llm(
-                    client,
-                    build_prompt(
-                        shard_context, topic, [], count_range=(lo, hi), deck_mode=True
-                    ),
-                    model_cls,
-                    attempt_timeout=attempt_timeout,
-                    budget_seconds=budget,
-                    start_time=started,
-                )
-
-            jobs = list(zip(stages, shards))
-            with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-                # 任何一片抛错都在这里原样冒出来（504/502/429 的语义保持不变）
-                parts = list(pool.map(run_shard, jobs))
-
-            cloze_cards = [
-                card for part in parts if isinstance(part, FlashClozeShardDraft)
-                for card in part.cloze
-            ]
-            choice_cards = [
-                card for part in parts if isinstance(part, FlashChoiceShardDraft)
-                for card in part.choice
-            ]
-
-            # 闪卡这边**不**像整卷那样用 post_validate 守题量：那会让任何一片出一道
-            # 坏卡就整片重来，而闪卡本来就是三片并发、追求快。这里只管删，
-            # 删完不够数由下面的 FLASH_DECK_MIN_CARDS 一起兜。
-            cloze_cards = _clean(cloze_cards, "闪卡填空")
-            choice_cards = _clean(choice_cards, "闪卡选择")
-
-            # 先跨类型去重（同一个考点出成填空还是选择都算重复，填空先到先得），
-            # 再交错，顺序才不会被去重打乱。
-            kept = dedupe_cards(cloze_cards + choice_cards)
-            if len(kept) < FLASH_DECK_MIN_CARDS:
-                # 各片撞考点撞得太狠、或坏卡删太多，剩下的卡组不值得刷
-                raise UpstreamLLMError("生成的闪卡质量不达标，请重试")
-
-            cards = interleave(
-                [card for card in kept if not isinstance(card, DraftFlashChoice)],
-                [card for card in kept if isinstance(card, DraftFlashChoice)],
-            )
-            deck = normalize_deck(cards, parts[0].title, str(uuid.uuid4()))
+            deck = FLASH_GRAPH.invoke(
+                {"topic": topic, "notebook_ids": notebook_ids}, context=deps
+            )["deck"]
 
         # 卡组**不进任何缓存**：答案随 to_public_deck 一起发给了前端，判定也在
         # 浏览器本地做，服务端没有任何一条路径会再读它。真要加回服务端复核，
         # 那时再开一个独立的 ExamCache 实例——绝不能借用 exam_cache，
         # review_exam 会对取出的对象调 all_questions()，卡组掉进去就是类型混淆。
         return to_public_deck(deck)
+
+    def _deps(self, provider: ModelProvider, budget_seconds: float) -> AgentDeps:
+        """一次运行的依赖。截止时间从进门算起，排队等闸门的时间也算在预算里。"""
+        return AgentDeps.start(
+            knowledge_base=self.knowledge_base,
+            client_factory=self.client_factory,
+            provider=provider,
+            budget_seconds=budget_seconds,
+        )
 
     def _grade_batches(
         self,

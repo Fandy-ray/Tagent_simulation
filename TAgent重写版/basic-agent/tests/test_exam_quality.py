@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from app.schema.exam import DraftChoiceQuestion, DraftClozeQuestion, DraftEssayQuestion
-from app.schema.exam_quality import drop_violating, violations
+from app.schema.exam_quality import clean_questions, drop_violating, violations
 
 
 def cloze(cue="提示", text="句子 ____ 结束。", accept=("答案甲",)):
@@ -211,19 +211,15 @@ def test_the_final_exam_is_still_strictly_within_range():
 
 
 def test_extra_questions_are_trimmed_not_rejected():
-    from app.service.exam_service import _clean
-
     batch = [cloze(text=f"第 {i} 句填 ____ 即可。") for i in range(13)]
-    assert len(_clean(batch, "填空", 10)) == 10
+    assert len(clean_questions(batch, "填空", 10)) == 10
 
 
 def test_trimming_happens_after_dropping_not_before():
     # 先裁后删的话，裁掉的名额会被违规题白白占掉
-    from app.service.exam_service import _clean
-
     batch = [cloze(text=f"第 {i} 句填 ____ 即可。") for i in range(10)]
     batch += [choice(question="根据材料，下列哪项正确？") for _ in range(3)]
-    assert len(_clean(batch, "混合", 10)) == 10
+    assert len(clean_questions(batch, "混合", 10)) == 10
 
 
 # ====================== 泄漏判定的误伤 ======================
