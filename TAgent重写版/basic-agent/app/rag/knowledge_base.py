@@ -349,6 +349,15 @@ class KnowledgeBase:
         return chunks
     def sample_exam_context(self, topic: str | None = None, notebook_ids: list[str] | None = None) -> str:
         """Select diverse knowledge chunks and cap the prompt context size."""
+        return EXAM_CONTEXT_SEPARATOR.join(text for text, _ in self.sample_exam_pieces(topic, notebook_ids))
+
+    def sample_exam_pieces(
+        self, topic: str | None = None, notebook_ids: list[str] | None = None
+    ) -> list[tuple[str, str]]:
+        """出卷取材：挑出的片段，以及每段来自哪里（textbook 教材 / reference 论文）。
+
+        整卷的填空、选择只从非论文片段里分（app/agent/graphs/exam.py），所以来源要留着。
+        """
         chunks = self.ensure_index()
         if topic:
             # 先捞一个**比最终要用的多**的候选池，再按来源配额挑回 EXAM_SAMPLE_K*2。
@@ -396,7 +405,7 @@ class KnowledgeBase:
                         break
 
         seen: set[str] = set()
-        parts: list[str] = []
+        pieces: list[tuple[str, str]] = []
         total = 0
         for document in documents:
             fingerprint = re.sub(r"\s+", "", document.page_content)[:120]
@@ -408,11 +417,11 @@ class KnowledgeBase:
                 break
             content = document.page_content.strip()[:remaining]
             if content:
-                parts.append(content)
+                pieces.append((content, str(document.metadata.get("source") or "")))
                 total += len(content)
-            if len(parts) >= EXAM_SAMPLE_K:
+            if len(pieces) >= EXAM_SAMPLE_K:
                 break
-        return EXAM_CONTEXT_SEPARATOR.join(parts)
+        return pieces
 
 
 # ---- 出卷取材：按来源配额 ----

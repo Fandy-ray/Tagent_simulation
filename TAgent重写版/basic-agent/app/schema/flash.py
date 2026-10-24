@@ -201,8 +201,11 @@ def _dedupe_key(card: DraftFlashItem) -> tuple[str, str]:
 
     填空看归一后的首选答案与挖空句；选择看题干与正确选项的文本——同一个知识点
     换个问法仍然算重复，这正是三片并发最容易撞出来的东西。
+
+    按题型基类判断，整卷的草稿题（DraftClozeQuestion / DraftChoiceQuestion）也能用：
+    整卷的填空、选择也是分几路同时出的（app/agent/graphs/exam.py）。
     """
-    if isinstance(card, DraftFlashChoice):
+    if isinstance(card, _ChoiceBase):
         correct = ""
         if 0 <= card.correct_index < len(card.options):
             correct = _normalize_text_answer(card.options[card.correct_index])

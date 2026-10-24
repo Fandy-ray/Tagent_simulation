@@ -33,6 +33,16 @@ TOTAL_POINTS = 100
 CLOZE_COUNT_RANGE = (8, 10)
 CHOICE_COUNT_RANGE = (6, 8)
 ESSAY_COUNT_RANGE = (2, 3)
+# 大题分三路同时出，每路一道、只出自己那一两类能力的题（类型的说法见
+# exam_prompts._ESSAY_KINDS）。组与组的类型不相交，三道题结构上就不会撞类型——
+# 不能指望模型一次出三道时自己守「每类一道」：实测一次出两道，5 次里 2 次出了
+# 两道只换数字的计算题。
+ESSAY_GROUPS: tuple = (
+    {"kinds": ("calc",), "count": (1, 1)},
+    {"kinds": ("model",), "count": (1, 1)},
+    {"kinds": ("analysis", "compare"), "count": (1, 1)},
+)
+assert sum(g["count"][1] for g in ESSAY_GROUPS) == ESSAY_COUNT_RANGE[1]
 # 各题型总分上下界；sum(lo)=74 <= 100 <= sum(hi)=111，保证投影算法必然有解
 TYPE_SHARE_BOUNDS: Dict[str, tuple] = {
     "cloze": (20, 30),
@@ -78,7 +88,9 @@ class StrictModel(BaseModel):
 # ====================== 题目模型（草稿 / 私有） ======================
 class _ClozeBase(StrictModel):
     type: Literal["cloze"] = "cloze"
-    cue: str = Field(min_length=1)          # 中文提示语（参照闪卡的 cue）
+    # 题干上方的一句提示。**不再让模型写**（见 exam_prompts._CLOZE_JSON_SPEC 旁的说明），
+    # 留着字段只为兼容：模型偶尔还会写，旧存档里也有
+    cue: str = ""
     text: str                                # 含恰好一个 ____ 的句子
     accept: List[str] = Field(min_length=1)  # 可接受答案列表
     # exact：公式/单位/代号等大小写敏感内容；text：普通文字答案
@@ -172,46 +184,49 @@ def _check_draft_count(name: str, items: list, bounds: tuple) -> None:
     _check_count(name, items, (lo, hi + DRAFT_OVERSHOOT))
 
 
-# 出卷按题型分三段生成。整卷 16~21 题一次输出上万 token，单次调用必然顶穿
-# per-attempt 超时（实测 110s、拆两段后 100s 都仍被截断 → 前端 504）。
-# 分三段后每段仅 2~3 千 token，各自都能在超时内跑完，且某段结构不合法时
-# 只重试那一段，不用把整张卷子重出。
+# 整卷按题型分几路同时出（app/agent/graphs/exam.py）：大题三路各一道，填空、选择
+# 各两路。整卷 16~21 题一次输出上万 token，单次调用必然顶穿超时；分路后每路只有
+# 几百到一千多字，某一路不合法时也只重出那一路。
+#
+# 一路的草稿只查「至少一道、不超过整段上限加余量」。这一路删掉违规题后够不够数，
+# 由出题那一步按这一路自己的下限查（post_validate）；整卷最终的题数由
+# GeneratedExamDraft 严格按 COUNT_RANGE 查。
 class ClozeExamDraft(StrictModel):
-    """出卷第一段：填空题（顺带定卷名）。"""
+    """一路填空（顺带给卷子起名）。"""
 
     title: str = "知识点测评"
     cloze: List[DraftClozeQuestion]
 
     @model_validator(mode="after")
     def _count_ranges(self):
-        _check_draft_count("填空", self.cloze, CLOZE_COUNT_RANGE)
+        _check_draft_count("填空", self.cloze, (1, CLOZE_COUNT_RANGE[1]))
         return self
 
 
 class ChoiceExamDraft(StrictModel):
-    """出卷第二段：选择题。"""
+    """一路选择。"""
 
     choice: List[DraftChoiceQuestion]
 
     @model_validator(mode="after")
     def _count_ranges(self):
-        _check_draft_count("选择", self.choice, CHOICE_COUNT_RANGE)
+        _check_draft_count("选择", self.choice, (1, CHOICE_COUNT_RANGE[1]))
         return self
 
 
 class EssayExamDraft(StrictModel):
-    """出卷第三段：解答题（含 reference_answer 与 rubric，单题输出最长）。"""
+    """一路大题（含 reference_answer 与 rubric，单题输出最长）。"""
 
     essay: List[DraftEssayQuestion]
 
     @model_validator(mode="after")
     def _count_ranges(self):
-        _check_draft_count("大题", self.essay, ESSAY_COUNT_RANGE)
+        _check_draft_count("大题", self.essay, (1, ESSAY_COUNT_RANGE[1]))
         return self
 
 
 class GeneratedExamDraft(StrictModel):
-    """两段合并后的完整草稿：只校验结构与题量，分值尚未归一。"""
+    """各路合并后的完整草稿：只校验结构与题量，分值尚未归一。"""
 
     title: str = "知识点测评"
     cloze: List[DraftClozeQuestion]
@@ -660,60 +675,3 @@ class ExamReview(StrictModel):
         if len(ids) != len(set(ids)):
             raise ValueError("判分结果题目 ID 重复")
         return self
-
-
-# ====================== 出卷前的考点规划 ======================
-#
-# 三段是并发跑的，彼此看不见对方出了什么，于是同一个考点会被问两遍
-# （实测：填空问「ρ 的计算公式」，选择又问「ρ 的表达式」）。
-#
-# 仓库里有条压测结论是「把已考清单塞回 prompt 反而更重复」——那说的是**串行**
-# 地把前一段的结果传给后一段。这里不一样：先一次性定好考点并**切成互不相交的
-# 三份**，三段仍然并发，各自只认领到的那几个。代价是多一个模型来回。
-class ExamPlan(StrictModel):
-    """出卷前定下的考点清单。"""
-
-    points: List[str] = Field(min_length=1)
-
-    @field_validator("points")
-    @classmethod
-    def _distinct_and_clean(cls, value: List[str]) -> List[str]:
-        cleaned: List[str] = []
-        seen: Set[str] = set()
-        for item in value:
-            text = " ".join(str(item).split())
-            if not text:
-                continue
-            key = text.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            cleaned.append(text)
-        if not cleaned:
-            raise ValueError("考点清单为空")
-        return cleaned
-
-
-def split_plan(points: List[str], shares: List[int]) -> List[List[str]]:
-    """把考点轮流发给各段，发出来的几份互不相交。
-
-    轮流发（而不是按顺序切块）是因为模型往往把最核心的考点排在前面；
-    顺序切块会让第一段独占全部核心考点，后面两段只能捡边角。
-    """
-    groups: List[List[str]] = [[] for _ in shares]
-    if not points or not shares:
-        return groups
-
-    quota = list(shares)
-    index = 0
-    for point in points:
-        for _ in range(len(quota)):
-            slot = index % len(quota)
-            index += 1
-            if quota[slot] > 0:
-                groups[slot].append(point)
-                quota[slot] -= 1
-                break
-        else:
-            break
-    return groups

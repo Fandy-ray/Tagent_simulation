@@ -16,11 +16,29 @@ from app.schema.exam import (
     TYPE_SHARE_BOUNDS,
 )
 
+# 大题考的几类能力。整卷分三路出，每路只拿其中一两类（schema.exam.ESSAY_GROUPS）。
+_ESSAY_KIND_NAMES = {
+    "calc": "计算类",
+    "model": "建模/设计类",
+    "analysis": "分析/评价类",
+    "compare": "对比类",
+}
+_ESSAY_KINDS = {
+    "calc": "① 计算类：给定参数求指标，并解释结果的含义；",
+    "model": "② 建模/设计类：为一个场景设计仿真流程或模型，说明事件、状态与推进方式；",
+    "analysis": "③ 分析/评价类：讨论模型假设在某场景下是否成立、不成立会怎样、该换成什么；",
+    "compare": "④ 对比类：两种方法/模型的差别与各自适用条件。",
+}
 
+
+# 填空不再要「提示语」（cue）。以前只写了「中文提示语」，模型几乎每道都把整句题干原样
+# 抄进来（连 ____ 都抄），一段输出里六分之一是重复的字，页面上同一句话还出现两遍；
+# 改成「写几个字的考点名」之后，考点名常常就是要填的那个词，整道题被判泄题删掉
+# （2026-10-24 实测 37 道删 4 道，全是这个原因）。它对学生几乎没用，干脆不要。
 _CLOZE_JSON_SPEC = """{
   "title": "试卷标题",
   "cloze": [
-    {"cue": "中文提示语", "text": "含恰好一个 ____ 的完整句子", "accept": ["标准答案", "可接受的同义答案"], "match_mode": "text", "explanation": "解析", "points": 5}
+    {"text": "含恰好一个 ____ 的完整句子", "accept": ["标准答案", "可接受的同义答案"], "match_mode": "text", "explanation": "解析", "points": 5}
   ]
 }"""
 
@@ -47,26 +65,26 @@ _COMMON_RULES = """- 所有题目必须严格基于参考材料并使用中文�
   事件调度法），判断标准是「换一篇材料这道题是否依然成立」。
 - **答案不得出现在题干里**：题干中若已经写出了要考的那个名词或数值，换一种问法或换考点。"""
 
-def _assigned_block(points: list[str] | None) -> str:
-    """本段认领到的考点。规划那一步已经保证了各段之间互不相交。
+# 整卷的填空、选择分几路同时出，每路一片不同的材料。光靠分材料防不住撞考点：
+# ρ=λ/μ、Little 公式这类核心概念每片材料里都有，每一路都挑它们出。所以让第一路
+# 专管核心概念，其余各路明确避开。2026-10-24 用模型当评委统计每卷撞考点：只分材料
+# 13.3 对，加上这两句 8.7 对，和以前「先调一次模型定考点」持平，还省了那 1.5 秒。
+LANE_CORE = "core"
+LANE_OTHER = "other"
+_LANE_NOTES = {
+    LANE_CORE: "\n本路负责考本主题最基础、最核心的几个概念（主要模型的定义、核心公式与基本结论），"
+    "其余各路不会再考它们。\n",
+    # 别写成「从这片材料里挑其他内容」：分到论文片段的那一路会去挖论文独有的细节，
+    # 题干里满是「材料中提到……」，选择题一度被删掉 17%（2026-10-24 实测）
+    LANE_OTHER: "\n本主题最基础、最核心的那几个概念（例如主要模型的定义式、核心公式、最基本的结论）"
+    "由别的环节负责，你这一路**不要**考它们，改考本主题的**其他课程知识**："
+    "方法与步骤、适用条件、参数含义、应用判断、易混概念等。仍然只考课程通用的知识，"
+    "**不考某篇论文独有的内容**（论文片段只当应用场景的参考），题干里不要提「材料」「研究」「文中」。\n",
+}
 
-    措辞上**不**写死「一个考点一道题」：那样模型刚好出到下限，后面的违规过滤
-    一删就跌破题数下限，整段重试（实测会一路滚到 502）。只划定范围、让它在
-    范围内多出几道，服务端再裁，才有余量可删。
 
-    跨段不重复只要求各段的**考点集合**互不相交，段内怎么出不必管。
-    """
-    if not points:
-        return ""
-    listed = "\n".join(f"- {item}" for item in points)
-    return (
-        f"\n本段只在下面这些考点范围内出题，不要考清单以外的东西：\n{listed}\n"
-        "可以一个考点出一道，也可以就其中几个考点从不同角度各出一道；\n"
-        "宁可多出一两道，服务端会筛掉不合格的再裁到规定题数。\n"
-        "注意：考点文字**不要原样抄进题干**。考点说的是「要考什么」，照抄过去往往\n"
-        "就把答案写在了题干里（考点「休假排队模型的基本思想」抄成题干，空格要填的\n"
-        "「休假」就已经出现在题干里了），这种题会被服务端直接丢弃。\n"
-    )
+def _lane_block(lane: str | None) -> str:
+    return _LANE_NOTES.get(lane or "", "")
 
 
 def _covered_block(covered: list[str]) -> str:
@@ -76,44 +94,12 @@ def _covered_block(covered: list[str]) -> str:
     listed = "\n".join(f"- {item}" for item in covered)
     return f"\n本卷前面已考查以下知识点，本段必须避开、另选考点：\n{listed}\n"
 
-def build_exam_plan_prompt(context: str, topic: str | None, total: int) -> str:
-    """出卷前先定考点。一次调用，之后三段并发各认领一部分，互不相交。
-
-    三段并发时彼此看不见对方出了什么，同一个考点会被问两遍（实测：填空问
-    「ρ 的计算公式」，选择又问「ρ 的表达式」）。先把考点定下来再分头出题，
-    才能从根上避免——事后去重做不到，因为两道题的文字并不相同。
-    """
-    topic_line = f"本卷主题聚焦：{topic}\n" if topic else ""
-    return f"""你是教学出卷助手。先不要出题，**只列考点**，直接输出一个 JSON 对象，不要输出其他文字。
-
-JSON 结构（字段名必须完全一致）：
-{{"points": ["考点一", "考点二"]}}
-
-要求：
-1. **最多** {total} 个考点。**宁可少给也不要硬凑**：材料里只有十几个真正独立的
-   知识点时，凑够数只会逼出一堆近义项（"L 与 W 的公式"和"Lq 与 Wq 的公式"、
-   "到达间隔服从指数分布"和"泊松到达的含义"都是硬凑出来的重复）。
-2. 每个考点**不超过 15 个字**，只写知识点本身（例如"服务强度 ρ 的定义与计算"），
-   不要写成题目，不要写答案，不要加解释性的括号。
-3. 考点之间必须**互不重叠**：换个说法指同一件事就算重叠（"ρ 的计算公式"和
-   "ρ 的表达式"是同一个），只保留一个。拿不准算不算重叠时，按重叠处理。
-4. 只能来自参考材料，并且要是这门课的**通用概念、模型、公式与方法**；
-   某篇论文独有的实验数值、拟合常数、改善率一律不列。
-5. **每个考点都必须紧扣本卷主题**。参考材料里混着别的主题的论文，
-   凡是离开本卷主题就讲不通的考点（例如主题是排队论却去考层次分析法的
-   一致性指标、交通流饱和度）一律不列——宁可少列几个。
-6. 按重要程度从高到低排列——靠前的会被优先分配。
-{topic_line}
-参考材料：
-{context}"""
-
-
 def build_cloze_prompt(
     context: str,
     topic: str | None,
     covered: list[str],
     *,
-    assigned_points: list[str] | None = None,
+    lane: str | None = None,
     count_range: tuple[int, int] = CLOZE_COUNT_RANGE,
     deck_mode: bool = False,
 ) -> str:
@@ -154,7 +140,7 @@ JSON 结构示例（字段名必须完全一致）：
   accept 里的公式同样要用 $...$ 包裹（否则前端渲染不出来，学生看到的是一串反斜杠）；
   且必须另给至少一条**学生真能打出来的纯文字或符号写法**（例如 ρ=λ/μ），否则没人答得对。
 - explanation 一句话说明即可，不要长篇展开。
-{_assigned_block(assigned_points)}{_covered_block(covered)}{topic_line}
+{_lane_block(lane)}{_covered_block(covered)}{topic_line}
 参考材料：
 {context}"""
 
@@ -163,7 +149,7 @@ def build_choice_prompt(
     topic: str | None,
     covered: list[str],
     *,
-    assigned_points: list[str] | None = None,
+    lane: str | None = None,
     count_range: tuple[int, int] = CHOICE_COUNT_RANGE,
     deck_mode: bool = False,
 ) -> str:
@@ -195,26 +181,63 @@ JSON 结构示例（字段名必须完全一致）：
 {_COMMON_RULES}
 - 四个选项互斥、长度相近，只有一个明确正确；不要出"以上都对/都不对"，不要让干扰项也说得通。
 - explanation 一句话说明即可，不要长篇展开。
-{_assigned_block(assigned_points)}{_covered_block(covered)}{topic_line}
+{_lane_block(lane)}{_covered_block(covered)}{topic_line}
 参考材料：
 {context}"""
+
+def _essay_kind_rules(group: dict | None) -> str:
+    """大题考哪几类能力。不分组时四类里各选一道；分组时只出本组那一两类。"""
+    if group is None:
+        kinds = "\n".join(f"  {text}" for text in _ESSAY_KINDS.values())
+        return f"""- **几道大题必须考不同类型的能力，不能只是换数字**。实测过：不加这条，三道题会
+  全是"给定 λ 和 μ，求各项指标"，只有数值不同，等于只考了一道。
+  按下面这几类各选一道（材料支持哪几类就选哪几类，不要凑数）：
+{kinds}"""
+    kinds = "\n".join(f"  {_ESSAY_KINDS[name]}" for name in group["kinds"])
+    rule = f"""- **本段只出下面这一类**，其余几类由别的环节出，不要越界：
+{kinds}""" if len(group["kinds"]) == 1 else f"""- **本段只出下面两类中的一类**，其余几类由别的环节出，不要越界：
+{kinds}"""
+    if "calc" not in group["kinds"]:
+        # 只把类型写在规则末尾时，模型照样出成计算题（教材材料里计算例题最多）：
+        # 2026-10-24 实测 6 张卷里「建模/设计」那一路 6 次全出成了「给定 λ、μ 求指标」
+        rule += "\n- 这道题**不能**是「给定参数、求各项指标」的计算题——计算题由别的环节出。"
+    return rule
+
+
+def _essay_task(group: dict | None) -> str:
+    """开头那句任务。分组时把类型写在第一句：只写在规则末尾，模型会忽略。"""
+    if group is None:
+        return "**解答题**"
+    names = "」或「".join(_ESSAY_KIND_NAMES[name] for name in group["kinds"])
+    return f"**1 道「{names}」解答题**"
+
 
 def build_essay_gen_prompt(
     context: str,
     topic: str | None,
     covered: list[str],
     *,
-    assigned_points: list[str] | None = None,
+    group: dict | None = None,
 ) -> str:
+    """解答题。group 为 None 时一次出整卷的 2~3 道；给了 group 就只出这一组。"""
     topic_line = f"本卷主题聚焦：{topic}\n" if topic else ""
-    return f"""你是教学出卷助手。请仅依据参考材料出**解答题**，直接输出一个 JSON 对象，不要输出其他文字。
+    if group is None:
+        count_line = f"解答题 {ESSAY_COUNT_RANGE[0]}~{ESSAY_COUNT_RANGE[1]} 道"
+        points_line = (
+            f"合计约 {TYPE_SHARE_BOUNDS['essay'][0]}~{TYPE_SHARE_BOUNDS['essay'][1]} 分"
+        )
+    else:
+        lo, hi = group["count"]
+        count_line = f"解答题 {lo} 道" if lo == hi else f"解答题 {lo}~{hi} 道"
+        points_line = "每道约 15 分"
+    return f"""你是教学出卷助手。请仅依据参考材料出{_essay_task(group)}，直接输出一个 JSON 对象，不要输出其他文字。
 
 JSON 结构示例（字段名必须完全一致）：
 {_ESSAY_JSON_SPEC}
 
 出卷约束：
-1. 解答题 {ESSAY_COUNT_RANGE[0]}~{ESSAY_COUNT_RANGE[1]} 道，必须提供 reference_answer 和 rubric。
-2. points 必须为正数，合计约 {TYPE_SHARE_BOUNDS['essay'][0]}~{TYPE_SHARE_BOUNDS['essay'][1]} 分，服务端会归一到 100 分。
+1. {count_line}，必须提供 reference_answer 和 rubric。
+2. points 必须为正数，{points_line}，服务端会归一到 100 分。
 {_COMMON_RULES}
 - rubric 必须写成 3~5 条**可逐条勾对**的得分要点（例如"①说明…②给出…③举例…"），
   不要写"答案合理即可"这类无法判定的标准；reference_answer 要覆盖 rubric 的每一条要点。
@@ -223,14 +246,8 @@ JSON 结构示例（字段名必须完全一致）：
   它是判分时的对照依据，打分靠的是 rubric 逐条勾，不需要一份完整的解题过程。
   （实测：取材换成教材后，大题多是计算题，不加这条时模型会逐步展开推导，
   大题段输出长了近一半，而它正是决定整卷总耗时的那一段。）
-- **几道大题必须考不同类型的能力，不能只是换数字**。实测过：不加这条，三道题会
-  全是"给定 λ 和 μ，求各项指标"，只有数值不同，等于只考了一道。
-  按下面这几类各选一道（材料支持哪几类就选哪几类，不要凑数）：
-  ① 计算类：给定参数求指标，并解释结果的含义；
-  ② 建模/设计类：为一个场景设计仿真流程或模型，说明事件、状态与推进方式；
-  ③ 分析/评价类：讨论模型假设在某场景下是否成立、不成立会怎样、该换成什么；
-  ④ 对比类：两种方法/模型的差别与各自适用条件。
-{_assigned_block(assigned_points)}{_covered_block(covered)}{topic_line}
+{_essay_kind_rules(group)}
+{_covered_block(covered)}{topic_line}
 参考材料：
 {context}"""
 

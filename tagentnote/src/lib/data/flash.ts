@@ -102,9 +102,9 @@ export const answerLabel = (card: FlashCard, answer: string | number) => {
 	return String(answer ?? '');
 };
 
-/** 卡片的一句话标题：填空用 cue，选择用题干。结算页的清单共用。 */
+/** 卡片的一句话标题：选择用题干；填空用 cue，没有 cue（现在不再让模型写）就用挖空句。结算页的清单共用。 */
 export const cardHeadline = (card: FlashCard) =>
-	card.type === 'choice' ? card.question : card.cue;
+	card.type === 'choice' ? card.question : card.cue || card.text;
 
 export const recordAnswer = (
 	session: FlashSession,

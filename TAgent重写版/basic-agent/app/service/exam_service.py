@@ -92,10 +92,10 @@ class ExamService:
     ) -> PublicExam:
         """出一张私有卷存进缓存，返回不带答案的公开投影。流程见 app/agent/graphs/exam.py。"""
         deps = self._deps(provider, EXAM_LLM_BUDGET)
-        # 注意：闸门按「一次出卷」计名额，而一次出卷会并发发出 3 路上游调用
-        # （大题与规划同时起步，规划完换成填空 + 选择，任一时刻最多 3 路）。
-        # 即上游并发峰值 = EXAM_MAX_CONCURRENT_LLM × 3（默认 5×3=15），
-        # 不等于闸门容量本身。调整闸门容量时按这个倍数换算。闪卡也是 × 3。
+        # 注意：闸门按「一次出卷」计名额，而一次出卷会同时发出 7 路上游调用
+        # （大题三路、填空两路、选择两路，见 app/agent/graphs/exam.py）。
+        # 即上游并发峰值 = EXAM_MAX_CONCURRENT_LLM × 7（默认 5×7=35），
+        # 不等于闸门容量本身。调整闸门容量时按这个倍数换算。闪卡是 × 3。
         with self.llm_gate.acquire():
             exam = EXAM_GRAPH.invoke(
                 {"topic": topic, "notebook_ids": notebook_ids}, context=deps

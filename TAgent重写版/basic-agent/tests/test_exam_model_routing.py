@@ -79,6 +79,9 @@ class FakeKnowledgeBase:
     def sample_exam_context(self, topic=None, notebook_ids=None) -> str:
         return "教材内容"
 
+    def sample_exam_pieces(self, topic=None, notebook_ids=None):
+        return [("教材内容", "textbook")]
+
 
 def simulator() -> ExamService:
     # 拆分后可以走真正的构造函数，不必再 object.__new__ 绕过 __init__

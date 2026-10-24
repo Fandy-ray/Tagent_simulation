@@ -147,17 +147,21 @@ class CompositeKnowledgeBase:
     def sample_exam_context(
         self, topic: str | None = None, notebook_ids: list[str] | None = None
     ) -> str:
-        parts: list[str] = []
+        return EXAM_CONTEXT_SEPARATOR.join(text for text, _ in self.sample_exam_pieces(topic, notebook_ids))
+
+    def sample_exam_pieces(
+        self, topic: str | None = None, notebook_ids: list[str] | None = None
+    ) -> list[tuple[str, str]]:
+        pieces: list[tuple[str, str]] = []
         for source in self._iter_sources(notebook_ids):
             try:
-                context = source.sample_exam_context(topic, notebook_ids=notebook_ids)
+                found = source.sample_exam_pieces(topic, notebook_ids=notebook_ids)
             except Exception as exc:
                 self._rest(source, exc)
                 continue
             self._recovered(source)
-            if context and context.strip():
-                parts.append(context.strip())
-        return EXAM_CONTEXT_SEPARATOR.join(parts)
+            pieces.extend((text.strip(), kind) for text, kind in found if text and text.strip())
+        return pieces
 
     def quiz_documents(self, *, max_documents: int = 2, notebook_ids: list[str] | None = None):
         from app.rag.knowledge_base import select_quiz_documents

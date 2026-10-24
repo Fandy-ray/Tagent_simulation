@@ -131,13 +131,19 @@ class OpenNotebookKnowledgeBase:
     def sample_exam_context(
         self, topic: str | None = None, notebook_ids: list[str] | None = None
     ) -> str:
+        return EXAM_CONTEXT_SEPARATOR.join(text for text, _ in self.sample_exam_pieces(topic, notebook_ids))
+
+    def sample_exam_pieces(
+        self, topic: str | None = None, notebook_ids: list[str] | None = None
+    ) -> list[tuple[str, str]]:
+        """出卷取材的片段和来源。笔记本里的都是学生自己的材料，来源一律记 opennotebook。"""
         if topic:
             documents = self._search_documents(topic, limit=EXAM_SAMPLE_K, notebook_ids=notebook_ids)
         else:
             pool = list(self.chunks(notebook_ids=notebook_ids))
             random.shuffle(pool)
             documents = pool[:EXAM_SAMPLE_K]
-        parts: list[str] = []
+        pieces: list[tuple[str, str]] = []
         total = 0
         for document in documents:
             remaining = EXAM_CONTEXT_CHAR_LIMIT - total
@@ -145,9 +151,9 @@ class OpenNotebookKnowledgeBase:
                 break
             content = document.page_content.strip()[:remaining]
             if content:
-                parts.append(content)
+                pieces.append((content, "opennotebook"))
                 total += len(content)
-        return EXAM_CONTEXT_SEPARATOR.join(parts)
+        return pieces
 
     def close(self) -> None:
         if self._owns_client and self._client is not None:

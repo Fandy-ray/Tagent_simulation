@@ -1,234 +1,241 @@
 """整卷出题。
 
-    START → sample ─┬─ essay ───────────────────────────────┐
-                    └─ objective（子图：plan → cloze ∥ choice）─┴→ assemble → END
+    START → sample ─Send×7─┬─ 大题 ×3（每路一道：计算 / 建模 / 分析或对比，带全部材料）
+                           └─ 填空 ×2、选择 ×2（各拿一片不同的教材；第一路专管核心概念）
+                     → assemble（删违规题 → 填空选择跨段去重 → 裁到规定题数）→ END
 
-按题型分段，各段**并发**。
+**耗时几乎全花在模型「写」上**：单调一次首字 0.7 秒，之后每秒两三百字。一路要
+大题三道就得写 2500 字左右、填空十道 1800 字左右——写多少字等多久。所以不是让
+一路写得更快，而是让每一路少写、多发几路同时写，七路同时起步、谁也不等谁。
 
-分段的原因：整卷一次性输出上万 token 会顶穿单次调用超时（实测一次生成 110s、
-拆两段 100s 都仍被截断，前端拿到 504）；分段后每段只有 2~3 千 token，都能在
-超时内跑完，且某段不合法时只重试那一段。
+能这么做的前提是直连（app/infra/upstream_http.py）：以前走本机代理时多发几路就
+互相拖慢，拆开反而更慢；直连后同时发 8 路，每路仍是 1.9 秒左右。
 
-并发的依据（各 5 轮 A/B 压测，同材料同模型；**那轮的模型与日期仓库里没记**，
-详见 app/config.py 开头的出处警示）：
-    整卷中位耗时  串行 193.7s → 并行 68.4s（-65%）
-    跨题型考点重复 串行 3.60  → 并行 0.75
-要保留的是**结论**（并发更快、且考点更不重复），不是那两个绝对秒数：
-2026-09-11 在 DeepSeek 上复测，同样走并发，整卷出卷只要 8~9s。原本串行是为了
-把「前面已考的知识点」传给后面几段，但数据显示带上这份清单反而重复更多
-（怀疑模型会照着清单把题抄回来），所以去掉了——它既没帮上忙，还逼着各段排队。
+2026-10-24 实测（DeepSeek，直连，同一时段，各 6~10 张）：
 
-为什么填空、选择要放进一张子图：LangGraph 按「一轮一轮」推进，同一轮里的任务
-全部结束才进下一轮。如果规划和大题同在一轮，填空、选择就得等大题（最慢那段）
-做完才能开始。子图在父图里只算一个任务，它内部「规划 → 填空 ∥ 选择」自己推进，
-和大题互不等待：关键路径是 max(大题, 规划 + 填空)。
+    以前：大题一路三道 ∥ 定考点 → 填空一路 ∥ 选择一路     中位 7.2 秒，每卷撞考点 8.7 对
+    现在：七路同时，每路一道大题 / 五六道填空 / 四五道选择   中位 4.0~4.3 秒，8.7 对
 
-**大题不拆成几次并发出**，试过，是负作用。大题段最慢，拆成「计算 / 建模 /
-分析或对比」三次、每次一道，单看大题段确实短了；但放进整条流水线里
-（2026-10-24，DeepSeek，交替各跑 8 次）：
+几处取舍：
+- **不再先定考点**（那一次调用挡在填空、选择前面 1.5 秒），改为每路一片不同的材料、
+  第一路专管核心概念、其余各路避开，撞考点和以前持平。数据见 config.py 同名那段。
+- **填空、选择只分教材片段**，论文片段只给大题。材料切得小，分到论文片段的那一路
+  只能从论文里挑，出来的是「小区开放后的改善率怎么定义」这类论文独有的细节
+  （评委统计每卷 2.1 道，以前 0.3 道）；大题拿全部材料，论文正好当应用场景。
+- **大题拆成三路、每路一道**，组与组的能力类型不相交（schema.exam.ESSAY_GROUPS），
+  三道题结构上就不会撞类型；一次出三道时模型守不住「每类一道」。
+- 再拆细没用：试过填空选择拆成六七路、每路两三道，单路仍要两秒多（首字等待、
+  读入几千字材料是每路都有的固定开销），加上路数多了尾巴更长，反而更慢。
 
-                 中位     P90
-    一次出三道   8.61s    9.31s
-    拆成三次     9.71s   11.61s
-
-时间线显示原因：多出来的两路请求和规划挤在同一时刻，规划从 ~1.9s 拖到
-3.8~6.1s，而填空、选择要等规划——关键路径反而变长。上游的并发不是免费的。
-（另一个发现：让模型一次出两道「不同类型」的题，5 次里 2 次出了两道只换数字的
-计算题。要类型绝对不重，得靠拆开调用；现在一次出三道靠提示词约束。）
+为什么还要分段（老结论，仍然成立）：整卷一次性输出上万 token 会顶穿单次调用超时；
+某一路不合法时也只重出那一路。
 """
 
 from __future__ import annotations
 
 import logging
+import operator
 import uuid
-from typing import Any, NamedTuple, TypedDict
+from typing import Annotated, Any, NamedTuple, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from langgraph.types import Send
 
 from app.agent.nodes import json_call
 from app.agent.runtime import AgentDeps
-from app.errors.exam_errors import InvalidExamRequestError
-from app.config import (
-    EXAM_LLM_TIMEOUT,
-    EXAM_MIN_ATTEMPT_TIMEOUT,
-    EXAM_PLAN_POINTS,
-)
+from app.config import EXAM_CONTEXT_SEPARATOR, EXAM_LLM_TIMEOUT, EXAM_MIN_ATTEMPT_TIMEOUT
+from app.errors.exam_errors import InvalidExamRequestError, UpstreamLLMError
 from app.prompts.exam_prompts import (
+    LANE_CORE,
+    LANE_OTHER,
     build_choice_prompt,
     build_cloze_prompt,
     build_essay_gen_prompt,
-    build_exam_plan_prompt,
 )
 from app.schema.exam import (
     CHOICE_COUNT_RANGE,
     CLOZE_COUNT_RANGE,
     ESSAY_COUNT_RANGE,
+    ESSAY_GROUPS,
     ChoiceExamDraft,
     ClozeExamDraft,
     EssayExamDraft,
-    ExamPlan,
     GeneratedExamDraft,
     normalize_draft,
-    split_plan,
 )
 from app.schema.exam_quality import clean_questions, require_clean_enough
+from app.schema.flash import dedupe_cards
+from app.util.text import deal_shards
 
 log = logging.getLogger(__name__)
 
 
 class Stage(NamedTuple):
-    """出卷的一段。用具名字段而不是裸元组：这里要按「题数下限」判断要不要
-    给这一段派考点，拿位置下标取字段的话，谁重排一下就会静默取错。"""
+    """出卷的一路。用具名字段而不是裸元组，谁重排一下也不会静默取错。"""
 
+    kind: str  # cloze / choice / essay
     build_prompt: Any
     model_cls: Any
     max_tokens: int
-    field: str
-    minimum: int
-    points: list[str] | None = None
+    count_range: tuple[int, int]  # 让模型出几道
+    minimum: int  # 删掉违规题后至少还要剩几道，不够就重出这一路
 
 
-CLOZE_STAGE = Stage(build_cloze_prompt, ClozeExamDraft, 5000, "cloze", CLOZE_COUNT_RANGE[0])
-CHOICE_STAGE = Stage(build_choice_prompt, ChoiceExamDraft, 5000, "choice", CHOICE_COUNT_RANGE[0])
-ESSAY_STAGE = Stage(build_essay_gen_prompt, EssayExamDraft, 5000, "essay", ESSAY_COUNT_RANGE[0])
-
-
-def _run_stage(deps: AgentDeps, stage: Stage, context: str, topic: str | None):
-    return json_call(
-        deps,
-        stage.build_prompt(context, topic, [], assigned_points=stage.points),
-        stage.model_cls,
-        max_tokens=stage.max_tokens,
-        limit=EXAM_LLM_TIMEOUT,
-        floor=EXAM_MIN_ATTEMPT_TIMEOUT,
-        # 守的是「违规题删掉之后还够不够数」，而不是「有没有违规题」。
-        # 后者会让一段里出一道坏题就整段重来，白等一轮模型；
-        # 实际大多数时候删掉一两道仍然够数，直接用就行。
-        post_validate=lambda value: require_clean_enough(value, stage.field, stage.minimum),
-    )
-
-
-def _assign(stage: Stage, points: list[str] | None) -> Stage:
-    # 某段分到的考点少于它的题数下限时，**不给它清单**，让它自由出题。
-    # 规划被要求「宁可少给也不要硬凑」，常常只返回十几个考点；硬按清单
-    # 出会出到刚好下限，删掉一两道就跌破下限、重试、最后 502（实测过）。
-    return stage._replace(points=points if points and len(points) >= stage.minimum else None)
-
-
-# ====================== 子图：规划 → 填空 ∥ 选择 ======================
-
-
-class ObjectiveState(TypedDict, total=False):
-    topic: str | None
-    context: str
-    plan: list[str]
-    cloze_part: Any
-    choice_part: Any
-
-
-class ObjectiveOutput(TypedDict, total=False):
-    cloze_part: Any
-    choice_part: Any
-
-
-# 规划只给填空和选择要考点：跨段撞考点出在这两段之间
-_WANTS = [CLOZE_COUNT_RANGE[1], CHOICE_COUNT_RANGE[1]]
-
-
-def _plan(state: ObjectiveState, runtime: Runtime[AgentDeps]) -> dict:
-    """先定考点。失败就返回空清单——规划只是锦上添花，不该让整次出卷失败。
-
-    为什么要规划：各段并发时彼此看不见，同一个考点会被问两遍（实测：
-    填空问「ρ 的计算公式」，选择又问「ρ 的表达式」），事后去重做不到。
-    这和 config.py 里「把已考清单塞回 prompt 反而更重复」不冲突：那是**串行**
-    传结果；这里是一次性定好、切成互不相交的几份，各段照旧并发。
-
-    拿不到规划时各段按老样子出题，顶多回到「偶尔撞考点」，比 502 好得多。
-    开关与实测数据见 config.EXAM_PLAN_POINTS。
-    """
-    if not EXAM_PLAN_POINTS:
-        return {"plan": []}
-    try:
-        plan = json_call(
-            runtime.context,
-            build_exam_plan_prompt(state["context"], state.get("topic"), sum(_WANTS)),
-            ExamPlan,
-            max_tokens=1200,
-            limit=EXAM_LLM_TIMEOUT,
-            floor=EXAM_MIN_ATTEMPT_TIMEOUT,
-        )
-        return {"plan": plan.points}
-    except Exception as exc:
-        log.warning("考点规划失败，各段按老样子各自出题：%s", exc)
-        return {"plan": []}
-
-
-def _stage_node(stage: Stage, index: int, key: str):
-    def node(state: ObjectiveState, runtime: Runtime[AgentDeps]) -> dict:
-        plan = state.get("plan") or []
-        points = split_plan(plan, _WANTS)[index] if plan else None
-        part = _run_stage(runtime.context, _assign(stage, points), state["context"], state.get("topic"))
-        return {key: part}
-
-    return node
-
-
-def build_objective_graph():
-    graph = StateGraph(
-        ObjectiveState,
-        context_schema=AgentDeps,
-        input_schema=ObjectiveState,
-        output_schema=ObjectiveOutput,
-    )
-    graph.add_node("plan", _plan)
-    graph.add_node("cloze", _stage_node(CLOZE_STAGE, 0, "cloze_part"))
-    graph.add_node("choice", _stage_node(CHOICE_STAGE, 1, "choice_part"))
-    graph.add_edge(START, "plan")
-    graph.add_edge("plan", "cloze")
-    graph.add_edge("plan", "choice")
-    graph.add_edge("cloze", END)
-    graph.add_edge("choice", END)
-    return graph.compile()
-
-
-# ====================== 整卷 ======================
+# 填空、选择各分两路。每路要的题数比「整卷下限 / 路数」多一两道：
+# 删违规题、跨段去重都要余量，多出来的组卷时裁掉
+CLOZE_STAGE = Stage("cloze", build_cloze_prompt, ClozeExamDraft, 2500, (5, 6), 4)
+CHOICE_STAGE = Stage("choice", build_choice_prompt, ChoiceExamDraft, 2500, (4, 5), 3)
+# (这一路, 管不管核心概念)。第一路专管核心概念，其余各路避开，见 exam_prompts._lane_block
+OBJECTIVE_LANES = [
+    (CLOZE_STAGE, LANE_CORE),
+    (CLOZE_STAGE, LANE_OTHER),
+    (CHOICE_STAGE, LANE_OTHER),
+    (CHOICE_STAGE, LANE_OTHER),
+]
+assert 2 * CLOZE_STAGE.minimum >= CLOZE_COUNT_RANGE[0]
+assert 2 * CHOICE_STAGE.minimum >= CHOICE_COUNT_RANGE[0]
+ESSAY_STAGE = Stage("essay", build_essay_gen_prompt, EssayExamDraft, 2000, (1, 1), 1)
+# 每片材料的字数上限。出题材料一共 EXAM_CONTEXT_CHAR_LIMIT 字左右，切成四片
+_SHARD_CHAR_LIMIT = 1600
 
 
 class ExamState(TypedDict, total=False):
     topic: str | None
     notebook_ids: list[str] | None
-    context: str
-    essay_part: Any
-    cloze_part: Any
-    choice_part: Any
+    context: str  # 全部材料，给大题
+    objective_material: list[str]  # 填空、选择分片用的片段（不含论文）
+    # 每路一份 (题型, 草稿)；LangGraph 按发出的顺序合并，不按完成先后
+    parts: Annotated[list[tuple[str, Any]], operator.add]
     exam: Any
 
 
+class WriteTask(TypedDict):
+    stage: Stage
+    context: str
+    topic: str | None
+    group: dict | None  # 大题那几路：出哪一组能力类型
+    lane: str | None  # 填空选择那几路：管不管核心概念
+
+
+# 论文片段的来源标记（app/rag/references.py）
+_PAPER_SOURCE = "reference"
+
+
 def _sample(state: ExamState, runtime: Runtime[AgentDeps]) -> dict:
-    context = runtime.context.knowledge_base.sample_exam_context(
-        state.get("topic"), notebook_ids=state.get("notebook_ids")
-    )
-    if not (context or "").strip():
-        # 和闪卡一样当场回 422。不拦的话三段照样去调模型，「仅依据参考材料出题」
+    pieces = [
+        (text, source)
+        for text, source in runtime.context.knowledge_base.sample_exam_pieces(
+            state.get("topic"), notebook_ids=state.get("notebook_ids")
+        )
+        if (text or "").strip()
+    ]
+    if not pieces:
+        # 和闪卡一样当场回 422。不拦的话各路照样去调模型，「仅依据参考材料出题」
         # 却没有材料，白等一轮之后多半是 502，学生还不知道是笔记本选错了
         raise InvalidExamRequestError("所选知识范围里没有可出题的材料，请换一个笔记本或来源")
-    return {"context": context}
+    texts = [text for text, _ in pieces]
+    # 填空、选择只分非论文片段；一片教材都没有（例如只选了论文）时只好全用上
+    primary = [text for text, source in pieces if source != _PAPER_SOURCE]
+    return {"context": EXAM_CONTEXT_SEPARATOR.join(texts), "objective_material": primary or texts}
 
 
-def _essay(state: ExamState, runtime: Runtime[AgentDeps]) -> dict:
-    # 大题不等规划，从 0 秒起步：三道大题靠「计算 / 建模 / 对比各一道」本来就不重复，
-    # 跨段撞考点出在填空和选择之间
-    return {"essay_part": _run_stage(runtime.context, ESSAY_STAGE, state["context"], state.get("topic"))}
+def _fan_out(state: ExamState) -> list[Send]:
+    context, topic = state["context"], state.get("topic")
+    tasks = [
+        {"stage": ESSAY_STAGE, "context": context, "topic": topic, "group": group, "lane": None}
+        for group in ESSAY_GROUPS
+    ]
+    # 填空、选择每路一片不同的材料；材料太少切不出这么多片时轮流共用
+    # （撞了的由组卷时的去重收拾）
+    material = EXAM_CONTEXT_SEPARATOR.join(state["objective_material"])
+    shards = deal_shards(
+        material, len(OBJECTIVE_LANES), separator=EXAM_CONTEXT_SEPARATOR, char_limit=_SHARD_CHAR_LIMIT
+    ) or [material]
+    tasks += [
+        {
+            "stage": stage,
+            "context": shards[index % len(shards)],
+            "topic": topic,
+            "group": None,
+            "lane": lane,
+        }
+        for index, (stage, lane) in enumerate(OBJECTIVE_LANES)
+    ]
+    return [Send("write", task) for task in tasks]
+
+
+def _write(task: WriteTask, runtime: Runtime[AgentDeps]) -> dict:
+    """写一路题。大题、填空、选择共用这一个节点。"""
+    stage = task["stage"]
+    if stage.kind == "essay":
+        prompt = stage.build_prompt(task["context"], task["topic"], [], group=task["group"])
+    else:
+        prompt = stage.build_prompt(
+            task["context"], task["topic"], [], lane=task["lane"], count_range=stage.count_range
+        )
+    try:
+        part = json_call(
+            runtime.context,
+            prompt,
+            stage.model_cls,
+            max_tokens=stage.max_tokens,
+            limit=EXAM_LLM_TIMEOUT,
+            floor=EXAM_MIN_ATTEMPT_TIMEOUT,
+            # 守的是「违规题删掉之后还够不够数」，而不是「有没有违规题」。
+            # 后者会让一路里出一道坏题就整路重来，白等一轮模型
+            post_validate=lambda value: require_clean_enough(value, stage.kind, stage.minimum),
+        )
+    except UpstreamLLMError as exc:
+        if stage.kind != "essay":
+            raise
+        # 三路大题少一路，剩下两道仍够一张卷（下限 2 道），别为它让整卷失败
+        log.warning("一路大题没出来（%s），用其余几道组卷", exc)
+        return {"parts": []}
+    return {"parts": [(stage.kind, part)]}
+
+
+def _dedupe_keeping_counts(cloze: list, choice: list) -> tuple[list, list]:
+    """填空、选择放在一起按答案和题干去重（同一个点出成填空还是选择都算撞）。
+
+    去重后跌破题数下限时，按原顺序把删掉的补回来几道——一道近似题，好过整卷 502。
+    """
+    kept = {id(question) for question in dedupe_cards([*cloze, *choice])}
+
+    def refill(questions: list, minimum: int) -> list:
+        result = [q for q in questions if id(q) in kept]
+        for question in questions:
+            if len(result) >= minimum:
+                break
+            if id(question) not in kept:
+                result.append(question)
+        return result
+
+    return refill(cloze, CLOZE_COUNT_RANGE[0]), refill(choice, CHOICE_COUNT_RANGE[0])
 
 
 def _assemble(state: ExamState) -> dict:
-    cloze_part, choice_part = state["cloze_part"], state["choice_part"]
+    by_kind: dict[str, list] = {"cloze": [], "choice": [], "essay": []}
+    for kind, part in state.get("parts") or []:
+        by_kind[kind].append(part)
+
+    cloze = clean_questions([q for p in by_kind["cloze"] for q in p.cloze], "填空")
+    choice = clean_questions([q for p in by_kind["choice"] for q in p.choice], "选择")
+    cloze, choice = _dedupe_keeping_counts(cloze, choice)
+    # 每组大题按自己的上限裁（模型多给的余量），合起来再按整卷上限裁
+    essays = [
+        q
+        for part in by_kind["essay"]
+        for q in clean_questions(part.essay, "解答", ESSAY_STAGE.count_range[1])
+    ]
+    if len(essays) < ESSAY_COUNT_RANGE[0]:
+        raise UpstreamLLMError("解答题没能出够，请稍后重试")
+
     draft = GeneratedExamDraft(
-        title=cloze_part.title,
-        cloze=clean_questions(cloze_part.cloze, "填空", CLOZE_COUNT_RANGE[1]),
-        choice=clean_questions(choice_part.choice, "选择", CHOICE_COUNT_RANGE[1]),
-        essay=clean_questions(state["essay_part"].essay, "解答", ESSAY_COUNT_RANGE[1]),
+        title=by_kind["cloze"][0].title,
+        cloze=cloze[: CLOZE_COUNT_RANGE[1]],
+        choice=choice[: CHOICE_COUNT_RANGE[1]],
+        essay=essays[: ESSAY_COUNT_RANGE[1]],
     )
     return {"exam": normalize_draft(draft, str(uuid.uuid4()))}
 
@@ -236,15 +243,12 @@ def _assemble(state: ExamState) -> dict:
 def build_exam_graph():
     graph = StateGraph(ExamState, context_schema=AgentDeps)
     graph.add_node("sample", _sample)
-    graph.add_node("essay", _essay)
-    graph.add_node("objective", build_objective_graph())
+    graph.add_node("write", _write)
     graph.add_node("assemble", _assemble)
     graph.add_edge(START, "sample")
-    graph.add_edge("sample", "essay")
-    graph.add_edge("sample", "objective")
-    # 大题和子图在同一轮里，两边都结束才组卷，assemble 只跑一次
-    graph.add_edge("essay", "assemble")
-    graph.add_edge("objective", "assemble")
+    graph.add_conditional_edges("sample", _fan_out, ["write"])
+    # 同一轮的七路全部写完才组卷，assemble 只跑一次
+    graph.add_edge("write", "assemble")
     graph.add_edge("assemble", END)
     return graph.compile()
 

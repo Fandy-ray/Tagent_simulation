@@ -72,6 +72,9 @@ class FakeSource:
             raise RuntimeError(f"{self.name} down")
         return f"{self.name}:{topic or 'all'}:{self.text}"
 
+    def sample_exam_pieces(self, topic=None, notebook_ids=None):
+        return [(self.sample_exam_context(topic, notebook_ids), self.name)]
+
 
 def test_opennotebook_retrieve_and_chunks():
     client = FakeClient(

@@ -77,10 +77,19 @@ class ShardedKnowledgeBase:
         self.calls.append((topic, notebook_ids))
         return EXAM_CONTEXT_SEPARATOR.join(self.pieces)
 
+    def sample_exam_pieces(self, topic=None, notebook_ids=None):
+        # 整卷用这个：同样的片段，再带上来源。sources 没给的一律当教材
+        self.calls.append((topic, notebook_ids))
+        sources = getattr(self, "sources", None) or ["textbook"] * len(self.pieces)
+        return list(zip(self.pieces, sources))
+
 
 class EmptyKnowledgeBase:
     def sample_exam_context(self, topic=None, notebook_ids=None) -> str:
         return ""
+
+    def sample_exam_pieces(self, topic=None, notebook_ids=None):
+        return []
 
 
 class ScriptedShardLLM:
