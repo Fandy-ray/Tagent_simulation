@@ -40,6 +40,7 @@ POST /quiz/exam/generate
 POST /quiz/exam/review
 POST /quiz/exam/annotate
 POST /quiz/flash/generate
+POST /quiz/flash/stream      # 闪卡边写边给，一行一个 JSON
 POST /essay/review
 POST /essay/topic
 ```

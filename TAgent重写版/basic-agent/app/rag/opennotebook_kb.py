@@ -1,6 +1,7 @@
 """OpenNotebook 知识库适配器。
 
-只实现三个 service 会调用的方法：retrieve / search / chunks / sample_exam_context。
+只实现 service 会调用的几个方法：retrieve / search / chunks / sample_exam_pieces
+（sample_exam_context 是把它拼成一段的版本）。
 建向量索引是 OpenNotebook 自己的事，这里不落 FAISS。
 """
 

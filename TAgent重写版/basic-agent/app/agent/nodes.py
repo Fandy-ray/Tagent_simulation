@@ -176,7 +176,7 @@ def search_text(
     """检索并拼成一段参考材料。检索失败给空串，不让整次运行跟着失败。
 
     只给「材料是辅助」的链路用（批改、出小论文题）：没材料也还能评、还能出题，
-    只是判得保守些、题目泛一些。出卷没材料就出不了题，走 sample_exam_context。
+    只是判得保守些、题目泛一些。出卷、出闪卡没材料就出不了题，走 sample_quiz_material（没材料当场 422）。
     """
     try:
         documents = deps.knowledge_base.search(query, k=k, notebook_ids=notebook_ids)

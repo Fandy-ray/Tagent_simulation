@@ -94,7 +94,7 @@ src/
 
 ## 说明
 
-- 答疑走 `POST /v1/chat/completions`（论文模式带 `mode: "paper"` 与 `retrieval_query`），测评走 `/quiz/exam/generate`、`/quiz/flash/generate`、`/quiz/exam/review`、`/quiz/exam/annotate`，论文辅助的出题与批改走 `/essay/topic`、`/essay/review`，均由 Vite 代理到 basic-agent。
+- 答疑走 `POST /v1/chat/completions`（论文模式带 `mode: "paper"` 与 `retrieval_query`），测评走 `/quiz/exam/generate`、`/quiz/flash/stream`（闪卡边写边给，一行一个 JSON）、`/quiz/exam/review`、`/quiz/exam/annotate`，论文辅助的出题与批改走 `/essay/topic`、`/essay/review`，均由 Vite 代理到 basic-agent。
 - 笔记本依赖外部 OpenNoteBook 服务；需先在本地或目标环境启动对应服务，并配置 `PUBLIC_OPENNOTEBOOK_URL`。
 - 播客功能本周在教学前端隐藏。若 OpenNoteBook 内仍露出播客入口，需 tagent 组在对端 UI 关闭。
 
