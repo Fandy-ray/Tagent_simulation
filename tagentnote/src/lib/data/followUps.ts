@@ -21,6 +21,35 @@ const PARTICLES = /[的了吗呢吧呀啊着过和与或在里中是有把被将
 /** 切完还嫌长的段，标签只取前这么多字 */
 const TAG_MAX_CHARS = 6;
 
+/** 疑问词、指代词切出来的碎片：「什么是 M/M/1」切出「什么」，「那它的前提呢」切出「那它」 */
+const NOT_A_TAG = new Set([
+	'什么',
+	'怎么',
+	'怎样',
+	'为什么',
+	'如何',
+	'哪些',
+	'哪个',
+	'请问',
+	'一下',
+	'那它',
+	'那么',
+	'它们',
+	'这个',
+	'那个',
+	'这些',
+	'那些',
+	'还有',
+	'另外'
+]);
+
+/**
+ * 指代型追问（「那它的前提呢」）：离开上文就不完整，原样引进「请更详细地解释「…」」
+ * 里读着别扭。和后端 app/rag/followup.py 的判断同一个思路，只看短句，免得误伤长问题。
+ */
+const DEIXIS = /它|他|她|这个|这些|那个|那些|上述|前者|后者|^(?:那|那么|还有|另外)|呢[？?]?$/;
+const BARE_FOLLOW_UP_MAX_CHARS = 12;
+
 const CJK = /[一-龥]/;
 
 /** 像 M/M/1、λ/μ、0.75 这样的记号：内部的 / 和 . 是词的一部分，不是标点 */
@@ -44,9 +73,12 @@ export function buildFollowUps(question: string): string[] {
 	if (!base) {
 		return [];
 	}
+	// 追问本身是「那它的前提呢」这种时，不引原话，直接请它展开上面的回答
+	const bare = base.length <= BARE_FOLLOW_UP_MAX_CHARS && DEIXIS.test(base);
+	const first = bare ? '请把上面的回答再展开讲讲' : `请更详细地解释「${base}」`;
 	// 后两条看着脱离上下文，但现在请求会带上前几轮对话（见 chatHistory.ts），
 	// 模型知道「它」指什么。多轮记忆没接通之前，这两条确实问了也白问。
-	return [`请更详细地解释「${base}」`, '用例子说明一下', '相关还有哪些知识点？'];
+	return [first, '用例子说明一下', '相关还有哪些知识点？'];
 }
 
 export function buildTags(question: string, limit = 3): string[] {
@@ -56,7 +88,7 @@ export function buildTags(question: string, limit = 3): string[] {
 		const pieces = CJK.test(raw) ? raw.split(PARTICLES) : [raw];
 		for (const piece of pieces) {
 			const token = piece.slice(0, TAG_MAX_CHARS);
-			if (token.length < 2 || cleaned.includes(token)) {
+			if (token.length < 2 || NOT_A_TAG.has(token) || cleaned.includes(token)) {
 				continue;
 			}
 			cleaned.push(token);

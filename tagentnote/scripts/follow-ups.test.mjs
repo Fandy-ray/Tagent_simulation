@@ -71,3 +71,22 @@ test('实在没词时给一个兜底标签', () => {
 test('标签数量有上限', () => {
 	assert.ok(buildTags('排队论 仿真模型 随机过程 泊松分布 指数分布').length <= 3);
 });
+
+test('指代型追问不原样引进追问建议', () => {
+	// 实测：问完 M/M/1 再问「那它的前提呢」，第一条建议是「请更详细地解释「那它的前提呢」」
+	const [first] = buildFollowUps('那它的前提呢');
+	assert.ok(!first.includes('那它'), `不该引用光杆追问：${first}`);
+});
+
+test('自足的问题照旧引用原话', () => {
+	assert.equal(buildFollowUps('什么是排队论')[0], '请更详细地解释「什么是排队论」');
+	// 长问题里带「它」也不算光杆追问
+	const long = '排队论里服务强度和它对系统稳定性的影响';
+	assert.ok(buildFollowUps(long)[0].startsWith('请更详细地解释「'));
+});
+
+test('疑问词和指代词的碎片不当标签', () => {
+	// 实测：「什么是 M/M/1 排队模型？」出了 #什么，「那它的前提呢」出了 #那它
+	assert.deepEqual(buildTags('什么是 M/M/1 排队模型？'), ['M/M/1', '排队模型']);
+	assert.deepEqual(buildTags('那它的前提呢'), ['前提']);
+});
