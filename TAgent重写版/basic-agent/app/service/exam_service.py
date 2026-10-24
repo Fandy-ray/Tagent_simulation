@@ -11,12 +11,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, NamedTuple
 
 from app.config import (
+    EXAM_PLAN_POINTS,
     EXAM_CONTEXT_SEPARATOR,
     EXAM_LLM_BUDGET,
     EXAM_LLM_TIMEOUT,
@@ -43,6 +45,7 @@ from app.errors.exam_errors import (
 )
 from app.infra.llm_json import call_json_llm
 from app.prompts.exam_prompts import (
+    build_exam_plan_prompt,
     build_choice_prompt,
     build_cloze_grade_prompt,
     build_cloze_prompt,
@@ -50,7 +53,13 @@ from app.prompts.exam_prompts import (
     build_essay_grade_prompt,
 )
 from app.repository.exam_cache import ExamCache, LLMGate, StoredExam
+from app.schema.exam_quality import drop_violating
 from app.schema.exam import (
+    CHOICE_COUNT_RANGE,
+    ExamPlan,
+    split_plan,
+    CLOZE_COUNT_RANGE,
+    ESSAY_COUNT_RANGE,
     ChoiceExamDraft,
     ClozeExamDraft,
     EssayExamDraft,
@@ -113,6 +122,89 @@ def _build_exam_overall_comment(
     return "".join(parts)
 
 
+log = logging.getLogger(__name__)
+
+
+class Stage(NamedTuple):
+    """出卷的一段。用具名字段而不是裸元组：这里要按「题数下限」判断要不要
+    给这一段派考点，拿位置下标取字段的话，谁重排一下就会静默取错。"""
+
+    build_prompt: Any
+    model_cls: Any
+    max_tokens: int
+    field: str
+    minimum: int
+    points: list[str] | None = None
+
+
+def _plan_points(
+    client_factory,
+    provider: ModelProvider,
+    context: str,
+    topic: str | None,
+    total: int,
+    *,
+    attempt_timeout: float,
+    budget: float,
+    started: float,
+) -> list[str]:
+    """先定考点。失败就返回空清单——规划只是锦上添花，不该让整次出卷失败。
+
+    拿不到规划时三段各自按老样子出题，顶多回到「偶尔撞考点」，
+    比直接给用户一个 502 好得多。
+    """
+    try:
+        client = client_factory.get(
+            provider, timeout_seconds=int(attempt_timeout), max_retries=0
+        ).bind(max_tokens=1200)
+        plan = call_json_llm(
+            client,
+            build_exam_plan_prompt(context, topic, total),
+            ExamPlan,
+            attempt_timeout=attempt_timeout,
+            budget_seconds=budget,
+            start_time=started,
+        )
+        return plan.points
+    except Exception as exc:
+        log.warning("考点规划失败，三段按老样子各自出题：%s", exc)
+        return []
+
+
+def _require_clean_enough(part: Any, field: str, minimum: int) -> None:
+    """删掉违规题之后还得够数，否则让 call_json_llm 重试这一段。
+
+    放在 post_validate 里（而不是拿到结果后在外面判）才能复用它的重试圈；
+    放外面就只能要么将就用坏题、要么直接报错。
+    """
+    kept, _ = drop_violating(getattr(part, field, []) or [])
+    if len(kept) < minimum:
+        raise ValueError(
+            f"{field} 段可用题目只剩 {len(kept)} 道（少于 {minimum} 道）："
+            "题目大多指代了学生看不到的材料，或把答案写在了题干里"
+        )
+
+
+def _clean(questions: list, label: str, limit: int | None = None) -> list:
+    """删掉违规题，并把删了什么记进日志——出题质量得能被看见。
+
+    limit 是最终题数上限：分段草稿允许模型多给几道当余量（DRAFT_OVERSHOOT），
+    删完还多出来的在这里裁掉，最终试卷仍然严格落在 COUNT_RANGE 内。
+    """
+    kept, dropped = drop_violating(questions or [])
+    for question, reasons in dropped:
+        log.info(
+            "丢弃一道%s题（%s）：%s",
+            label,
+            "；".join(reasons),
+            str(getattr(question, "text", None) or getattr(question, "question", ""))[:60],
+        )
+    if limit is not None and len(kept) > limit:
+        log.info("%s题多出 %d 道（模型给的余量），裁掉", label, len(kept) - limit)
+        kept = kept[:limit]
+    return kept
+
+
 class ExamService:
     def __init__(self, knowledge_base, client_factory, *, exam_cache=None, llm_gate=None,
                  max_concurrent_llm: int = 2):
@@ -154,10 +246,10 @@ class ExamService:
         # 闪卡（generate_flash_deck）走的是同一个倍数：FLASH_SHARD_COUNT 也是 3。
         with self.llm_gate.acquire():
             context = self.knowledge_base.sample_exam_context(topic, notebook_ids=notebook_ids)
-            stages = (
-                (build_cloze_prompt, ClozeExamDraft, 5000),
-                (build_choice_prompt, ChoiceExamDraft, 5000),
-                (build_essay_gen_prompt, EssayExamDraft, 5000),
+            stages_spec = (
+                Stage(build_cloze_prompt, ClozeExamDraft, 5000, "cloze", CLOZE_COUNT_RANGE[0]),
+                Stage(build_choice_prompt, ChoiceExamDraft, 5000, "choice", CHOICE_COUNT_RANGE[0]),
+                Stage(build_essay_gen_prompt, EssayExamDraft, 5000, "essay", ESSAY_COUNT_RANGE[0]),
             )
 
             # 并发下三段共享同一段墙钟，各自都可以用满剩余预算（不再按段均分）。
@@ -170,8 +262,39 @@ class ExamService:
                 EXAM_LLM_TIMEOUT, max(EXAM_MIN_ATTEMPT_TIMEOUT, budget - 15.0)
             )
 
-            def run_stage(stage):
-                build_prompt, model_cls, max_tokens = stage
+            # 先定考点，再分头出题。三段并发时彼此看不见对方出了什么，
+            # 不先规划的话同一个考点会被问两遍（实测：填空问「ρ 的计算公式」，
+            # 选择又问「ρ 的表达式」）。事后去重做不到——两道题的文字并不相同。
+            #
+            # 这和 config.py 里「把已考清单塞回 prompt 反而更重复」那条结论不冲突：
+            # 那说的是**串行**地把前一段结果传给后一段；这里是一次性定好、切成
+            # 互不相交的三份，三段照旧并发。代价是多一个模型来回。
+            wants = [CLOZE_COUNT_RANGE[1], CHOICE_COUNT_RANGE[1], ESSAY_COUNT_RANGE[1]]
+            # 开关与实测数据见 config.EXAM_PLAN_POINTS
+            plan = _plan_points(
+                self.client_factory,
+                provider,
+                context,
+                topic,
+                sum(wants),
+                attempt_timeout=attempt_timeout,
+                budget=budget,
+                started=started,
+            ) if EXAM_PLAN_POINTS else []
+            assigned = split_plan(plan, wants) if plan else [None, None, None]
+            # 某段分到的考点少于它的题数下限时，**不给它清单**，让它自由出题。
+            # 规划被要求「宁可少给也不要硬凑」，所以常常只返回十几个考点，
+            # 分到填空段就不够出 8 道；硬按清单出会出到刚好下限，
+            # 再被违规过滤删掉一两道就跌破下限、整段重试、最后 502（实测过）。
+            stages = tuple(
+                spec._replace(
+                    points=points if points and len(points) >= spec.minimum else None
+                )
+                for spec, points in zip(stages_spec, assigned)
+            )
+
+            def run_stage(stage: "Stage"):
+                build_prompt, model_cls, max_tokens, field, minimum, points = stage
                 client = self.client_factory.get(
                     provider,
                     timeout_seconds=int(attempt_timeout),
@@ -179,11 +302,17 @@ class ExamService:
                 ).bind(max_tokens=max_tokens)
                 return call_json_llm(
                     client,
-                    build_prompt(context, topic, []),
+                    build_prompt(context, topic, [], assigned_points=points),
                     model_cls,
                     attempt_timeout=attempt_timeout,
                     budget_seconds=budget,
                     start_time=started,
+                    # 守的是「违规题删掉之后还够不够数」，而不是「有没有违规题」。
+                    # 后者会让一段里出一道坏题就整段重来，白等一轮模型；
+                    # 实际大多数时候删掉一两道仍然够数，直接用就行。
+                    post_validate=lambda value, f=field, m=minimum: _require_clean_enough(
+                        value, f, m
+                    ),
                 )
 
             with ThreadPoolExecutor(max_workers=len(stages)) as pool:
@@ -193,9 +322,9 @@ class ExamService:
             cloze_part, choice_part, essay_part = parts
             draft = GeneratedExamDraft(
                 title=cloze_part.title,
-                cloze=cloze_part.cloze,
-                choice=choice_part.choice,
-                essay=essay_part.essay,
+                cloze=_clean(cloze_part.cloze, "填空", CLOZE_COUNT_RANGE[1]),
+                choice=_clean(choice_part.choice, "选择", CHOICE_COUNT_RANGE[1]),
+                essay=_clean(essay_part.essay, "解答", ESSAY_COUNT_RANGE[1]),
             )
             exam = normalize_draft(draft, str(uuid.uuid4()))
         self.exam_cache.put(
@@ -294,12 +423,18 @@ class ExamService:
                 for card in part.choice
             ]
 
+            # 闪卡这边**不**像整卷那样用 post_validate 守题量：那会让任何一片出一道
+            # 坏卡就整片重来，而闪卡本来就是三片并发、追求快。这里只管删，
+            # 删完不够数由下面的 FLASH_DECK_MIN_CARDS 一起兜。
+            cloze_cards = _clean(cloze_cards, "闪卡填空")
+            choice_cards = _clean(choice_cards, "闪卡选择")
+
             # 先跨类型去重（同一个考点出成填空还是选择都算重复，填空先到先得），
             # 再交错，顺序才不会被去重打乱。
             kept = dedupe_cards(cloze_cards + choice_cards)
             if len(kept) < FLASH_DECK_MIN_CARDS:
-                # 各片撞考点撞得太狠，剩下的卡组不值得刷
-                raise UpstreamLLMError("生成的闪卡重复太多，请重试")
+                # 各片撞考点撞得太狠、或坏卡删太多，剩下的卡组不值得刷
+                raise UpstreamLLMError("生成的闪卡质量不达标，请重试")
 
             cards = interleave(
                 [card for card in kept if not isinstance(card, DraftFlashChoice)],

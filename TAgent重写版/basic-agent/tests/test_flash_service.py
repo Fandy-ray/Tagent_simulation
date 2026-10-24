@@ -110,17 +110,20 @@ class ScriptedShardLLM:
         items = []
         for n in range(wanted):
             key = "共同考点" if self.duplicate_everything else f"考点{shard}-{n}"
+            # 题干用的编号要和答案分开：原来题干里嵌着 key、accept 也是 key，
+            # 等于把答案写在题干里——exam_quality 的过滤会（正确地）把这种卡全删掉。
+            tag = "共同" if self.duplicate_everything else f"{shard}-{n}"
             if is_choice:
                 items.append({
-                    "question": f"关于 {key} 的选择题？",
+                    "question": f"第 {tag} 题的正确项是哪个？",
                     "options": [key, "干扰甲", "干扰乙", "干扰丙"],
                     "correct_index": 0,
                     "explanation": f"{key} 的解析",
                 })
             else:
                 items.append({
-                    "cue": f"提示 {key}",
-                    "text": f"关于 {key} 的句子 ____ 结束。",
+                    "cue": f"提示 {tag}",
+                    "text": f"第 {tag} 句的空格填 ____ 即可。",
                     "accept": [key],
                     "match_mode": "text",
                     "explanation": f"{key} 的解析",
@@ -343,3 +346,49 @@ def test_route_rejects_overlong_topic(flash_client):
         json={"model": TEST_PROVIDER.served_model_id, "topic": "长" * 500},
     )
     assert response.status_code == 422
+
+
+# ====================== 出题质量过滤的接线 ======================
+class LeakyShardLLM(ScriptedShardLLM):
+    """每片第一张卡都把答案写进题干——实测出现过（F1「排队系统」）。"""
+
+    async def ainvoke(self, prompt):
+        response = await super().ainvoke(prompt)
+        payload = json.loads(response.content)
+        if payload.get("cloze"):
+            first = payload["cloze"][0]
+            first["text"] = f"{first['accept'][0]} 就是答案，空格填 ____ 即可。"
+        return types.SimpleNamespace(content=json.dumps(payload, ensure_ascii=False))
+
+
+class MaterialRefShardLLM(ScriptedShardLLM):
+    """每张卡都指代学生看不到的材料。"""
+
+    async def ainvoke(self, prompt):
+        response = await super().ainvoke(prompt)
+        payload = json.loads(response.content)
+        for item in payload.get("cloze", []):
+            item["text"] = "如图 4.9 所示，空格填 ____ 即可。"
+        for item in payload.get("choice", []):
+            item["question"] = "根据材料，下列哪个正确？"
+        return types.SimpleNamespace(content=json.dumps(payload, ensure_ascii=False))
+
+
+def test_cards_that_leak_their_answer_are_dropped():
+    deck = make_service(ShardedKnowledgeBase(), LeakyShardLLM()).generate_flash_deck(
+        "排队论", TEST_PROVIDER
+    )
+    # 两片填空各被删掉第一张，选择片不受影响
+    assert deck.total_cards == 10
+    for card in deck.cards:
+        stem = f"{getattr(card, 'cue', '')}{getattr(card, 'text', '')}"
+        for accepted in getattr(card, "accept", []) or []:
+            assert accepted not in stem, "泄漏答案的卡不该被端出去"
+
+
+def test_a_deck_of_material_referencing_cards_fails_loudly():
+    # 全删光了就不该端一副空卡组出去，要让用户看到「重试」而不是空白
+    with pytest.raises(UpstreamLLMError, match="质量不达标"):
+        make_service(ShardedKnowledgeBase(), MaterialRefShardLLM()).generate_flash_deck(
+            "排队论", TEST_PROVIDER
+        )

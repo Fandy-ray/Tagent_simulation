@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import logging
+import math
 import random
 import re
 import threading
@@ -26,6 +27,9 @@ from app.config import (
     DEFAULT_TEXT_DB_DIR,
     EXAM_CONTEXT_CHAR_LIMIT,
     EXAM_CONTEXT_SEPARATOR,
+    EXAM_MMR_FETCH_K,
+    EXAM_MMR_LAMBDA,
+    EXAM_TEXTBOOK_MIN_SHARE,
     EXAM_SAMPLE_K,
 )
 from app.rag.citations import annotate_book_locations
@@ -347,12 +351,23 @@ class KnowledgeBase:
         """Select diverse knowledge chunks and cap the prompt context size."""
         chunks = self.ensure_index()
         if topic:
-            # 候选池仍是 20（压测定的）。多挑一倍备用：MMR 是一个个按顺序挑的，前 EXAM_SAMPLE_K 个和以前一样；
-            # 论文的几个检索窗口指向同一块，下面按内容去重时少了，才往后补
-            documents = self.vectorstore.max_marginal_relevance_search(
+            # 先捞一个**比最终要用的多**的候选池，再按来源配额挑回 EXAM_SAMPLE_K*2。
+            # 候选数和挑的数量一样大时，配额就没有可挑的余地，等于没配额——
+            # 这正是第一版接线踩的坑（单元测试测的是纯函数，照样全绿）。
+            #
+            # 多挑一倍备用的理由不变：论文的几个检索窗口会指向同一块，
+            # 下面按内容去重时会少，才往后补。
+            # lambda_mult 偏相关（默认 0.5 对短主题太散）。
+            candidates = self.vectorstore.max_marginal_relevance_search(
                 topic,
-                k=EXAM_SAMPLE_K * 2,
-                fetch_k=20,
+                k=EXAM_MMR_FETCH_K,
+                fetch_k=EXAM_MMR_FETCH_K,
+                lambda_mult=EXAM_MMR_LAMBDA,
+            )
+            documents = balance_by_source(
+                candidates,
+                EXAM_SAMPLE_K * 2,
+                min_primary_share=EXAM_TEXTBOOK_MIN_SHARE,
             )
         else:
             groups: dict[tuple[Any, Any, Any], list[Document]] = {}
@@ -398,6 +413,66 @@ class KnowledgeBase:
             if len(parts) >= EXAM_SAMPLE_K:
                 break
         return EXAM_CONTEXT_SEPARATOR.join(parts)
+
+
+# ---- 出卷取材：按来源配额 ----
+#
+# 索引里教材只有几十块，论文按 200 字的检索窗口切，一篇就上百个窗口。
+# 不控比例时，「排队论」这种短主题的候选池会被只沾边的论文片段占满，
+# 出出来的题就全是「主路常数 m 值为多少」这类论文细节，而学生只读过教材。
+PRIMARY_SOURCE = "textbook"
+
+
+def balance_by_source(
+    documents: list[Document],
+    k: int,
+    *,
+    primary: str = PRIMARY_SOURCE,
+    min_primary_share: float = 0.6,
+) -> list[Document]:
+    """按来源配额挑 k 块：教材至少占 min_primary_share，其余给论文/笔记本。
+
+    三条都要守住：
+
+    - **教材不够就让论文补满**。宁可比例失衡，也不能因为教材命中少就少给材料——
+      少给材料等于少出题，比出偏题更糟。
+    - **同一来源内部保持相关度顺序**。
+    - **两类要交错着出**，不能先教材后论文、也不能照原始相关度排。
+      调用方拿到结果之后还要再截一刀（EXAM_SAMPLE_K 块、EXAM_CONTEXT_CHAR_LIMIT 字），
+      不交错的话被截掉的恰好是配额刚挑进来的那一类——第一版就是这么空转的：
+      教材在候选池里排得靠后，配额挑中了，结果全被 EXAM_SAMPLE_K 截没了。
+      交错之后任意前缀都大致满足配额，对下游怎么截都免疫。
+    """
+    if k <= 0 or not documents:
+        return []
+
+    primary_pool = [d for d in documents if d.metadata.get("source") == primary]
+    other_pool = [d for d in documents if d.metadata.get("source") != primary]
+
+    want_primary = min(len(primary_pool), math.ceil(k * min_primary_share - 1e-9))
+    want_other = min(len(other_pool), k - want_primary)
+    # 一边不够就让另一边补满
+    want_primary = min(len(primary_pool), k - want_other)
+
+    # 教材放在均匀分布的槽位上：第 j 块落在 floor(j * k / want_primary)
+    slots = {(j * k) // want_primary for j in range(want_primary)} if want_primary else set()
+
+    picked: list[Document] = []
+    primary_iter, other_iter = iter(primary_pool), iter(other_pool)
+    taken_primary = taken_other = 0
+    for position in range(k):
+        want_here = position in slots and taken_primary < want_primary
+        if want_here or taken_other >= want_other:
+            document = next(primary_iter, None)
+            if document is not None:
+                picked.append(document)
+                taken_primary += 1
+                continue
+        document = next(other_iter, None)
+        if document is not None:
+            picked.append(document)
+            taken_other += 1
+    return picked
 
 
 # 论文一块有好几个检索窗口：先多取几倍，再按「同一块只算一次」去重

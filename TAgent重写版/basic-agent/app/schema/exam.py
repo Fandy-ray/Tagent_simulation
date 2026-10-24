@@ -155,6 +155,23 @@ def _check_count(name: str, items: list, bounds: tuple) -> None:
         raise ValueError(f"{name}题数量 {len(items)} 超出约束 [{lo}, {hi}]")
 
 
+# 分段草稿里模型多给几道时**收下当余量**，别把整段判废。
+#
+# 两个理由：
+# - 多给一道就整段重试，白等一轮模型，而那一道本来可以直接扔掉；
+# - 出完题还要过 exam_quality 的闸（指代材料、答案写在题干里）。没有余量时
+#   删掉两三道就跌破下限 → 重试 → 还不够 → 502（接规划那一步时实测到过）。
+#
+# 超出的部分在 exam_service 里裁掉，**最终试卷**（GeneratedExamDraft）仍然
+# 严格落在 COUNT_RANGE 内——放宽的只是中间产物。
+DRAFT_OVERSHOOT = 4
+
+
+def _check_draft_count(name: str, items: list, bounds: tuple) -> None:
+    lo, hi = bounds
+    _check_count(name, items, (lo, hi + DRAFT_OVERSHOOT))
+
+
 # 出卷按题型分三段生成。整卷 16~21 题一次输出上万 token，单次调用必然顶穿
 # per-attempt 超时（实测 110s、拆两段后 100s 都仍被截断 → 前端 504）。
 # 分三段后每段仅 2~3 千 token，各自都能在超时内跑完，且某段结构不合法时
@@ -167,7 +184,7 @@ class ClozeExamDraft(StrictModel):
 
     @model_validator(mode="after")
     def _count_ranges(self):
-        _check_count("填空", self.cloze, CLOZE_COUNT_RANGE)
+        _check_draft_count("填空", self.cloze, CLOZE_COUNT_RANGE)
         return self
 
 
@@ -178,7 +195,7 @@ class ChoiceExamDraft(StrictModel):
 
     @model_validator(mode="after")
     def _count_ranges(self):
-        _check_count("选择", self.choice, CHOICE_COUNT_RANGE)
+        _check_draft_count("选择", self.choice, CHOICE_COUNT_RANGE)
         return self
 
 
@@ -189,7 +206,7 @@ class EssayExamDraft(StrictModel):
 
     @model_validator(mode="after")
     def _count_ranges(self):
-        _check_count("大题", self.essay, ESSAY_COUNT_RANGE)
+        _check_draft_count("大题", self.essay, ESSAY_COUNT_RANGE)
         return self
 
 
@@ -635,3 +652,60 @@ class ExamReview(StrictModel):
         if len(ids) != len(set(ids)):
             raise ValueError("判分结果题目 ID 重复")
         return self
+
+
+# ====================== 出卷前的考点规划 ======================
+#
+# 三段是并发跑的，彼此看不见对方出了什么，于是同一个考点会被问两遍
+# （实测：填空问「ρ 的计算公式」，选择又问「ρ 的表达式」）。
+#
+# 仓库里有条压测结论是「把已考清单塞回 prompt 反而更重复」——那说的是**串行**
+# 地把前一段的结果传给后一段。这里不一样：先一次性定好考点并**切成互不相交的
+# 三份**，三段仍然并发，各自只认领到的那几个。代价是多一个模型来回。
+class ExamPlan(StrictModel):
+    """出卷前定下的考点清单。"""
+
+    points: List[str] = Field(min_length=1)
+
+    @field_validator("points")
+    @classmethod
+    def _distinct_and_clean(cls, value: List[str]) -> List[str]:
+        cleaned: List[str] = []
+        seen: Set[str] = set()
+        for item in value:
+            text = " ".join(str(item).split())
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+        if not cleaned:
+            raise ValueError("考点清单为空")
+        return cleaned
+
+
+def split_plan(points: List[str], shares: List[int]) -> List[List[str]]:
+    """把考点轮流发给各段，发出来的几份互不相交。
+
+    轮流发（而不是按顺序切块）是因为模型往往把最核心的考点排在前面；
+    顺序切块会让第一段独占全部核心考点，后面两段只能捡边角。
+    """
+    groups: List[List[str]] = [[] for _ in shares]
+    if not points or not shares:
+        return groups
+
+    quota = list(shares)
+    index = 0
+    for point in points:
+        for _ in range(len(quota)):
+            slot = index % len(quota)
+            index += 1
+            if quota[slot] > 0:
+                groups[slot].append(point)
+                quota[slot] -= 1
+                break
+        else:
+            break
+    return groups
