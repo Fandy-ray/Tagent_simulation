@@ -7,15 +7,15 @@ service 层规则：不 import flask，不认识 request/current_app。
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable
 
+from app.agent.graphs.answer import ANSWER_GRAPH, answer_client, prompt_messages
+from app.agent.runtime import AgentDeps
 from app.errors.api_errors import AgentAPIError
 from app.infra.upstream_errors import translate_upstream_error
-from app.prompts.chat_prompts import build_prompt_messages, last_user_message
+from app.prompts.chat_prompts import last_user_message
 from app.rag.citations import citations_from_documents
-from app.rag.followup import resolve_query
-from app.rag.graph import build_answer_graph
-from app.infra.model_client_factory import tuning_bind_kwargs
 from app.schema.provider import ModelProvider
 from app.util.text import content_text
 
@@ -36,8 +36,7 @@ def _retrieval_query(messages: list[dict[str, str]], retrieval_query: str | None
     前端显式给的（论文模式的「题目 + 关键词」）要原样用，**不能**再去补上文：
     它本来就是替代原问题的检索提示，补一遍只会把它冲淡。
 
-    没给的时候返回原问题，由「理解问题」那一步决定要不要补上文
-    （图里是 understand_question 节点，流式路径在下面直接调同一个函数）。
+    没给的时候返回原问题，由图里「理解问题」那一步决定要不要补上文。
 
     last_user_message 无论如何都要调——没有用户消息的请求照旧 400。
     """
@@ -48,10 +47,46 @@ def _retrieval_query(messages: list[dict[str, str]], retrieval_query: str | None
 
 
 class ChatService:
+    """答疑的门面。流程在 app/agent/graphs/answer.py；答疑不走闸门。"""
+
     def __init__(self, knowledge_base, client_factory):
         self.knowledge_base = knowledge_base
         self.client_factory = client_factory
-        self.graph = build_answer_graph(knowledge_base, client_factory)
+
+    def _run(
+        self,
+        messages: list[dict[str, str]],
+        provider: ModelProvider,
+        notebook_ids: list[str] | None,
+        *,
+        mode: str,
+        retrieval_query: str | None,
+        tuning: dict[str, Any] | None,
+        stream: bool,
+    ) -> tuple[dict[str, Any], AgentDeps]:
+        """跑一遍答疑图。stream=True 时检索完就返回，生成留给调用方逐块做。"""
+        deps = AgentDeps(
+            knowledge_base=self.knowledge_base,
+            client_factory=self.client_factory,
+            provider=provider,
+            # 答疑不设总预算：回答多长由学生定，单次调用的超时由模型客户端自己管
+            deadline=math.inf,
+            tuning=tuning or {},
+        )
+        query, explicit = _retrieval_query(messages, retrieval_query)
+        state = ANSWER_GRAPH.invoke(
+            {
+                "messages": messages,
+                "query": query,
+                "query_is_explicit": explicit,
+                "notebook_ids": notebook_ids or [],
+                "mode": mode,
+                "stream": stream,
+                "step_log": [],
+            },
+            context=deps,
+        )
+        return state, deps
 
     def answer(
         self,
@@ -63,19 +98,10 @@ class ChatService:
         retrieval_query: str | None = None,
         tuning: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        query, explicit = _retrieval_query(messages, retrieval_query)
         try:
-            result = self.graph.invoke(
-                {
-                    "messages": messages,
-                    "provider": provider,
-                    "query": query,
-                    "query_is_explicit": explicit,
-                    "notebook_ids": notebook_ids or [],
-                    "mode": mode,
-                    "tuning": tuning or {},
-                    "step_log": [],
-                }
+            result, _ = self._run(
+                messages, provider, notebook_ids,
+                mode=mode, retrieval_query=retrieval_query, tuning=tuning, stream=False,
             )
             return {
                 "content": result["content"],
@@ -87,6 +113,7 @@ class ChatService:
             raise
         except Exception as exc:
             raise translate_upstream_error(exc) from exc
+
     def stream_answer(
         self,
         messages: list[dict[str, str]],
@@ -101,24 +128,18 @@ class ChatService:
         """产出 (文字, 结束原因)。检索完、开始生成之前，用到的材料的出处交给 on_citations。
 
         出处不混进产出里：别处都按两元组读这个生成器。
+        逐块生成在这里而不在图里，原因见 app/agent/graphs/answer.py 开头：
+        学生点停止、生成器被关掉时，上游的流要跟着立刻断。
         """
-        query, explicit = _retrieval_query(messages, retrieval_query)
-        if not explicit:
-            # 和图里的 understand_question 节点用同一个函数：
-            # 两条路必须按同一个检索词取材，否则同一个问题给出的依据会不一样
-            query = resolve_query(messages, query)
         try:
-            context, documents = self.knowledge_base.retrieve(query, notebook_ids=notebook_ids)
+            state, deps = self._run(
+                messages, provider, notebook_ids,
+                mode=mode, retrieval_query=retrieval_query, tuning=tuning, stream=True,
+            )
             if on_citations is not None:
-                on_citations(citations_from_documents(documents))
-            prompt_messages = build_prompt_messages(messages, context, mode=mode)
+                on_citations(citations_from_documents(state.get("retrieved_documents") or []))
             finish_reason = None
-            client = self.client_factory.get(provider)
-            bind_kwargs = tuning_bind_kwargs(provider, tuning)
-            if bind_kwargs:
-                # 绑在缓存好的 client 上，不进缓存键——否则换个温度就多一个连接池
-                client = client.bind(**bind_kwargs)
-            for chunk in client.stream(prompt_messages):
+            for chunk in answer_client(deps).stream(prompt_messages(state)):
                 metadata = getattr(chunk, "response_metadata", None) or {}
                 # A final usage-only chunk can contain finish_reason=None.
                 # It must not erase the preceding stop/length/filter reason.

@@ -174,3 +174,39 @@ def test_usage_only_chunk_does_not_erase_the_finish_reason(reason):
     chunks = list(make(RecordingKB(), WithUsage()).stream_answer(MESSAGES, PROVIDER))
     assert chunks == [("好", None), ("", reason)]
 
+
+
+# ====================== 学生点停止 ======================
+
+
+class LongModel(RecordingModel):
+    """一口气能吐 100 块；记下上游的流有没有被关掉、吐到了第几块。"""
+
+    def __init__(self):
+        super().__init__()
+        self.sent = 0
+        self.closed = False
+
+    def stream(self, messages):
+        self.messages = messages
+        try:
+            for i in range(100):
+                self.sent = i + 1
+                yield types.SimpleNamespace(content=f"第{i}块", response_metadata={})
+            yield types.SimpleNamespace(content="", response_metadata={"finish_reason": "stop"})
+        finally:
+            self.closed = True
+
+
+def test_closing_the_stream_closes_the_upstream_stream_right_away():
+    """学生点停止（或断开）时，上游的流要立刻断，不能让模型照样生成到底、照样计费。
+
+    这正是逐块生成没放进答疑图的原因：LangGraph 的 stream 在消费方中途关掉时
+    会等节点跑完（见 app/agent/graphs/answer.py 开头）。谁把它挪进图里，这里会红。
+    """
+    model = LongModel()
+    stream = make(RecordingKB(), model).stream_answer(MESSAGES, PROVIDER)
+    assert next(stream) == ("第0块", None)
+    stream.close()
+    assert model.closed, "上游的流没被关掉"
+    assert model.sent < 5, f"关掉之后上游还在往下吐（吐到了第 {model.sent} 块）"

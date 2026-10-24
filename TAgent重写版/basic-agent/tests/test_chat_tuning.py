@@ -159,7 +159,6 @@ def test_tuning_reaches_the_client_on_the_streaming_path():
 
     client = RecordingClient()
     service = ChatService(StubKB(), RecordingFactory(client))
-    service.graph = None  # 流式不走图
 
     list(
         service.stream_answer(
@@ -182,7 +181,6 @@ def test_no_tuning_leaves_the_client_untouched():
 
     client = RecordingClient()
     service = ChatService(StubKB(), RecordingFactory(client))
-    service.graph = None
 
     list(service.stream_answer([{"role": "user", "content": "你好"}], provider()))
 
@@ -222,7 +220,6 @@ def run_with_history(kb=None):
 
     client, kb = CapturingClient(), kb or QueryKB()
     service = ChatService(kb, RecordingFactory(client))
-    service.graph = None
     list(
         service.stream_answer(
             [*HISTORY, {"role": "user", "content": "那它的前提呢"}],
