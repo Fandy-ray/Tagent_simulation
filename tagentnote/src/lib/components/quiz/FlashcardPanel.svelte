@@ -37,9 +37,20 @@
 		onError: (message: string) => void;
 		onExit: () => void;
 		onSwitchToFull: () => void;
+		/** 报给外壳：现在离开会丢掉什么。空字符串＝没有进度，可以直接走。 */
+		onLeavingCost?: (cost: string) => void;
 	};
 
-	let { modelId, topic, notebookIds, onTitle, onError, onExit, onSwitchToFull }: Props = $props();
+	let {
+		modelId,
+		topic,
+		notebookIds,
+		onTitle,
+		onError,
+		onExit,
+		onSwitchToFull,
+		onLeavingCost
+	}: Props = $props();
 
 	let phase = $state<Phase>('generating');
 	let session = $state<FlashSession | null>(null);
@@ -57,6 +68,22 @@
 
 	let card = $derived(session ? currentCard(session) : null);
 	let summary = $derived(session ? stats(session) : null);
+
+	// 卡组只在内存里，退出即丢。刷了一半时让外壳问一句再走。
+	$effect(() => {
+		if (!onLeavingCost) {
+			return;
+		}
+		const done = summary && phase === 'studying' ? summary.total - summary.remaining : 0;
+		onLeavingCost(
+			phase === 'studying' && summary && done > 0
+				? `这组闪卡刷了 ${done} / ${summary.total} 张，进度不会保存`
+				: ''
+		);
+		// 卸载时自己把话收回去。外壳那边切模式时也会清一次，但不该靠它记得——
+		// 留着的话，切到整卷后按返回，弹出来的还是「这组闪卡刷了 N 张」。
+		return () => onLeavingCost('');
+	});
 
 	let position = $derived(
 		session && card ? `${session.known.length + 1}/${session.deck.cards.length}` : ''
@@ -520,22 +547,45 @@
 			</div>
 
 			{#if flipped}
+				<!--
+					本地已经判过对错时，默认动作要跟着判定走：答错了主按钮就是「进重练」，
+					「其实我答对了」降成弱按钮留作纠正（比对判错时仍然需要）。
+					原来两个按钮一样重，答错也能顺手点「会了」，错题就悄悄漏出了重练队列。
+				-->
 				<div class="flex shrink-0 gap-2">
-					<button
-						type="button"
-						class="rounded-xl border border-amber-900 bg-amber-950/40 px-4 py-2.5 text-sm font-medium text-amber-300 transition hover:bg-amber-950/70"
-						onclick={() => judge('again')}
-					>
-						再练一次
-					</button>
+					{#if graded === 'wrong'}
+						<button
+							type="button"
+							class="rounded-xl border border-gray-700 px-3 py-2.5 text-xs text-gray-400 transition hover:bg-white/5 hover:text-gray-200"
+							onclick={() => judge('known')}
+						>
+							其实我答对了
+						</button>
 
-					<button
-						type="button"
-						class="rounded-xl border border-emerald-900 bg-emerald-950/50 px-4 py-2.5 text-sm font-medium text-emerald-300 transition hover:bg-emerald-950/80"
-						onclick={() => judge('known')}
-					>
-						会了
-					</button>
+						<button
+							type="button"
+							class="rounded-xl border border-amber-900 bg-amber-950/60 px-4 py-2.5 text-sm font-medium text-amber-200 transition hover:bg-amber-950/80"
+							onclick={() => judge('again')}
+						>
+							进重练
+						</button>
+					{:else}
+						<button
+							type="button"
+							class="rounded-xl border border-amber-900 bg-amber-950/40 px-4 py-2.5 text-sm font-medium text-amber-300 transition hover:bg-amber-950/70"
+							onclick={() => judge('again')}
+						>
+							再练一次
+						</button>
+
+						<button
+							type="button"
+							class="rounded-xl border border-emerald-900 bg-emerald-950/50 px-4 py-2.5 text-sm font-medium text-emerald-300 transition hover:bg-emerald-950/80"
+							onclick={() => judge('known')}
+						>
+							会了
+						</button>
+					{/if}
 				</div>
 			{:else if inputMode === 'flip'}
 				<button
@@ -554,7 +604,7 @@
 	)}
 
 	<div class="flex h-full min-h-0 flex-col items-center overflow-y-auto px-4 py-2 text-center">
-		<div class="mt-2 font-mono text-xs tracking-[0.2em] text-gray-500 uppercase">Deck cleared</div>
+		<div class="mt-2 font-mono text-xs tracking-[0.2em] text-gray-500">这组刷完了</div>
 
 		<!-- 主数字用「一次过」而不是「会了」：队列空了才算刷完，
 		     所以「会了」的张数永远等于卡组大小，拿它当成绩没有意义。 -->

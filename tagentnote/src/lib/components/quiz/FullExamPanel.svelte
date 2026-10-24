@@ -294,10 +294,21 @@
 			});
 	};
 
-	const submit = () => {
+	/** 还没答完就点交卷时，先确认一次；确认过就直接交。 */
+	let pendingSubmit = $state(false);
+	let unanswered = $derived(totalCount - answeredCount);
+
+	const submit = (confirmed = false) => {
 		if (!exam || phase === 'submitting') {
 			return;
 		}
+
+		// 只答了 3/21 就误触交卷，在真实考试里是前功尽弃。拦一次，不拦第二次。
+		if (!confirmed && unanswered > 0) {
+			pendingSubmit = true;
+			return;
+		}
+		pendingSubmit = false;
 
 		phase = 'submitting';
 
@@ -723,8 +734,12 @@
 			</div>
 
 			<div class="mt-3 flex shrink-0 items-center gap-2 border-t border-gray-800 pt-3">
-				<div class="min-w-0 flex-1 overflow-x-auto">
-					<div class="flex min-w-max items-center gap-1.5">
+				<!--
+					题号换行而不是横向滚动：21 个按钮放不下时，滚动条会压在 h-8 的按钮上，
+					而且首尾两个（C1、E3）会被滚出视野——实测点不到。折成两行就全看得见。
+				-->
+				<div class="min-w-0 flex-1">
+					<div class="flex flex-wrap items-center gap-1.5">
 						{#each allQuestions as question, index (question.id)}
 							<button
 								type="button"
@@ -746,14 +761,37 @@
 					</div>
 				</div>
 
-				<button
-					type="button"
-					class="shrink-0 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-gray-900 transition hover:bg-gray-200 disabled:opacity-60"
-					disabled={phase === 'submitting'}
-					onclick={submit}
-				>
-					{phase === 'submitting' ? '正在判分…' : '提交试卷'}
-				</button>
+				<!-- 答完了就把确认条收起来，别留着显示「还有 0 题没答」 -->
+				{#if pendingSubmit && unanswered > 0}
+					<div
+						class="flex shrink-0 items-center gap-2 rounded-xl border border-amber-900 bg-amber-950/40 px-3 py-1.5"
+					>
+						<span class="text-xs text-amber-200">还有 {unanswered} 题没答，确定交卷？</span>
+						<button
+							type="button"
+							class="rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-gray-900 transition hover:bg-gray-200"
+							onclick={() => submit(true)}
+						>
+							仍然交卷
+						</button>
+						<button
+							type="button"
+							class="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-300 transition hover:bg-white/5"
+							onclick={() => (pendingSubmit = false)}
+						>
+							再检查一下
+						</button>
+					</div>
+				{:else}
+					<button
+						type="button"
+						class="shrink-0 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-gray-900 transition hover:bg-gray-200 disabled:opacity-60"
+						disabled={phase === 'submitting'}
+						onclick={() => submit()}
+					>
+						{phase === 'submitting' ? '正在判分…' : '提交试卷'}
+					</button>
+				{/if}
 			</div>
 		{:else if phase === 'result' && review}
 			<div class="flex min-h-0 flex-1 items-stretch gap-2">
@@ -773,9 +811,7 @@
 						<div
 							class="bg-gray-850 flex h-full max-h-[640px] w-full flex-col items-center justify-center overflow-y-auto rounded-2xl border border-gray-700 px-5 text-center"
 						>
-							<div class="mb-3 font-mono text-xs tracking-[0.2em] text-gray-500 uppercase">
-								Exam completed
-							</div>
+							<div class="mb-3 font-mono text-xs tracking-[0.2em] text-gray-500">本卷已完成</div>
 
 							<div class="font-mono text-6xl font-bold text-blue-500">
 								{review.total_score}
@@ -988,8 +1024,12 @@
 			</div>
 
 			<div class="mt-3 flex shrink-0 items-center gap-2 border-t border-gray-800 pt-3">
-				<div class="min-w-0 flex-1 overflow-x-auto">
-					<div class="flex min-w-max items-center gap-1.5">
+				<!--
+					题号换行而不是横向滚动：21 个按钮放不下时，滚动条会压在 h-8 的按钮上，
+					而且首尾两个（C1、E3）会被滚出视野——实测点不到。折成两行就全看得见。
+				-->
+				<div class="min-w-0 flex-1">
+					<div class="flex flex-wrap items-center gap-1.5">
 						<button
 							type="button"
 							class={`h-8 rounded-lg border px-2.5 text-xs transition ${

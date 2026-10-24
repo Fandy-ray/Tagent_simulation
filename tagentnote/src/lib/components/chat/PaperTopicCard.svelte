@@ -51,7 +51,7 @@
 			<button type="button" class="paper-button" onclick={onRetry}>重新出题</button>
 		</div>
 	{:else if pending}
-		<p class="paper-status" role="status">正在按笔记本材料出题……</p>
+		<p class="paper-status" role="status">正在按课程材料出题……</p>
 	{:else}
 		<div class="paper-notice">
 			<p>这次出题没有完成：已停止，或页面在出题时刷新了。</p>

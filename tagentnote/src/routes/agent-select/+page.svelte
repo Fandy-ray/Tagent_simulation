@@ -96,7 +96,7 @@
 </script>
 
 <svelte:head>
-	<title>选择智能体 | TAgent 智能教学平台</title>
+	<title>选择智能体 | 系统建模与仿真智能教学平台</title>
 </svelte:head>
 
 <main class="relative min-h-screen overflow-hidden bg-gray-900 text-gray-100">
@@ -116,7 +116,9 @@
 				</div>
 
 				<div>
-					<h1 class="text-2xl font-semibold tracking-tight text-white">TAgent 智能教学平台</h1>
+					<h1 class="text-2xl font-semibold tracking-tight text-white">
+						系统建模与仿真智能教学平台
+					</h1>
 					<p class="mt-1 text-sm text-gray-400">系统建模与仿真</p>
 				</div>
 			</div>

@@ -12,6 +12,8 @@
 		messages?: MockMessage[];
 		generating?: boolean;
 		modelName?: string;
+		/** 把 served_model_id 换成登记时填的显示名；认不出来就原样显示 */
+		resolveModelName?: (id: string | undefined) => string;
 		userName?: string;
 		chatBubble?: boolean;
 		widescreenMode?: boolean;
@@ -48,6 +50,7 @@
 		messages = [],
 		generating = false,
 		modelName = '',
+		resolveModelName = undefined,
 		userName = '',
 		chatBubble = true,
 		widescreenMode = false,
@@ -321,7 +324,7 @@
 					<div class="relative w-0 flex-auto pl-1">
 						<div class="mb-1 flex items-center gap-2">
 							<span class="line-clamp-1 text-sm font-medium text-white">
-								{message.model ?? modelName}
+								{resolveModelName?.(message.model) || message.model || modelName}
 							</span>
 						</div>
 

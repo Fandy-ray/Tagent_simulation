@@ -121,11 +121,26 @@
 
 		errorMsg = '';
 		panelTitle = '';
+		leavingCost = '';
+		confirmLeave = false;
 		running = mode;
 		runToken += 1;
 	};
 
-	const backToPicker = () => {
+	/**
+	 * 面板报上来的「现在离开会丢东西」。闪卡的进度只在内存里，整卷有草稿要清，
+	 * 都该在离开前问一句——不然点一下 ‹ 就把刷了一半的卡组丢了。
+	 */
+	let leavingCost = $state('');
+	let confirmLeave = $state(false);
+
+	const backToPicker = (confirmed = false) => {
+		if (!confirmed && leavingCost) {
+			confirmLeave = true;
+			return;
+		}
+		confirmLeave = false;
+		leavingCost = '';
 		// 主动离开这张卷：之后刷新不该再把人拉回来
 		resume = null;
 		clearFullExam();
@@ -145,6 +160,8 @@
 		pickMode(next);
 		panelTitle = '';
 		errorMsg = '';
+		leavingCost = '';
+		confirmLeave = false;
 		running = next;
 		runToken += 1;
 	};
@@ -235,11 +252,33 @@
 				<button
 					type="button"
 					class="shrink-0 rounded-lg px-1 text-sm text-gray-400 transition hover:text-gray-200"
-					onclick={backToPicker}
+					onclick={() => backToPicker()}
 					title="回到模式选择"
 				>
 					‹
 				</button>
+
+				{#if confirmLeave}
+					<div
+						class="flex min-w-0 items-center gap-2 rounded-lg border border-amber-900 bg-amber-950/50 px-2.5 py-1"
+					>
+						<span class="truncate text-[11px] text-amber-200">{leavingCost}</span>
+						<button
+							type="button"
+							class="shrink-0 rounded-md bg-white px-2 py-1 text-[11px] font-medium text-gray-900 transition hover:bg-gray-200"
+							onclick={() => backToPicker(true)}
+						>
+							仍然返回
+						</button>
+						<button
+							type="button"
+							class="shrink-0 rounded-md border border-gray-700 px-2 py-1 text-[11px] text-gray-300 transition hover:bg-white/5"
+							onclick={() => (confirmLeave = false)}
+						>
+							继续刷
+						</button>
+					</div>
+				{/if}
 			{/if}
 
 			<div class="truncate font-semibold">{headerTitle}</div>
@@ -330,7 +369,8 @@
 					{notebookIds}
 					onTitle={(value) => (panelTitle = value)}
 					onError={(value) => (errorMsg = value)}
-					onExit={backToPicker}
+					onExit={() => backToPicker(true)}
+					onLeavingCost={(cost) => (leavingCost = cost)}
 					onSwitchToFull={() => switchRunningMode('full')}
 				/>
 			{:else if running === 'full'}
@@ -342,7 +382,7 @@
 					{wide}
 					onTitle={(value) => (panelTitle = value)}
 					onError={(value) => (errorMsg = value)}
-					onExit={backToPicker}
+					onExit={() => backToPicker(true)}
 					onSwitchToFlash={() => switchRunningMode('flash')}
 				/>
 			{:else}

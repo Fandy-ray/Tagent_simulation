@@ -627,16 +627,45 @@ frontend_vite_ok() {
     ( cd "$FRONTEND_DIR" && node "$VITE_BIN" --version >/dev/null 2>&1 )
 }
 
+# 只看「Vite 跑不跑得起来」是不够的：队友加了新依赖之后，旧的 node_modules
+# 照样能跑 vite --version，于是跳过安装，直到构建到一半才报缺包。
+# 装完留一份 package-lock.json 的指纹，下次比对才能发现依赖变了。
+LOCK_FILE="$FRONTEND_DIR/package-lock.json"
+LOCK_STAMP="$FRONTEND_DIR/node_modules/.tagent-lock-stamp"
+lock_fingerprint() {
+    [ -f "$LOCK_FILE" ] || return 1
+    if have shasum; then shasum -a 256 "$LOCK_FILE" | cut -d' ' -f1
+    elif have sha256sum; then sha256sum "$LOCK_FILE" | cut -d' ' -f1
+    else wc -c <"$LOCK_FILE" | tr -d ' '
+    fi
+}
+frontend_deps_fresh() {
+    frontend_vite_ok || return 1
+    [ -f "$LOCK_STAMP" ] || return 1
+    [ "$(cat "$LOCK_STAMP" 2>/dev/null)" = "$(lock_fingerprint)" ]
+}
+stamp_lock() { lock_fingerprint >"$LOCK_STAMP" 2>/dev/null || true; }
+
 if [ "$SKIP_INSTALL" = "1" ]; then
     warn '跳过 npm install（--skip-install）'
+elif frontend_deps_fresh; then
+    ok 'node_modules 与 package-lock.json 一致，跳过 npm install'
+elif frontend_vite_ok && [ ! -f "$LOCK_STAMP" ]; then
+    warn 'node_modules 没有依赖指纹（旧版本装的），对齐一次 package-lock.json'
+    install_frontend_deps
+    stamp_lock
 elif frontend_vite_ok; then
-    ok 'node_modules 已存在，跳过 npm install'
+    warn 'package-lock.json 变了（队友可能加了依赖），重新 npm install'
+    install_frontend_deps
+    stamp_lock
 elif [ -d "$FRONTEND_DIR/node_modules" ]; then
     warn '已有 node_modules，但 Vite 原生绑定加载失败，删掉重装。'
     rm -rf "$FRONTEND_DIR/node_modules"
     install_frontend_deps
+    stamp_lock
 else
     install_frontend_deps
+    stamp_lock
 fi
 
 VITE_BIN="$FRONTEND_DIR/node_modules/vite/bin/vite.js"
@@ -707,9 +736,10 @@ esac
 
 # 「怎么跑.txt」让人手动开 /knowledge 看这一项，这里直接替他看了。
 step '检查知识来源'
-# OpenNotebook 不可达时这个接口要 15~20 秒才返回（ping 会依次试 4 条路径），
-# 超时给足 60 秒，否则最需要这条诊断的时候恰好读不到。
-KNOWLEDGE="$(curl -fsS -m 60 "http://127.0.0.1:$AGENT_PORT/knowledge" 2>/dev/null)"
+# 这个接口已经改成不阻塞（探活挪到后台，见 app/infra/background_probe.py），
+# 不再需要为「OpenNotebook 连不上要等 15~20 秒」留 60 秒。
+# 代价是刚启动时头一次读到的 notebook_reachable 可能还是 null（后台还没探完）。
+KNOWLEDGE="$(curl -fsS -m 10 "http://127.0.0.1:$AGENT_PORT/knowledge" 2>/dev/null)"
 if [ -n "$KNOWLEDGE" ]; then
     SOURCE="$(printf '%s' "$KNOWLEDGE" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     ok "source = ${SOURCE:-?}"
@@ -781,17 +811,17 @@ printf '  知识来源自检: http://localhost:%s/knowledge\n' "$AGENT_PORT"
 printf '  运行日志:     %s\n' "$LOG_DIR"
 printf '  停止服务:     ./stop.command  或  ./scripts/stop.sh\n\n'
 
-printf '还没登记模型的话，请先用自己的 DeepSeek Key 在 basic-agent 里登记一个（不要用别人的 Key），\n'
-printf '否则前端顶栏会是「选择模型」，答疑和出题都会失败。登记命令：\n\n'
-cat <<'REGISTER_EOF'
-  TOKEN=$(grep '^AGENT_ADMIN_TOKEN=' TAgent重写版/.env.runtime | cut -d= -f2-)
-  curl -X POST http://127.0.0.1:5001/admin/model-providers \
-    -H "X-Agent-Admin-Token: $TOKEN" -H 'Content-Type: application/json' \
-    -d '{"name":"DeepSeek","served_model_id":"deepseek",
-         "base_url":"https://api.deepseek.com","upstream_model":"deepseek-chat",
-         "auth_mode":"bearer","api_key":"你自己的-sk-xxx","temperature":0.1}'
-
-REGISTER_EOF
+# 登记提示只在**确实没登记**时才给。已经登记过还照着念一长串 curl，
+# 既吓人又没必要——而且早就有网页版登记页了，不用再让人手敲命令。
+MODELS="$(curl -fsS -m 10 "http://127.0.0.1:$AGENT_PORT/v1/models" 2>/dev/null)"
+if printf '%s' "$MODELS" | grep -q '"id"'; then
+    ok '已登记模型，可以直接用'
+else
+    printf '还没登记模型。请用自己的 DeepSeek Key 登记一个（不要用别人的 Key），\n'
+    printf '否则前端顶栏会是「选择模型」，答疑和出题都会失败。\n\n'
+    printf '  登记页面:     http://localhost:%s/models\n\n' "$FRONTEND_PORT"
+    printf '（页面要填管理口令，它在 %s 里的 AGENT_ADMIN_TOKEN。）\n\n' "$ENV_FILE"
+fi
 
 if [ "$OPEN_BROWSER" = "1" ]; then
     if have open; then

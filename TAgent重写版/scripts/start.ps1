@@ -639,11 +639,31 @@ if ((-not (Test-Path $frontEnv)) -and (Test-Path $frontEnvExample)) {
     Write-Ok '已从 .env.example 生成 tagentnote\.env'
 }
 
+# 只看 node_modules 在不在是不够的：队友加了新依赖之后它照样在，
+# 于是跳过安装，直到构建到一半才报缺包。比对 package-lock.json 的指纹才准。
+$lockFile = Join-Path $FrontendDir 'package-lock.json'
+$lockStamp = Join-Path $FrontendDir 'node_modules\.tagent-lock-stamp'
+function Get-LockFingerprint {
+    if (-not (Test-Path $lockFile)) { return '' }
+    return (Get-FileHash -Algorithm SHA256 -Path $lockFile).Hash
+}
+function Test-DepsFresh {
+    if (-not (Test-Path (Join-Path $FrontendDir 'node_modules'))) { return $false }
+    if (-not (Test-Path $lockStamp)) { return $false }
+    return ((Get-Content $lockStamp -Raw -ErrorAction SilentlyContinue).Trim() -eq (Get-LockFingerprint))
+}
+function Save-LockStamp {
+    try { Get-LockFingerprint | Set-Content -Path $lockStamp -NoNewline -Encoding ascii } catch { }
+}
+
 if ($SkipInstall) {
     Write-Warn2 '跳过 npm install（-SkipInstall）'
-} elseif (Test-Path (Join-Path $FrontendDir 'node_modules')) {
-    Write-Ok 'node_modules 已存在，跳过 npm install'
+} elseif (Test-DepsFresh) {
+    Write-Ok 'node_modules 与 package-lock.json 一致，跳过 npm install'
 } else {
+    if (Test-Path (Join-Path $FrontendDir 'node_modules')) {
+        Write-Warn2 'package-lock.json 与已装依赖对不上（队友可能加了依赖），重新 npm install'
+    }
     Push-Location $FrontendDir
     try {
         Write-Warn2 '首次安装前端依赖，可能要几分钟...'
@@ -658,6 +678,8 @@ if ($SkipInstall) {
             $script:npmFromOfficial = $true
         }
     } finally { Pop-Location }
+    # 留下这次装的是哪份 lock，下次才能判断依赖有没有变
+    Save-LockStamp
     if ($npmFromOfficial) { Write-Ok '就绪（官方源）' } else { Write-Ok '就绪' }
 }
 
@@ -805,5 +827,18 @@ if ($Lan) { Write-Host "  局域网访问:   http://<本机IP>:$FrontendPort（�
 Write-Host "  知识来源自检: http://localhost:$AgentPort/knowledge"
 Write-Host "  运行日志:     logs\runtime\"
 Write-Host "  停止服务:     stop.bat`n"
-Write-Host '还没登记模型的话，请先用自己的 DeepSeek Key 在 basic-agent 里登记一个（不要用别人的 Key），' -ForegroundColor Yellow
-Write-Host '否则前端顶栏会是"选择模型"，答疑和出题都会失败。' -ForegroundColor Yellow
+# 登记提示只在**确实没登记**时给。已经登记过还照念一串 curl，既吓人又没必要，
+# 而且早就有网页版登记页了。
+$registered = $false
+try {
+    $models = Invoke-RestMethod -Uri "http://127.0.0.1:$AgentPort/v1/models" -TimeoutSec 10
+    $registered = ($models.data -and $models.data.Count -gt 0)
+} catch { }
+if ($registered) {
+    Write-Ok '已登记模型，可以直接用'
+} else {
+    Write-Host '还没登记模型。请用自己的 DeepSeek Key 登记一个（不要用别人的 Key），' -ForegroundColor Yellow
+    Write-Host '否则前端顶栏会是"选择模型"，答疑和出题都会失败。' -ForegroundColor Yellow
+    Write-Host "  登记页面:     http://localhost:$FrontendPort/models"
+    Write-Host '（页面要填管理口令，它在 TAgent重写版\.env.runtime 里的 AGENT_ADMIN_TOKEN。）'
+}

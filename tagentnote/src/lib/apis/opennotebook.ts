@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/public';
 
+import { createTtlCache } from '$lib/data/ttlCache';
 import {
 	type KnowledgeCollection,
 	type KnowledgeFile,
@@ -298,7 +299,38 @@ export async function getSourceText(sourceId: string, signal?: AbortSignal) {
 	return source?.full_text?.trim() || '';
 }
 
-export async function listNotebookKnowledge(signal?: AbortSignal): Promise<KnowledgeCollection[]> {
+/**
+ * 列一遍笔记本要 1 + 2N 个请求（笔记本、每本的来源、每本的笔记）。
+ * 答疑页每次挂载都会调，页面来回切时整轮重发——内容又不会秒秒钟变，缓存十几秒。
+ * 新建/删除笔记本后调 invalidateNotebookKnowledge() 立刻见新的。
+ */
+const knowledgeCache = createTtlCache<KnowledgeCollection[]>();
+
+export function invalidateNotebookKnowledge(): void {
+	knowledgeCache.invalidate();
+}
+
+export function listNotebookKnowledge(signal?: AbortSignal): Promise<KnowledgeCollection[]> {
+	// 共享的那次请求**不绑**任何调用方的 signal：几个组件共用同一个 Promise，
+	// 绑了的话谁先卸载一 abort，别人的加载也跟着失败
+	// （实测路径：KnowledgeCombobox 传了 signal，答疑页和笔记本页没传，
+	// 三者拿到的是同一个 Promise）。
+	// 调用方的 signal 只负责让**它自己**不再等下去。
+	const shared = knowledgeCache.get(() => loadNotebookKnowledge());
+	if (!signal) {
+		return shared;
+	}
+	if (signal.aborted) {
+		return Promise.reject(new DOMException('Aborted', 'AbortError'));
+	}
+	return new Promise((resolve, reject) => {
+		const stop = () => reject(new DOMException('Aborted', 'AbortError'));
+		signal.addEventListener('abort', stop, { once: true });
+		shared.then(resolve, reject).finally(() => signal.removeEventListener('abort', stop));
+	});
+}
+
+async function loadNotebookKnowledge(signal?: AbortSignal): Promise<KnowledgeCollection[]> {
 	const notebooks = await fetchJson<NotebookListItem[]>(
 		'/api/notebooks?archived=false&order_by=updated+desc',
 		signal ?? new AbortController().signal

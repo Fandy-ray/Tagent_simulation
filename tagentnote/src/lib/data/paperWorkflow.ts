@@ -74,7 +74,9 @@ export const PAPER_SECTIONS: PaperSection[] = [
 export const DEFAULT_PAPER_TASK: PaperTask = {
 	title: '',
 	keywords: '',
-	section: '实验设计'
+	// 默认落在**第一个**章节。原来写死 '实验设计'（第 5 个），
+	// 和卡片上「先写题目，再分章节」的指引自相矛盾。
+	section: '选题与大纲'
 };
 
 export const DEFAULT_PAPER_CONTEXT: PaperContext = {

@@ -172,7 +172,7 @@
 							type="button"
 							class="text-xs text-amber-300/90 transition hover:text-amber-200"
 							onclick={onProposeTopic}
-							title="按当前笔记本的材料出一道小论文题"
+							title="按课程材料出一道小论文题（选了笔记本就只用选中的）"
 						>
 							让助手出题
 						</button>
