@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 
 from flask import jsonify
-from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 from app.errors.api_errors import AgentAPIError
 from app.errors.exam_errors import ExamServiceError
@@ -53,6 +53,26 @@ def register_error_handlers(app) -> None:
         return error_response(
             AgentAPIError("Model provider configuration is unavailable.", 503, "provider_registry_unavailable")
         )
+
+    @app.errorhandler(HTTPException)
+    def handle_http_error(error: HTTPException):
+        """路径不存在、方法不对这类是请求的问题，不是服务出错：照实回 404/405。
+
+        以前它们落进下面的 Exception 兜底，一律变成 500 internal_error 还记一条 ERROR
+        （浏览器打开一个不存在的地址就是一条）。
+        """
+        status = error.code or 500
+        body, _ = error_response(
+            AgentAPIError(
+                error.description or error.name,
+                status,
+                error.name.lower().replace(" ", "_"),
+                "server_error" if status >= 500 else "invalid_request_error",
+            )
+        )
+        # 405 要带上 Allow，客户端才知道该用哪个方法
+        headers = {k: v for k, v in error.get_headers() if k.lower() == "allow"}
+        return body, status, headers
 
     @app.errorhandler(Exception)
     def handle_unexpected_error(error):

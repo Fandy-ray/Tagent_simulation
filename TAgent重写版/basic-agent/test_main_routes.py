@@ -305,6 +305,18 @@ class MainRoutesTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
+    def test_an_unknown_path_is_404_not_500(self):
+        # 以前落进兜底的 Exception 处理，一律 500 internal_error
+        response = self.client.get("/no-such-route")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()["error"]["code"], "not_found")
+
+    def test_a_wrong_method_is_405_with_allow(self):
+        response = self.client.delete("/v1/models")
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.get_json()["error"]["code"], "method_not_allowed")
+        self.assertIn("GET", response.headers.get("Allow", ""))
+
     def test_unknown_and_disabled_models_use_openai_error_shape(self):
         for model_id in ["unknown", "teacher-disabled"]:
             response = self.client.post(
