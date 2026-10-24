@@ -15,7 +15,9 @@ from pydantic import BaseModel
 
 from app.agent.nodes import json_call
 from app.agent.runtime import ATTEMPT_MARGIN_SECONDS, AgentDeps, attempt_timeout
+from app.config import UPSTREAM_STALL_SECONDS
 from app.errors.exam_errors import UpstreamLLMError
+from app.infra import llm_json
 
 
 # ====================== 预算算法 ======================
@@ -112,12 +114,38 @@ def test_json_call_binds_the_output_cap_and_uses_the_run_provider():
     assert call["max_retries"] == 0
 
 
-def test_json_call_derives_the_timeout_from_the_remaining_budget():
+@pytest.fixture
+def attempt_caps(monkeypatch):
+    """记下每次交给 call_json_llm 的单次总上限（invoke_with_deadline 按它硬截断）。"""
+    seen = []
+    real = llm_json.call_json_llm
+
+    def recording(llm, prompt, model_cls, *, attempt_timeout, **kwargs):
+        seen.append(attempt_timeout)
+        return real(llm, prompt, model_cls, attempt_timeout=attempt_timeout, **kwargs)
+
+    monkeypatch.setattr(llm_json, "call_json_llm", recording)
+    return seen
+
+
+def test_json_call_derives_the_attempt_cap_from_the_remaining_budget(attempt_caps):
     client = RecordingClient([{"value": 1}])
-    deps, factory = deps_with(client, budget=40.0)
+    deps, _ = deps_with(client, budget=40.0)
     json_call(deps, "出题", Answer, max_tokens=500, limit=90, floor=25)
     # 剩 40 秒：40 - 15 = 25，正好落在下限上
-    assert factory.calls[0]["timeout_seconds"] == 25
+    assert attempt_caps == [25]
+
+
+def test_the_client_read_timeout_is_the_stall_threshold_not_the_attempt_cap():
+    # 一律流式读：读超时量的是两段数据之间的间隔，上游卡住时不用干等满单次上限。
+    # 也不随剩余预算变，缓存里每个模型只留这一个客户端
+    client = RecordingClient([{"value": 1}, {"value": 2}])
+    deps, factory = deps_with(client, budget=40.0)
+    json_call(deps, "出题", Answer, max_tokens=500, limit=90, floor=25)
+    deps2, factory2 = deps_with(client, budget=300.0)
+    json_call(deps2, "出题", Answer, max_tokens=500, limit=90, floor=25)
+    assert factory.calls[0]["timeout_seconds"] == UPSTREAM_STALL_SECONDS
+    assert factory2.calls[0]["timeout_seconds"] == UPSTREAM_STALL_SECONDS
 
 
 def test_post_validate_runs_inside_the_retry_loop():
@@ -146,12 +174,12 @@ def test_a_persistently_invalid_answer_becomes_502_not_500():
         json_call(deps, "出题", Answer, max_tokens=500, limit=90, floor=25, post_validate=positive)
 
 
-def test_an_explicit_budget_overrides_the_deadline():
+def test_an_explicit_budget_overrides_the_deadline(attempt_caps):
     # 判卷把剩余预算按批次平分时会显式传 budget
     client = RecordingClient([{"value": 1}])
-    deps, factory = deps_with(client, budget=480.0)
+    deps, _ = deps_with(client, budget=480.0)
     json_call(
         deps, "判卷", Answer, max_tokens=500, limit=55, floor=20,
         budget=50.0, started=time.monotonic(),
     )
-    assert factory.calls[0]["timeout_seconds"] == 35  # 50 - 15
+    assert attempt_caps == [35]  # 50 - 15

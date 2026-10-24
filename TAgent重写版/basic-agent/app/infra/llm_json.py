@@ -24,6 +24,7 @@ import time
 import types
 from typing import Callable, Optional
 
+import httpx
 import openai
 
 from app.config import AgentConfig
@@ -223,6 +224,11 @@ def call_json_llm(
     的硬截断共同保证总耗时 ≤ budget_seconds，严格先于代理层超时结束。
     超时 → UpstreamTimeoutError(504)；孤儿额度满 → ExamBusyError(429)；
     连续失败 → UpstreamLLMError(502)。
+
+    两种超时分开对待：
+    - 到了单次总上限（wait_for 硬截断）：模型一直在写、就是慢，再来一次照样慢，不重试；
+    - 握手超时、或流式读时太久没收到一个字节（客户端的读超时，见 nodes.json_call）：
+      上游卡住了。卡住多半是一阵子的事，预算内重试一次。
     """
     start = clock() if start_time is None else start_time
     attempt_worst = attempt_timeout + cancel_grace_seconds
@@ -246,11 +252,16 @@ def call_json_llm(
             message = invoke_with_deadline(llm, prompt_text, attempt_timeout, cancel_grace_seconds)
         except ExamBusyError:
             raise  # 孤儿额度满：立刻 429，不重试
-        except (TimeoutError, openai.APITimeoutError) as e:
-            # 单次已耗尽 attempt_timeout（wait_for 硬截断或 SDK 超时），
-            # 代理侧也在计时，不再重试
+        except TimeoutError as e:
+            # 单次已耗尽 attempt_timeout（wait_for 硬截断）：一直在写、就是慢，不再重试
             log.warning(f"LLM 调用超时（attempt {attempt}）：{e!r}")
             raise UpstreamTimeoutError("AI 服务响应超时，请稍后重试") from e
+        except _STALLED as e:
+            # 上游卡住（握手超时，或太久没收到一个字节）。流式读的时候 SDK 不包装、
+            # 原样抛 httpx 的超时，所以两种都要认
+            log.warning(f"上游卡住了（attempt {attempt}）：{e!r}")
+            last_err = e
+            continue
         except Exception as e:
             log.warning(f"LLM 调用失败（attempt {attempt}）：{e!r}")
             if isinstance(e, openai.APIStatusError) and e.status_code in _FINAL_STATUS:
@@ -280,6 +291,8 @@ def call_json_llm(
             last_err = e
             continue
 
+    if isinstance(last_err, _STALLED):
+        raise UpstreamTimeoutError("AI 服务响应超时，请稍后重试") from last_err
     # 连不上上游和"上游回了但结构不对"是两码事。以前一律报"输出结构异常"，
     # 会把人引去查 prompt，而真正该查的是网络或 base_url/Key。
     if isinstance(last_err, openai.APIConnectionError):
@@ -330,6 +343,10 @@ def _with_more_tokens(llm):
     log.warning(f"上次输出被截断，max_tokens {current} → {raised} 再试")
     return llm.bind(max_tokens=raised)
 
+
+# 上游卡住：握手超时，或太久没收到一个字节。APITimeoutError 是 APIConnectionError 的子类，
+# 要排在「连不上」的判断前面
+_STALLED = (openai.APITimeoutError, httpx.TimeoutException)
 
 # 重试也不会变好的上游状态码
 _FINAL_STATUS = {400, 401, 403, 404, 422}

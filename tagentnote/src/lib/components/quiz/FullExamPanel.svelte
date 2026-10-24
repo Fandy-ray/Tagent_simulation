@@ -38,8 +38,11 @@
 
 	type Phase = 'generating' | 'answering' | 'submitting' | 'result' | 'failed';
 
-	/** 客户端兜底上限；后端 EXAM_LLM_BUDGET=480s 已经封了顶，这条只防"再也不回话" */
-	const CLIENT_TIMEOUT_MS = 540_000;
+	/**
+	 * 客户端兜底上限，只防"再也不回话"。= 后端 EXAM_LLM_BUDGET（330 秒）+ 排队最多 30 秒 + 余量；
+	 * basic-agent 的 tests/test_timeout_budgets.py 盯着这条关系。
+	 */
+	const CLIENT_TIMEOUT_MS = 380_000;
 
 	type Props = {
 		modelId: string;

@@ -123,11 +123,26 @@ def test_budget_smaller_than_one_attempt_raises_timeout():
     assert llm.calls == 0
 
 
-def test_api_timeout_is_not_retried():
-    llm = FakeLLM([openai.APITimeoutError(request=httpx.Request("POST", "http://t"))])
+def test_a_stalled_upstream_is_retried_once_within_budget():
+    # 握手超时 / 太久没收到一个字节：上游卡住了，多半是一阵子的事，预算内重试一次
+    llm = FakeLLM([openai.APITimeoutError(request=httpx.Request("POST", "http://t")), '{"value": "ok"}'])
+    assert call_json_llm(llm, "p", Payload, attempt_timeout=80, budget_seconds=170).value == "ok"
+    assert llm.calls == 2
+
+
+def test_a_stall_while_streaming_counts_too():
+    # 流式读到一半卡住时，SDK 不包装、原样抛 httpx 的读超时
+    llm = FakeLLM([httpx.ReadTimeout("no bytes"), '{"value": "ok"}'])
+    assert call_json_llm(llm, "p", Payload, attempt_timeout=80, budget_seconds=170).value == "ok"
+    assert llm.calls == 2
+
+
+def test_stalling_every_time_is_a_timeout_not_a_structure_error():
+    stall = openai.APITimeoutError(request=httpx.Request("POST", "http://t"))
+    llm = FakeLLM([stall, httpx.ReadTimeout("no bytes")])
     with pytest.raises(UpstreamTimeoutError):
         call_json_llm(llm, "p", Payload, attempt_timeout=80, budget_seconds=170)
-    assert llm.calls == 1
+    assert llm.calls == 2
 
 
 def test_hard_deadline_cancels_slow_call():

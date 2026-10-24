@@ -283,8 +283,17 @@ EXAM_MMR_FETCH_K = 40
 EXAM_CONTEXT_CHAR_LIMIT = 4500
 
 # 单段耗时波动近 1.8 倍（同 prompt 同输出量重复 4 次：46.0/46.0/54.9/83.5s），
-# 按单次测量定超时必然时好时坏，故按尾部再留余量：
-# 单段 150s，总预算 480s（3 段最坏 3×155=465s）。
+# 按单次测量定超时必然时好时坏，故按尾部再留余量。那组数据出自一个没记名字的慢模型；
+# 2026-10-25 在 DeepSeek 上单次最长 5 秒左右。单次上限仍留 150 秒，是给先思考的慢模型的，
+# 上游卡住不靠它兜：结构化调用一律流式读，20 秒一个字节都没有就算卡住、重试一次
+# （UPSTREAM_STALL_SECONDS，见 app/agent/nodes.py json_call）。
+#
+# 总预算 = 一路最坏两次尝试：2 × (150 + 5 秒取消宽限) + 20 秒余量（取材、组卷）= 330 秒。
+# 以前是 480 秒，按「三段一段接一段，最坏 3×155=465 秒」算的；现在七路同时出，
+# 总耗时是最慢的那一路，不是几路相加。
+#
+# 下面这段「精简 prompt」说的是**精简输入里的规则**。缩短**输出**（紧凑 JSON、短解析）
+# 是另一回事：2026-10-25 压测夜里中位快约 0.5 秒，还没进产品，见改动说明「五、速度」。
 #
 # 别再想着"精简 prompt 提速"——A/B 压测（各 3 轮）结果是反的：
 #   填空 55.3s → 87.0s，选择 31.8s → 69.4s，解答 18.2s → 33.8s
@@ -292,7 +301,7 @@ EXAM_CONTEXT_CHAR_LIMIT = 4500
 # 详细的规则收窄了模型的搜索空间，反而更快也更稳；压成干条目后它要自己揣摩。
 # 三段中位合计约 105s，真要提速应从"三段并行"入手，不是改 prompt。
 EXAM_LLM_TIMEOUT = 150
-EXAM_LLM_BUDGET = 480
+EXAM_LLM_BUDGET = 330
 EXAM_MIN_ATTEMPT_TIMEOUT = 30
 
 GRADE_LLM_TIMEOUT = 55
@@ -386,9 +395,11 @@ EDIT_MAX_SUGGESTIONS = 5
 # ====================== LLM 闸门的排队 ======================
 #
 # 闸门满了先排队，排不上才 429（见 app/repository/exam_cache.py 的 LLMGate）。
-# 等多久必须短于「前端超时 − 后端预算」的余量：整卷 540−480=60、闪卡 240−200=40、
+# 等多久必须短于「前端超时 − 后端预算」的余量：整卷 380−330=50、闪卡 240−200=40、
 # 论文批改 260−220=40 秒，取 30 秒，排到之后还够一次完整的预算。
-# 队长上限：排队的人各占一个 waitress 线程干等（共 32 个），给流式答疑留足。
+# tests/test_timeout_budgets.py 盯着这几个数：改预算或前端超时时，三边要一起动。
+# 队长上限：排队的人各占一个 waitress 线程干等（共 WAITRESS_THREADS 个，默认 100），
+# 给流式答疑留足。
 LLM_GATE_WAIT_SECONDS = 30.0
 LLM_GATE_MAX_WAITING = 8
 
@@ -411,6 +422,13 @@ UPSTREAM_CONNECT_TIMEOUT = 10
 # 设 UPSTREAM_DIRECT_FIRST=0 回到「有代理就一律走代理」。
 UPSTREAM_DIRECT_FIRST = os.getenv("UPSTREAM_DIRECT_FIRST", "1") != "0"
 UPSTREAM_DIRECT_CONNECT_TIMEOUT = 3
+
+# 出题、判卷这类结构化调用多久一个字节都没收到，就算上游卡住了（见 app/agent/nodes.py
+# json_call）。流式读时量的是两段数据之间的间隔，不是总时长。
+# 2026-10-25 夜里实测（DeepSeek）：首字 p95 约 1 秒、之后每段间隔远小于 1 秒；先思考的模型
+# 会一直吐思考内容，也不会隔这么久。会把思考整段藏起来、一个字节都不发的上游（比如 OpenAI 的
+# o 系列）可能被误判，要用时把它调大。
+UPSTREAM_STALL_SECONDS = float(os.getenv("UPSTREAM_STALL_SECONDS", "20"))
 
 
 # ====================== 学习记录库（SQLite） ======================

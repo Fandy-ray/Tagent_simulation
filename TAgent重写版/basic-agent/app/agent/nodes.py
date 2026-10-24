@@ -18,6 +18,7 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from app.agent.runtime import AgentDeps, attempt_timeout
+from app.config import UPSTREAM_STALL_SECONDS
 from app.errors.exam_errors import InvalidExamRequestError
 from app.infra import llm_json
 from app.util.json_items import JsonItemScanner
@@ -43,16 +44,24 @@ def json_call(
     budget 默认是「离截止时间还剩多少」。判卷那种要把剩余预算按批次平分的，
     显式传进来（并传 started），别让靠前的批次吃掉整个预算。
     open_reader 给了就边收边读（见 llm_json.StreamingClient），返回值不变。
+
+    **一律流式读**，两个超时各管一件事：
+    - 客户端的读超时 = UPSTREAM_STALL_SECONDS：流式读时它量的是「两段数据之间隔了多久」，
+      隔这么久一个字节都没有就是上游卡住了（llm_json 会在预算内重试一次）；
+    - 单次总上限 = attempt_timeout（limit 封顶），由 invoke_with_deadline 硬截断。
+      先思考的模型（Qwen3、GLM、DeepSeek 推理模式）一次要几十秒是正常的，它们一直在吐
+      思考的内容，不会被当成卡住。
+    以前不流式，读超时只能设成总上限（出卷 150 秒），上游卡住时要干等满 150 秒。
+    客户端按固定的读超时取，缓存里每个模型只有这一个，不再随剩余预算变来变去。
     """
     if budget is None:
         started = time.monotonic()
         budget = max(0.0, deps.deadline - started)
     timeout = attempt_timeout(limit, floor, budget)
     client = deps.client_factory.get(
-        deps.provider, timeout_seconds=int(timeout), max_retries=0
+        deps.provider, timeout_seconds=UPSTREAM_STALL_SECONDS, max_retries=0
     ).bind(max_tokens=max_tokens)
-    if open_reader is not None:
-        client = llm_json.StreamingClient(client, open_reader)
+    client = llm_json.StreamingClient(client, open_reader or _skip_pieces)
     # 经由模块属性调用，单测才能 monkeypatch app.infra.llm_json.call_json_llm
     return llm_json.call_json_llm(
         client,
@@ -63,6 +72,11 @@ def json_call(
         post_validate=post_validate,
         start_time=started,
     )
+
+
+def _skip_pieces() -> Callable[[str], None]:
+    """不需要边收边读时的 reader：流式读只是为了用上卡住检测。"""
+    return lambda _piece: None
 
 
 _FINISHED = object()
