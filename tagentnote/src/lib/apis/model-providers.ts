@@ -139,29 +139,30 @@ function withoutBlankKey(input: ModelProviderInput) {
 export type ProbeResult =
 	{ ok: true; reply: string; seconds: number } | { ok: false; reason: string };
 
-/** 能连上的思考模型，额度给少了会把正文挤没；给 64 个 token 足够回一个字 */
+/** 后端探测时给的输出额度（basic-agent admin.py 的 PROBE_MAX_TOKENS），只用来写提示 */
 const PROBE_MAX_TOKENS = 64;
 /** 回一个字用不了这么久；不设的话上游卡住时按钮要等后端 180 秒的超时 */
 const PROBE_TIMEOUT_MS = 60_000;
 
 /**
- * 用登记好的模型真发一句很短的话（走不加教材的透传通道），看 Key、地址、模型名是不是都对。
+ * 用登记好的模型真发一句很短的话，看 Key、地址、模型名是不是都对。
  * 会真的调用一次模型，按量计费的话花费可以忽略。
+ *
+ * 走管理接口（要口令），发什么由后端定：只发一句固定的短话。以前直接走透传通道 /v1/raw，
+ * 那条通道原样转发、什么都能发，现在不经前端端口开放了。
  */
-export async function probeModel(servedModelId: string): Promise<ProbeResult> {
+export async function probeModel(token: string, servedModelId: string): Promise<ProbeResult> {
 	const started = performance.now();
 	let response: Response;
 	try {
-		response = await fetch(`${agentBase()}/v1/raw/chat/completions`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				model: servedModelId,
-				messages: [{ role: 'user', content: '只回复一个字：好' }],
-				max_tokens: PROBE_MAX_TOKENS
-			}),
-			signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
-		});
+		response = await fetch(
+			`${agentBase()}/admin/model-providers/${encodeURIComponent(servedModelId)}/probe`,
+			{
+				method: 'POST',
+				headers: { 'X-Agent-Admin-Token': token.trim() },
+				signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
+			}
+		);
 	} catch (error) {
 		if (error instanceof DOMException && error.name === 'TimeoutError') {
 			return {
@@ -174,8 +175,25 @@ export async function probeModel(servedModelId: string): Promise<ProbeResult> {
 	const seconds = (performance.now() - started) / 1000;
 	const payload = (await response.json().catch(() => ({}))) as {
 		choices?: { message?: { content?: string }; finish_reason?: string }[];
-		error?: { message?: string } | string;
+		error?: { message?: string; code?: string } | string;
 	};
+
+	// 上游的原话带 X-Tagent-Upstream；不带的是 basic-agent 自己拦下的（口令不对、模型没登记）。
+	// 不能看错误码分：上游也会回 403、404，OpenAI 一类的上游错误码也叫 model_not_found
+	if (!response.ok && response.headers.get('X-Tagent-Upstream') !== '1') {
+		const own = typeof payload.error === 'object' ? payload.error?.code : undefined;
+		if (own === 'forbidden' || own === 'admin_token_not_configured') {
+			return { ok: false, reason: '管理口令不对，或者 basic-agent 没有配置管理口令。' };
+		}
+		if (own === 'model_not_found') {
+			return { ok: false, reason: '这个模型没有登记，或者已经停用。' };
+		}
+		const detail = typeof payload.error === 'string' ? payload.error : payload.error?.message;
+		return {
+			ok: false,
+			reason: `没能连通模型服务（${response.status}）${detail ? `：${detail}` : ''}`
+		};
+	}
 
 	if (!response.ok) {
 		if (response.status === 401 || response.status === 403) {

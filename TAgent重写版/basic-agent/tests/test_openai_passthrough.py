@@ -242,3 +242,107 @@ def test_closing_stream_early_releases_upstream(monkeypatch):
     assert next(stream) == b"data: first\n\n"
     stream.close()
     assert pieces.closed and upstream.is_closed
+
+
+class TestOnlyDirectCallers:
+    """透传通道不经前端端口开放。
+
+    前端代理给它转发的每个请求都盖上 FRONTEND_PROXY_HEADER（客户端去不掉）。开了 --lan 时
+    前端端口对整个局域网开着，不拦的话谁都能拿登记的 Key 当通用大模型接口用。
+    """
+
+    VIA_FRONTEND = {"X-Tagent-Via-Frontend": "1"}
+
+    def test_chat_through_the_frontend_proxy_is_refused(self, client, monkeypatch, registered_provider):
+        called = []
+        monkeypatch.setattr(passthrough_client, "complete", lambda *a, **k: called.append(a))
+        response = client.post(
+            "/v1/raw/chat/completions",
+            json={"model": "deepseek", "messages": [{"role": "user", "content": "hi"}]},
+            headers=self.VIA_FRONTEND,
+        )
+        assert response.status_code == 403
+        assert response.get_json()["error"]["code"] == "direct_callers_only"
+        assert called == [], "被拒的请求不该再发到上游"
+
+    def test_any_value_of_the_header_counts(self, client, registered_provider):
+        # 只看有没有，不看值：代理总会盖上它，客户端自己写个 0 也去不掉
+        response = client.get("/v1/raw/models", headers={"X-Tagent-Via-Frontend": "0"})
+        assert response.status_code == 403
+
+    def test_direct_callers_still_get_through(self, client, registered_provider):
+        assert client.get("/v1/raw/models").status_code == 200
+
+
+class TestAdminProbe:
+    """登记页的「测试连接」：要管理口令，只发一句固定的话。"""
+
+    TOKEN = {"X-Agent-Admin-Token": "admin-token"}
+
+    @pytest.fixture
+    def admin_client(self, registry):
+        from app.factory import create_app
+        from tests.conftest import FakeServices
+
+        app = create_app(
+            {"TESTING": True, "AGENT_ADMIN_TOKEN": "admin-token"},
+            registry=registry,
+            services=FakeServices(),
+        )
+        return app.test_client()
+
+    @pytest.fixture
+    def upstream(self, monkeypatch):
+        seen = {}
+
+        def fake_complete(data, provider, **kwargs):
+            seen.update(data=data, provider=provider, kwargs=kwargs)
+            return 200, b'{"choices":[{"message":{"content":"\\u597d"}}]}', "application/json"
+
+        monkeypatch.setattr(passthrough_client, "complete", fake_complete)
+        return seen
+
+    def test_needs_the_admin_token(self, admin_client, upstream, registered_provider):
+        response = admin_client.post("/admin/model-providers/deepseek/probe")
+        assert response.status_code == 403
+        assert upstream == {}
+
+    def test_sends_only_the_fixed_short_message(self, admin_client, upstream, registered_provider):
+        # 调用方塞什么都不转：这里不是另一条通用转发
+        response = admin_client.post(
+            "/admin/model-providers/deepseek/probe",
+            json={"messages": [{"role": "user", "content": "写一万字"}], "max_tokens": 99999},
+            headers=self.TOKEN,
+        )
+        assert response.status_code == 200
+        assert upstream["data"]["max_tokens"] == 64
+        assert upstream["data"]["messages"] == [{"role": "user", "content": "只回复一个字：好"}]
+        assert set(upstream["data"]) == {"model", "messages", "max_tokens"}
+        assert upstream["kwargs"]["timeout"] < 60, "前端 60 秒就放弃了，后端不该等得更久"
+
+    def test_works_through_the_frontend_proxy(self, admin_client, upstream, registered_provider):
+        # 登记页就是从前端端口来的；有管理口令就行
+        response = admin_client.post(
+            "/admin/model-providers/deepseek/probe",
+            headers={**self.TOKEN, "X-Tagent-Via-Frontend": "1"},
+        )
+        assert response.status_code == 200
+
+    def test_relays_the_upstream_status(self, admin_client, monkeypatch, registered_provider):
+        monkeypatch.setattr(
+            passthrough_client, "complete", lambda *a, **k: (401, b'{"error":{"message":"bad key"}}', "application/json")
+        )
+        response = admin_client.post("/admin/model-providers/deepseek/probe", headers=self.TOKEN)
+        assert response.status_code == 401
+        assert response.get_json()["error"]["message"] == "bad key"
+        assert response.headers.get("X-Tagent-Upstream") == "1"
+
+    def test_own_refusals_are_not_marked_as_upstream(self, admin_client, upstream, registered_provider):
+        # 口令不对、模型没登记是这边拦的，不能让前端当成「上游拒了 Key」
+        assert "X-Tagent-Upstream" not in admin_client.post("/admin/model-providers/deepseek/probe").headers
+        missing = admin_client.post("/admin/model-providers/nope/probe", headers=self.TOKEN)
+        assert "X-Tagent-Upstream" not in missing.headers
+
+    def test_unknown_model_is_404(self, admin_client, upstream, registered_provider):
+        response = admin_client.post("/admin/model-providers/nope/probe", headers=self.TOKEN)
+        assert response.status_code == 404

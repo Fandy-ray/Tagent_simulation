@@ -77,6 +77,8 @@ opennotebook/surreal_data/              数据库文件
 指向 5001，那是另一套部署，不在本目录范围内。
 答疑（SSE）和闪卡（`/quiz/flash/stream`，一行一个 JSON）都是边写边发的，反代不能把响应攒齐了再转：
 后端已带 `X-Accel-Buffering: no`，Nginx 会照做；别的反代要自己关掉响应缓冲。
+反代还要像 Vite 那样给转发的请求盖上 `X-Tagent-Via-Frontend: 1`（覆盖客户端自带的同名头）：
+后端凭它拒绝从前端端口来的 `/v1/raw` 透传请求，漏了这一条，谁能访问前端谁就能拿登记的 Key 随便调模型。
 
 ## 安全
 

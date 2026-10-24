@@ -25,6 +25,22 @@ def require_admin_token() -> None:
     if not provided or not hmac.compare_digest(provided, expected):
         raise AgentAPIError("Forbidden.", 403, "forbidden")
 
+# 前端代理（tagentnote/vite.config.ts）给它转发的每个请求都盖上这个头。代理是用自己的值
+# 覆盖客户端发来的同名头，所以客户端去不掉它：带着它，就说明请求是从前端端口进来的——
+# 开了 --lan 时，那可能是局域网里的任何人。
+FRONTEND_PROXY_HEADER = "X-Tagent-Via-Frontend"
+
+
+def require_direct_caller() -> None:
+    """只许本机直连的程序调用（例如 OpenNotebook 直连 5001），不许经前端端口进来。"""
+    if FRONTEND_PROXY_HEADER in request.headers:
+        raise AgentAPIError(
+            "This channel is only for programs on this machine that call basic-agent directly.",
+            403,
+            "direct_callers_only",
+        )
+
+
 def require_internal_token() -> None:
     expected = current_app.config.get("AGENT_INTERNAL_TOKEN", "")
     if not expected:

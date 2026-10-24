@@ -148,6 +148,10 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:5001/admin/model-providers' -Method Pos
 > 和笔记本内容注入 prompt。OpenNotebook 拿它做摘要、来源转换、播客脚本时，
 > 会被塞进一堆无关的系统仿真教材，输出直接跑偏。
 > `/v1/raw/chat/completions` 什么都不加，原样转发给上游。
+>
+> `/v1/raw` 只给本机直连的程序用（OpenNotebook 就是直连 5001），**经前端端口（5173 / 4173）访问会被拒绝（403）**：
+> 开了 `--lan` 时前端端口对整个局域网开着，这条通道原样转发、什么都能发，不能让谁都拿你的 Key 用。
+> 模型登记页的「测试连接」走的是要管理口令的 `/admin/model-providers/<id>/probe`。
 
 #### Embedding（可选，装了检索更准）
 

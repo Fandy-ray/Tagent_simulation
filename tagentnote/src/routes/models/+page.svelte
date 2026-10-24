@@ -273,7 +273,7 @@
 
 	const probe = async (provider: ModelProvider) => {
 		probes = { ...probes, [provider.served_model_id]: 'running' };
-		const result = await probeModel(provider.served_model_id);
+		const result = await probeModel(token, provider.served_model_id);
 		probes = { ...probes, [provider.served_model_id]: result };
 	};
 

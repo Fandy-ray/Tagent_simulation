@@ -10,6 +10,12 @@
 OpenNotebook 的 "OpenAI Compatible" provider 填 base_url 为
 http://host.docker.internal:5001/v1/raw 即可（Docker Desktop 会把它 NAT 到
 宿主的 127.0.0.1，所以 basic-agent 不必改成监听 0.0.0.0）。
+
+**不经前端端口开放。** 这条通道什么都不加、原样转发，模型、提示词、max_tokens
+全由调用方定——谁能调它，谁就能拿登记的 Key 当一个通用的大模型接口用。
+`start.sh --lan` 时前端端口对整个局域网开着，前端代理又把 /agent-api/* 全转过来，
+所以经前端代理进来的请求（带 FRONTEND_PROXY_HEADER）一律拒绝。
+登记页的「测试连接」改走 /admin/model-providers/<id>/probe（要管理口令）。
 """
 
 from __future__ import annotations
@@ -17,12 +23,18 @@ from __future__ import annotations
 from flask import Blueprint, Response, jsonify, stream_with_context
 
 from app.api.deps import get_registry, select_provider
+from app.api.security import require_direct_caller
 from app.api.validators import json_body
 from app.infra import passthrough_client
 from app.util.timeutil import timestamp_to_epoch
 
 
 blueprint = Blueprint("openai_passthrough", __name__, url_prefix="/v1/raw")
+
+
+@blueprint.before_request
+def _direct_callers_only():
+    require_direct_caller()
 
 
 @blueprint.get("/models")
