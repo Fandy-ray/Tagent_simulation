@@ -442,7 +442,13 @@ def cloze_matches(user_answer: str, accept: List[str], match_mode: str) -> bool:
 
 
 # ====================== 判分模型 ======================
-class LLMGradeItem(StrictModel):
+# 判分输出**不**沿用 StrictModel 的「多一个字段就判不合格」：我们只读题号、分数、
+# 评语三样，模型多写的字段直接丢掉就是。2026-10-24 实测 DeepSeek 判大题时常在每条里
+# 多写 question_id_note / score_ratio_note（"2/3≈0.7"），一张卷 10 次里约 5 次因此
+# 两次尝试都不合格、整卷判卷 502。题号对不对、分数是不是数，下面照样严格查。
+class LLMGradeItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     question_id: str
     score_ratio: float
     verdict: Optional[str] = None  # 接受但忽略：verdict 由后端按分数生成
@@ -460,7 +466,9 @@ class LLMGradeItem(StrictModel):
         return min(max(f, 0.0), 1.0)
 
 
-class LLMGradeBatch(StrictModel):
+class LLMGradeBatch(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     items: List[LLMGradeItem]
     overall_comment: str = ""
 

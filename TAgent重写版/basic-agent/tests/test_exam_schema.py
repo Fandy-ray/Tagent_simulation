@@ -294,6 +294,29 @@ def test_grade_item_clamps_ratio():
     assert LLMGradeItem(question_id="E1", score_ratio=-0.2).score_ratio == 0.0
 
 
+def test_grade_output_tolerates_extra_keys_the_model_adds():
+    # 实测 DeepSeek 常在每条里多写这些；严格校验时一张卷约一半判卷 502
+    raw = json.dumps({
+        "items": [
+            {"question_id": "E1", "question_id_note": "", "score_ratio": 0.7,
+             "score_ratio_note": "2/3≈0.7", "feedback": "缺第三条要点"},
+        ],
+        "overall_comment": "", "summary": "多余的顶层字段",
+    }, ensure_ascii=False)
+    batch = LLMGradeBatch.model_validate_json(raw)
+    (item,) = batch.items
+    assert (item.question_id, item.score_ratio, item.feedback) == ("E1", 0.7, "缺第三条要点")
+    validate_grade_batch(batch, {"E1"})
+
+
+def test_grade_output_is_still_strict_where_it_matters():
+    # 放宽的只是「多写的字段」：题号缺了、分数不是数，照样不合格
+    with pytest.raises(ValidationError):
+        LLMGradeBatch.model_validate_json('{"items": [{"score_ratio": 1}]}')
+    with pytest.raises(ValidationError):
+        LLMGradeBatch.model_validate_json('{"items": [{"question_id": "E1", "score_ratio": "满分"}]}')
+
+
 def test_validate_grade_batch_id_set_must_match():
     batch = LLMGradeBatch(items=[LLMGradeItem(question_id="E1", score_ratio=0.5)])
     validate_grade_batch(batch, {"E1"})
