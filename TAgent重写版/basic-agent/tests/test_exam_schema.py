@@ -1,7 +1,6 @@
 """app.schema.exam 纯逻辑单测：归一化、匹配、脱敏、判分模型。不依赖 LLM。"""
 
 import json
-import math
 
 import pytest
 from pydantic import ValidationError

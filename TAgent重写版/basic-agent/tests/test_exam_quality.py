@@ -268,7 +268,7 @@ def test_a_formula_spelled_out_in_the_stem_is_still_a_leak():
 
 
 def test_short_acronyms_in_the_stem_are_a_known_blind_spot():
-    """已知缺口，而且是**有意**留的。
+    r"""已知缺口，而且是**有意**留的。
 
     符号类答案的门槛是 6 个字符，为的是别被题干里正常出现的 $\mu$、mu 误伤
     （实测那类误伤会把题数删到跌破下限、整段重试、最后 502）。

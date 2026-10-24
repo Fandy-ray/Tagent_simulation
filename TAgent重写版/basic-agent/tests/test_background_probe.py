@@ -9,8 +9,6 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
-
 from app.infra.background_probe import BackgroundProbe
 
 

@@ -4,15 +4,17 @@
 
     python -m tools.check_architecture
 
+tests/test_architecture.py 也会跑它：违规时测试直接红，不用等谁想起来手动跑。
+
 检查项：
   1. 未定义的名字——引用了但既没定义、没 import、也不是内置
      （抽取式重构最容易漏的就是"函数搬走了、它依赖的 import 没跟着搬"，
        这种问题只在跑到那一行时才炸，测试未必覆盖得到）
-  2. 未使用的 import
+  2. 未使用的 import（1、2 两项也查测试文件）
   3. 分层依赖方向（见 docs/basic-agent-layering-plan.md §9）
   4. 配置收口：os.getenv 只允许出现在 app/config.py
   5. Flask 只允许出现在 app/api/ 与 app/factory.py
-  6. controller 之间不得互相 import
+  6. controller（app/api 里定义了 blueprint 的模块）之间不得互相 import
 """
 
 from __future__ import annotations
@@ -23,22 +25,35 @@ import pathlib
 import sys
 
 
-APP = pathlib.Path("app")
+BASE = pathlib.Path(__file__).resolve().parents[1]  # basic-agent/
+APP = BASE / "app"
 
-# 层 -> 禁止 import 的层
+# 层 -> 禁止 import 的层。app.agent（流程图与共用节点）在 service 之下、
+# infra / rag / schema / prompts 之上：service 调它，它不能反过来碰 service、api、repository。
 FORBIDDEN = {
-    "app.repository": ("app.service", "app.api", "app.infra"),
-    "app.schema": ("app.service", "app.api", "app.repository", "app.infra"),
-    "app.util": ("app.service", "app.api", "app.repository", "app.infra", "app.schema"),
-    "app.errors": ("app.service", "app.api", "app.repository", "app.infra", "app.schema"),
-    "app.infra": ("app.service", "app.api", "app.repository"),
-    "app.prompts": ("app.service", "app.api", "app.repository", "app.infra"),
+    "app.repository": ("app.service", "app.api", "app.infra", "app.agent"),
+    "app.schema": ("app.service", "app.api", "app.repository", "app.infra", "app.agent"),
+    "app.util": ("app.service", "app.api", "app.repository", "app.infra", "app.schema", "app.agent"),
+    "app.errors": ("app.service", "app.api", "app.repository", "app.infra", "app.schema", "app.agent"),
+    "app.infra": ("app.service", "app.api", "app.repository", "app.agent"),
+    "app.prompts": ("app.service", "app.api", "app.repository", "app.infra", "app.agent"),
+    "app.agent": ("app.service", "app.api", "app.repository"),
     "app.service": ("app.api",),
-    "app.rag": ("app.service", "app.api", "app.repository"),
+    "app.rag": ("app.service", "app.api", "app.repository", "app.agent"),
     "app.api": ("app.repository",),
 }
 
-CONTROLLERS = {"health", "openai_compat", "agent", "exam", "admin", "internal"}
+
+def is_controller(path: pathlib.Path, text: str) -> bool:
+    """定义了 blueprint 的 api 模块就是 controller。以前是手写名单，新加的几个都漏了。"""
+    return path.parent.name == "api" and "blueprint = Blueprint(" in text
+
+
+def test_files() -> list[pathlib.Path]:
+    """测试文件：tests/ 下的，加上根目录的 test_*.py 和 conftest.py。"""
+    found = [p for p in (BASE / "tests").rglob("*.py") if "__pycache__" not in p.parts]
+    found += list(BASE.glob("test_*.py")) + list(BASE.glob("conftest.py"))
+    return sorted(found)
 
 
 def module_name(path: pathlib.Path) -> str:
@@ -115,37 +130,45 @@ def import_bindings(tree: ast.AST) -> list[tuple[str, int]]:
     return out
 
 
-def main() -> int:
+def name_problems(tree: ast.AST, path: pathlib.Path, rel: str) -> list[str]:
+    """第 1、2 项：未定义的名字、未使用的 import。"""
+    problems: list[str] = []
+
+    # 1. 未定义的名字
+    missing = used_names(tree) - bound_names(tree) - set(dir(builtins)) - {
+        "__name__", "__file__", "__doc__",
+    }
+    for name in sorted(missing):
+        problems.append(f"{rel}: 未定义的名字 `{name}`")
+
+    # 2. 未使用的 import（__init__.py 的重导出除外）
+    if path.name != "__init__.py":
+        # 字符串形式的类型注解也算使用（如 dataclass 里的 "ExamCache"）
+        annotated = {
+            n.value for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        }
+        text_names = used_names(tree) | annotated
+        for name, lineno in import_bindings(tree):
+            if name == "annotations":
+                continue
+            if name not in text_names:
+                problems.append(f"{rel}:{lineno}: 未使用的 import `{name}`")
+    return problems
+
+
+def check() -> tuple[list[str], int]:
+    """(问题清单, 查过的文件数)。"""
     problems: list[str] = []
     files = sorted(p for p in APP.rglob("*.py") if "__pycache__" not in p.parts)
 
     for path in files:
         text = path.read_text(encoding="utf-8")
         tree = ast.parse(text)
-        mod = module_name(path)
+        rel = path.relative_to(BASE).as_posix()
+        mod = module_name(path.relative_to(BASE))
         layer = layer_of(mod)
-        rel = path.as_posix()
-
-        # 1. 未定义的名字
-        missing = used_names(tree) - bound_names(tree) - set(dir(builtins)) - {
-            "__name__", "__file__", "__doc__",
-        }
-        for name in sorted(missing):
-            problems.append(f"{rel}: 未定义的名字 `{name}`")
-
-        # 2. 未使用的 import（__init__.py 的重导出除外）
-        if path.name != "__init__.py":
-            # 字符串形式的类型注解也算使用（如 dataclass 里的 "ExamCache"）
-            annotated = {
-                n.value for n in ast.walk(tree)
-                if isinstance(n, ast.Constant) and isinstance(n.value, str)
-            }
-            text_names = used_names(tree) | annotated
-            for name, lineno in import_bindings(tree):
-                if name == "annotations":
-                    continue
-                if name not in text_names:
-                    problems.append(f"{rel}:{lineno}: 未使用的 import `{name}`")
+        problems += name_problems(tree, path, rel)
 
         # 3. 分层方向
         for imported, lineno in imported_modules(tree):
@@ -166,22 +189,32 @@ def main() -> int:
                     problems.append(f"{rel}:{lineno}: 只有 api 层与启动类可以 import flask")
 
         # 6. controller 互调
-        if rel.startswith("app/api/") and path.stem in CONTROLLERS:
+        if is_controller(path, text):
             for imported, lineno in imported_modules(tree):
                 if imported.startswith("app.api."):
-                    target = imported.rsplit(".", 1)[-1]
-                    if target in CONTROLLERS:
+                    target = APP / "api" / f"{imported.rsplit('.', 1)[-1]}.py"
+                    if target.exists() and is_controller(target, target.read_text(encoding="utf-8")):
                         problems.append(
                             f"{rel}:{lineno}: controller 不得 import 兄弟 controller（{imported}）"
                         )
 
+    tests = test_files()
+    for path in tests:
+        rel = path.relative_to(BASE).as_posix()
+        problems += name_problems(ast.parse(path.read_text(encoding="utf-8")), path, rel)
+
+    return problems, len(files) + len(tests)
+
+
+def main() -> int:
+    problems, count = check()
     if problems:
         print(f"架构检查未通过，共 {len(problems)} 项：\n")
         for p in problems:
             print("  " + p)
         return 1
 
-    print(f"架构检查通过：{len(files)} 个模块，6 项规则全部满足。")
+    print(f"架构检查通过：{count} 个文件，6 项规则全部满足。")
     return 0
 
 
