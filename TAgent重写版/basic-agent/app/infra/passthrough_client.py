@@ -16,11 +16,10 @@ DeepSeek 的 Key 只需要在 basic-agent 登记一次，OpenNotebook 指过来�
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
 import httpx
 
 from app.errors.api_errors import AgentAPIError
+from app.infra.upstream_http import sync_client
 from app.schema.provider import ModelProvider
 
 
@@ -28,12 +27,6 @@ DEFAULT_TIMEOUT_SECONDS = 180.0
 
 # TAgent 自己的扩展字段，上游 OpenAI 接口不认识，转发前必须摘掉
 TAGENT_ONLY_FIELDS = ("notebook_ids",)
-
-
-def _uses_environment_proxy(base_url: str) -> bool:
-    """本机地址不走系统代理；与 ModelClientFactory 保持同一套判断。"""
-    hostname = (urlparse(base_url).hostname or "").lower()
-    return hostname not in {"127.0.0.1", "localhost", "::1"}
 
 
 def build_headers(provider: ModelProvider) -> dict[str, str]:
@@ -74,10 +67,8 @@ def translate_transport_error(error: Exception) -> AgentAPIError:
 
 
 def _open_client(provider: ModelProvider, timeout: float) -> httpx.Client:
-    return httpx.Client(
-        timeout=timeout,
-        trust_env=_uses_environment_proxy(provider.base_url),
-    )
+    # 和 ModelClientFactory 同一套：本机直连；配了代理时先直连、连不上再走代理
+    return sync_client(provider.base_url, timeout=timeout)
 
 
 def _endpoint(provider: ModelProvider) -> str:

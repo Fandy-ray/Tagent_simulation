@@ -1,10 +1,10 @@
 import threading
-from urllib.parse import urlparse
 
 import httpx
 from langchain_openai import ChatOpenAI
 
 from app.config import UPSTREAM_CONNECT_TIMEOUT
+from app.infra.upstream_http import async_client, sync_client
 from app.schema.provider import ModelProvider
 
 
@@ -13,9 +13,8 @@ def _remove_authorization(request: httpx.Request) -> None:
         del request.headers["Authorization"]
 
 
-def _uses_environment_proxy(base_url: str) -> bool:
-    hostname = (urlparse(base_url).hostname or "").lower()
-    return hostname not in {"127.0.0.1", "localhost", "::1"}
+async def _remove_authorization_async(request: httpx.Request) -> None:
+    _remove_authorization(request)
 
 
 class ModelClientFactory:
@@ -42,16 +41,19 @@ class ModelClientFactory:
                 return cached
 
             self._invalidate_unlocked(provider.served_model_id)
-            hooks = {"request": [_remove_authorization]} if provider.auth_mode == "none" else None
+            no_auth = provider.auth_mode == "none"
+            hooks = {"request": [_remove_authorization]} if no_auth else None
+            async_hooks = {"request": [_remove_authorization_async]} if no_auth else None
             # 读超时照旧（生成慢是正常的）；握手单独 UPSTREAM_CONNECT_TIMEOUT 秒，
             # 断网丢包时不必等满整段读超时才发现连不上
             timeout = httpx.Timeout(
                 request_timeout, connect=min(UPSTREAM_CONNECT_TIMEOUT, request_timeout)
             )
-            http_client = httpx.Client(
-                timeout=timeout,
-                event_hooks=hooks,
-                trust_env=_uses_environment_proxy(provider.base_url),
+            # 同步、异步两个客户端都要自己建：出题判卷走的是 ainvoke，以前只给了同步的，
+            # 异步那边由 SDK 自建、跟着环境变量走代理（见 app/infra/upstream_http.py）
+            http_client = sync_client(provider.base_url, timeout=timeout, event_hooks=hooks)
+            http_async_client = async_client(
+                provider.base_url, timeout=timeout, event_hooks=async_hooks
             )
             client = ChatOpenAI(
                 model=provider.upstream_model,
@@ -61,6 +63,9 @@ class ModelClientFactory:
                 timeout=timeout,
                 max_retries=request_retries,
                 http_client=http_client,
+                # 异步客户端绑在第一次用它的事件循环上（llm_json 的常驻循环）。换模型时
+                # 只丢引用、不在这里关：关它得回到那个循环里 await，换模型又很少见。
+                http_async_client=http_async_client,
                 # 登记时填的厂商参数（例如关闭思考），没填就不发
                 extra_body=provider.extra_body or None,
             )

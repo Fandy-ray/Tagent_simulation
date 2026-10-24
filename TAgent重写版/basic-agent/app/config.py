@@ -403,6 +403,14 @@ LLM_GATE_MAX_WAITING = 8
 # 设成 0 就只合并「正在跑的」、不重放。
 IDEMPOTENT_REPLAY_SECONDS = 90
 
+# 配着系统代理时，连模型服务先直连，直连不通才走代理（见 app/infra/upstream_http.py）。
+# 2026-10-24 实测（DeepSeek，本机代理）：小请求首字 2.5s → 0.7s；同一套出卷流程整卷 9.3s → 7.2s；
+# 多路同时发时也不再互相拖慢——整卷能拆成七路同时写，靠的就是这一条。
+# 直连握手只等这么多秒，被防火墙丢包的网络第一次最多多等这么久，之后记住改走代理。
+# 设 UPSTREAM_DIRECT_FIRST=0 回到「有代理就一律走代理」。
+UPSTREAM_DIRECT_FIRST = os.getenv("UPSTREAM_DIRECT_FIRST", "1") != "0"
+UPSTREAM_DIRECT_CONNECT_TIMEOUT = 3
+
 # 连上游时 TCP/TLS 握手单独限时。断网但包被丢弃（不报错）时，不必等满整段读超时
 # （最长 90 秒）才发现连不上；已经连上、只是生成得慢的请求不受影响。
 UPSTREAM_CONNECT_TIMEOUT = 10
