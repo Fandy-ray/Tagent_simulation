@@ -37,6 +37,8 @@ from app.config import (
     ESSAY_TOPIC_MIN_SUGGESTED_CHARS,
 )
 from app.errors.exam_errors import InvalidExamRequestError, UpstreamLLMError
+from app.agent.graphs.annotate import ANNOTATE_GRAPH, annotate_sentences
+from app.agent.runtime import AgentDeps
 from app.infra.llm_json import call_json_llm
 from app.prompts.essay_prompts import (
     build_annotation_prompt,
@@ -197,10 +199,6 @@ class EssayService:
         if not focused:
             return []
 
-        budget = max(0.0, deadline - time.monotonic())
-        attempt_timeout = min(
-            ESSAY_LLM_TIMEOUT, max(ESSAY_MIN_ATTEMPT_TIMEOUT, budget - 15.0)
-        )
         prompt = build_annotation_prompt(
             numbered_text(focused),
             full_text=numbered_text(sentences),
@@ -208,8 +206,15 @@ class EssayService:
             max_issues=MAX_ISSUES,
             max_praises=MAX_PRAISES,
         )
-        return self._annotate(
-            prompt, focused, provider, attempt_timeout, budget, MAX_ISSUES, MAX_PRAISES
+        # 和大题批注、下一轮的文件编辑是同一个节点；截止时间沿用整次批改的
+        return annotate_sentences(
+            self._deps(provider, deadline=deadline),
+            prompt,
+            focused,
+            max_issues=MAX_ISSUES,
+            max_praises=MAX_PRAISES,
+            limit=ESSAY_LLM_TIMEOUT,
+            floor=ESSAY_MIN_ATTEMPT_TIMEOUT,
         )
 
     # ====================== 答疑论文模式：出题 ======================
@@ -284,11 +289,6 @@ class EssayService:
             # 太短的答案逐句批注没有意义：整段就一两句，判分的评语已经说清了
             return []
 
-        started = time.monotonic()
-        budget = ANNOTATE_LLM_BUDGET
-        attempt_timeout = min(
-            ANNOTATE_LLM_TIMEOUT, max(ANNOTATE_MIN_ATTEMPT_TIMEOUT, budget - 15.0)
-        )
         prompt = build_essay_answer_annotation_prompt(
             numbered_text(sentences),
             question,
@@ -297,50 +297,42 @@ class EssayService:
             max_issues=max_issues,
             max_praises=max_praises,
         )
+        # 长度检查在上面、拿闸门之前：短答案根本不用排队，闸门满时也不该被拒成 429
+        deps = self._deps(provider, budget_seconds=ANNOTATE_LLM_BUDGET)
         with self.llm_gate.acquire():
-            return self._annotate(
-                prompt,
-                sentences,
-                provider,
-                attempt_timeout,
-                max(0.0, budget - (time.monotonic() - started)),
-                max_issues,
-                max_praises,
-                full_credit=grading is not None and grading.score == grading.points,
+            result = ANNOTATE_GRAPH.invoke(
+                {
+                    "prompt": prompt,
+                    "sentences": sentences,
+                    "max_issues": max_issues,
+                    "max_praises": max_praises,
+                    "full_credit": grading is not None and grading.score == grading.points,
+                    "limit": ANNOTATE_LLM_TIMEOUT,
+                    "floor": ANNOTATE_MIN_ATTEMPT_TIMEOUT,
+                },
+                context=deps,
             )
+        return result["annotations"]
 
     # ====================== 共用 ======================
-    def _annotate(
+    def _deps(
         self,
-        prompt: str,
-        sentences,
         provider: ModelProvider,
-        attempt_timeout: float,
-        budget: float,
-        max_issues: int,
-        max_praises: int,
         *,
-        full_credit: bool = False,
-    ) -> list[Annotation]:
-        client = self.client_factory.get(
-            provider, timeout_seconds=int(attempt_timeout), max_retries=0
-        ).bind(max_tokens=200 + 160 * (max_issues + max_praises))
-        try:
-            known = {s.id for s in sentences}
-            batch = call_json_llm(
-                client,
-                prompt,
-                LLMAnnotationBatch,
-                attempt_timeout=attempt_timeout,
-                budget_seconds=budget,
-                # 同上：编错句号、超定额都该重试一次，而不是抛给用户
-                post_validate=lambda value: validate_annotations(
-                    value, known, max_issues=max_issues, max_praises=max_praises,
-                    full_credit=full_credit,
-                ),
+        budget_seconds: float | None = None,
+        deadline: float | None = None,
+    ) -> AgentDeps:
+        """一次运行的依赖。传 budget_seconds 就从现在起算，传 deadline 就沿用它。"""
+        if deadline is None:
+            return AgentDeps.start(
+                knowledge_base=self.knowledge_base,
+                client_factory=self.client_factory,
+                provider=provider,
+                budget_seconds=budget_seconds or 0.0,
             )
-        except UpstreamLLMError:
-            # 批注是锦上添花：分数和维度评语已经拿到了，没必要因为多标几句
-            # 失败就把整次批改判失败。少几条下划线，比一片红字好。
-            return []
-        return attach_spans(batch, sentences)
+        return AgentDeps(
+            knowledge_base=self.knowledge_base,
+            client_factory=self.client_factory,
+            provider=provider,
+            deadline=deadline,
+        )
