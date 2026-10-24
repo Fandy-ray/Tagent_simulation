@@ -40,7 +40,12 @@ class ModelClientFactory:
             if cached is not None:
                 return cached
 
-            self._invalidate_unlocked(provider.served_model_id)
+            # 只换掉这个模型「配置已经改过」的旧客户端（登记信息的 updated_at 变了）。
+            # 以前这里把这个模型的所有客户端都关掉。可缓存键里有超时和重试次数，答疑、出卷、
+            # 判卷、闪卡各要各的，于是互相踢：谁新建一个，正在用别的客户端的请求就被关了连接。
+            # 答疑是同步流式读的，连接一关就卡住不动、也不报错（2026-10-25 本地假上游复现：
+            # 收到 4/10 个字后一直等）——有人出卷或交卷时，别的同学正在出的回答会卡死。
+            self._drop_stale_unlocked(provider)
             no_auth = provider.auth_mode == "none"
             hooks = {"request": [_remove_authorization]} if no_auth else None
             async_hooks = {"request": [_remove_authorization_async]} if no_auth else None
@@ -84,6 +89,17 @@ class ModelClientFactory:
 
     def close(self) -> None:
         self.invalidate(None)
+
+    def _drop_stale_unlocked(self, provider: ModelProvider) -> None:
+        stale = [
+            key for key in self._clients
+            if key[0] == provider.served_model_id and key[1] != provider.updated_at
+        ]
+        for key in stale:
+            self._clients.pop(key, None)
+            http_client = self._http_clients.pop(key, None)
+            if http_client is not None:
+                http_client.close()
 
     def _invalidate_unlocked(self, served_model_id: str) -> None:
         keys = [key for key in self._clients if key[0] == served_model_id]
