@@ -22,6 +22,7 @@ from app.service.chat_service import FINISH_INTERRUPTED, STREAM_FAILED_NOTE
 from app.api.validators import (
     chat_mode,
     chat_retrieval_query,
+    chat_tuning,
     optional_notebook_ids,
     validate_messages,
 )
@@ -57,7 +58,11 @@ def _citations_chunk(chat_id: str, created: int, model: str, citations: list) ->
 def chat_completion_response(data, provider):
     messages = validate_messages(data.get("messages"))
     notebook_ids = optional_notebook_ids(data)
-    options = {"mode": chat_mode(data), "retrieval_query": chat_retrieval_query(data)}
+    options = {
+        "mode": chat_mode(data),
+        "retrieval_query": chat_retrieval_query(data),
+        "tuning": chat_tuning(data),
+    }
     service = get_chat_service()
     chat_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())

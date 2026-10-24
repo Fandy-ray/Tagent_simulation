@@ -67,6 +67,8 @@
 		saveStreamingDraft,
 		type QaChat
 	} from '$lib/data/qaConversations';
+	import { historyForRequest } from '$lib/data/chatHistory';
+	import { buildFollowUps, buildTags } from '$lib/data/followUps';
 	import { setRecordingPaused } from '$lib/data/learner';
 	import {
 		buildPaperPrompt,
@@ -174,6 +176,16 @@
 	const currentModelName = $derived(
 		modelOptions.find((model) => model.id === selectedModelId)?.name ?? selectedModelId
 	);
+
+	/**
+	 * 把模型 id 换成登记时填的显示名。
+	 *
+	 * 回答头部原来直接显示后端返回的 served_model_id（小写的「deepseek」），
+	 * 在中文界面里很突兀，而且登记页明明填了「DeepSeek」这样的名字。
+	 * 认不出来的 id 就原样显示——历史消息可能来自已经删掉的模型。
+	 */
+	const modelDisplayName = (id: string | undefined) =>
+		id ? (modelOptions.find((model) => model.id === id)?.name ?? id) : '';
 
 	const paperSourceName = $derived(
 		collectionId
@@ -364,21 +376,6 @@
 			dictationEnabled = false;
 			toast('无法启动听写');
 		}
-	};
-
-	const buildFollowUps = (question: string): string[] => {
-		const base = question.replace(/\s+/g, ' ').slice(0, 24);
-		return [`请更详细地解释「${base}」`, '用例子说明一下', '相关还有哪些知识点？'].filter(Boolean);
-	};
-
-	const buildTags = (question: string): string[] => {
-		const words = question
-			.replace(/[^\u4e00-\u9fa5a-zA-Z0-9\s]/g, ' ')
-			.split(/\s+/)
-			.filter((w) => w.length >= 2);
-		// 问题里同一个词出现两次，标签不能也重复两遍
-		const unique = [...new Set(words)].slice(0, 3);
-		return unique.length ? unique : ['答疑'];
 	};
 
 	onMount(() => {
@@ -783,6 +780,9 @@
 		bumpGeneration();
 		finishStreamingMessages();
 		generating = false;
+		const hadConversation = messages.length > 0;
+		// commitActive 已经把当前这段存下了；它只是收在**另一套**历史里。
+		// 不说一声的话，学生看到对话清空会以为聊没了（实测被当成 bug 报上来过）。
 		commitActive();
 		// 切换模式即进入另一套会话空间，避免把论文内容继续留在课程答疑里。
 		activeChatId = null;
@@ -795,6 +795,10 @@
 		}
 		persistChats(null);
 		syncUrl();
+		if (hadConversation) {
+			const from = mode === 'paper' ? '课程答疑' : '论文助手';
+			toast(`刚才的对话已存进「${from}」的历史里，切回去就能看到`, 4200);
+		}
 	};
 
 	// 输入框里 `#` 选知识库、`@` 选模型 —— 和顶栏那两个选择器效果一致
@@ -1462,8 +1466,6 @@
 		abortController = controller;
 		const assistantId = `assistant-${Date.now()}`;
 		let created = false;
-		const searchController = new AbortController();
-		const searchTimer = window.setTimeout(() => searchController.abort(), 4000);
 		const citationQuery =
 			assistMode === 'paper'
 				? [
@@ -1475,12 +1477,30 @@
 						.filter(Boolean)
 						.join(' ')
 				: question;
-		const hitsPromise = searchKnowledge(citationQuery, {
-			limit: 8,
-			signal: searchController.signal
-		})
-			.catch(() => [])
-			.finally(() => window.clearTimeout(searchTimer));
+		/**
+		 * 出处的后备来源：直接问 OpenNotebook 要几条命中。
+		 *
+		 * **只在后端没给出处时才调**。这是后端还不会返回出处那阵留下的逻辑，
+		 * 原来每次提问都提前发一次，等答案回来发现后端已经给了才 abort——
+		 * 可那时请求早打出去了，白白多一次往返，还可能触发按量计费的嵌入服务。
+		 */
+		const fallbackHits = async () => {
+			const searchController = new AbortController();
+			const searchTimer = window.setTimeout(() => searchController.abort(), 4000);
+			controller.signal.addEventListener('abort', () => searchController.abort(), {
+				once: true
+			});
+			try {
+				return await searchKnowledge(citationQuery, {
+					limit: 8,
+					signal: searchController.signal
+				});
+			} catch {
+				return [];
+			} finally {
+				window.clearTimeout(searchTimer);
+			}
+		};
 
 		const writeDelta = (content: string, streaming = true) => {
 			if (seq !== generationSeq) {
@@ -1525,6 +1545,7 @@
 				{
 					notebookIds,
 					mode: assistMode,
+					history: historyForRequest(messages),
 					...paperRetrievalOptions(),
 					...baseOptions,
 					...(mergedSystem ? { system: mergedSystem } : {})
@@ -1539,11 +1560,10 @@
 				writeDelta('没有生成回答，请重试。', false);
 			} else {
 				writeDelta(result.content, false);
-				if (result.retrievedContext || (result.citations && result.citations.length > 0)) {
-					searchController.abort();
-				}
 				const notebook = notebooks.find((item) => item.id === collectionId) ?? null;
-				const hits = await hitsPromise;
+				const backendGaveSources =
+					Boolean(result.retrievedContext) || (result.citations?.length ?? 0) > 0;
+				const hits = backendGaveSources ? [] : await fallbackHits();
 				let citations = buildQaCitations({
 					agentCitations: result.citations,
 					retrievedContext: result.retrievedContext,
@@ -1620,7 +1640,7 @@
 				void tick().then(() => submitPrompt(next.requestContent, next.displayContent));
 			}
 		} finally {
-			searchController.abort();
+			// 后备检索现在是按需发的，它自己绑了 controller.signal，这里不用再收一次
 			if (abortController === controller) {
 				abortController = null;
 			}
@@ -1867,7 +1887,7 @@
 		// 任务卡上的关键词当选题方向；后端对方向的长度上限与出卷主题相同
 		const hint = Array.from(paperKeywords.trim()).slice(0, ESSAY_TOPIC_MAX).join('');
 		startPaperCard(
-			hint ? `请按当前笔记本出一道小论文题（方向：${hint}）` : '请按当前笔记本出一道小论文题',
+			hint ? `请出一道小论文题（方向：${hint}）` : '请出一道小论文题',
 			{ kind: 'topic', hint, topic: null },
 			'小论文出题'
 		);
@@ -1953,10 +1973,19 @@
 		const sample = samples[sampleIndex % samples.length];
 		sampleIndex += 1;
 		prompt = sample.body;
-		// 范例是照着它自己的题目写的，换成它的题目，「切题与内容」才判得公平
-		if (sample.topic && sample.topic !== paperTitle.trim()) {
+		// 范例是照着它自己的题目写的，换成它的题目，「切题与内容」才判得公平。
+		// 但这会把刚刚「设为本次题目」的那道题顶掉——演示主线正好是
+		// 出题 → 设为本次题目 → 填入范例，一声不响地换掉等于白出了一道题。
+		// 所以把原题目一并说出来，方便放回去。
+		const previous = paperTitle.trim();
+		if (sample.topic && sample.topic !== previous) {
 			handlePaperTaskChange({ ...paperTask, title: sample.topic });
-			toast(`已填入范例：${sample.title}（论文题目也换成了范例的题目）`);
+			toast(
+				previous
+					? `已填入范例：${sample.title}。题目改成了范例自带的「${sample.topic}」，原题目是「${previous}」`
+					: `已填入范例：${sample.title}（题目一并设为「${sample.topic}」）`,
+				5200
+			);
 			return;
 		}
 		toast(`已填入范例：${sample.title}`);
@@ -2118,6 +2147,7 @@
 					{
 						notebookIds,
 						mode: assistMode,
+						history: historyForRequest(messages),
 						...paperRetrievalOptions(),
 						...baseOptions,
 						...(mergedSystem ? { system: mergedSystem } : {})
@@ -2393,6 +2423,7 @@
 							{messages}
 							{generating}
 							modelName={currentModelName}
+							resolveModelName={modelDisplayName}
 							userName={userSettings.displayName}
 							chatBubble={userSettings.chatBubble}
 							widescreenMode={userSettings.widescreenMode}

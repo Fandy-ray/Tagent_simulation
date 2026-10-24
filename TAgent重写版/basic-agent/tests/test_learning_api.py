@@ -27,11 +27,14 @@ class FakeChat:
     def __init__(self, tokens=("排队论", "研究", "排队。"), fail_after=None):
         self.tokens, self.fail_after = tokens, fail_after
 
-    def answer(self, messages, provider, notebook_ids=None, *, mode="qa", retrieval_query=None):
+    def answer(
+        self, messages, provider, notebook_ids=None, *, mode="qa",
+        retrieval_query=None, tuning=None,
+    ):
         return {"content": "".join(self.tokens)}
 
     def stream_answer(
-        self, messages, provider, notebook_ids=None, *, mode="qa", retrieval_query=None, on_citations=None
+        self, messages, provider, notebook_ids=None, *, mode="qa", retrieval_query=None, tuning=None, on_citations=None
     ):
         for index, token in enumerate(self.tokens):
             if self.fail_after is not None and index == self.fail_after:
@@ -260,7 +263,7 @@ def test_cut_off_upstream_is_recorded_as_interrupted_but_sent_as_stop(store):
 
     class CutOff(FakeChat):
         def stream_answer(
-            self, messages, provider, notebook_ids=None, *, mode="qa", retrieval_query=None, on_citations=None
+            self, messages, provider, notebook_ids=None, *, mode="qa", retrieval_query=None, tuning=None, on_citations=None
         ):
             yield "排队论", None
             yield "", FINISH_INTERRUPTED

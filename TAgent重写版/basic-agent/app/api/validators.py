@@ -252,3 +252,40 @@ def annotation_grade_context(
     if grading.id != question_id or grading.my_answer.strip() != answer:
         raise InvalidExamRequestError("批注评分上下文与题号或原答案不一致")
     return grading
+
+
+# 可调参数的取值范围。超范围直接拒，不静默截断——
+# 静默截断会让「我调了但没反应」变成另一种假开关。
+_TUNING_BOUNDS: dict[str, tuple[float, float]] = {
+    "temperature": (0.0, 2.0),
+    "top_p": (0.0, 1.0),
+}
+MAX_CHAT_MAX_TOKENS = 8192
+
+
+def chat_tuning(data: dict[str, Any]) -> dict[str, Any]:
+    """对话的可调参数。只认模型真正支持的几项，其余字段忽略。
+
+    前端面板上的开关要么接通、要么别给——「调了没反应」比没有这个开关更糟。
+    """
+    tuning: dict[str, Any] = {}
+
+    for name, (low, high) in _TUNING_BOUNDS.items():
+        value = data.get(name)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise InvalidExamRequestError(f"{name} 必须是数字")
+        if not low <= float(value) <= high:
+            raise InvalidExamRequestError(f"{name} 必须在 {low}~{high} 之间")
+        tuning[name] = float(value)
+
+    max_tokens = data.get("max_tokens")
+    if max_tokens is not None:
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int):
+            raise InvalidExamRequestError("max_tokens 必须是整数")
+        if not 1 <= max_tokens <= MAX_CHAT_MAX_TOKENS:
+            raise InvalidExamRequestError(f"max_tokens 必须在 1~{MAX_CHAT_MAX_TOKENS} 之间")
+        tuning["max_tokens"] = max_tokens
+
+    return tuning

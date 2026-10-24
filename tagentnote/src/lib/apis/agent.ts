@@ -240,6 +240,8 @@ export type AgentChatOptions = {
 	notebookIds?: string[];
 	mode?: AgentChatMode;
 	system?: string;
+	/** 之前几轮的对话。不传就是单轮问答（答疑长期如此，是个 bug）。 */
+	history?: { role: 'user' | 'assistant'; content: string }[];
 	temperature?: number;
 	top_p?: number;
 	top_k?: number;
@@ -267,8 +269,10 @@ export async function streamAgentChat(
 		? { notebookIds: notebookIdsOrOptions, mode }
 		: { mode, ...(notebookIdsOrOptions ?? {}) };
 
+	// system → 历史几轮 → 当前这一问。历史不带会让「那它的前提呢」这类追问失去指代。
 	const messages = [
 		...(options.system ? [{ role: 'system' as const, content: options.system }] : []),
+		...(options.history ?? []),
 		{ role: 'user' as const, content: question }
 	];
 
@@ -281,7 +285,7 @@ export async function streamAgentChat(
 		mode: options.mode ?? 'qa'
 	};
 
-	const skip = new Set(['notebookIds', 'mode', 'system', 'stream_response']);
+	const skip = new Set(['notebookIds', 'mode', 'system', 'stream_response', 'history']);
 	for (const [key, value] of Object.entries(options)) {
 		if (skip.has(key) || value === undefined || value === null) continue;
 		body[key] = value;

@@ -13,7 +13,9 @@ from app.errors.api_errors import AgentAPIError
 from app.infra.upstream_errors import translate_upstream_error
 from app.prompts.chat_prompts import build_prompt_messages, last_user_message
 from app.rag.citations import citations_from_documents
+from app.rag.followup import resolve_query
 from app.rag.graph import build_answer_graph
+from app.infra.model_client_factory import tuning_bind_kwargs
 from app.schema.provider import ModelProvider
 from app.util.text import content_text
 
@@ -28,13 +30,21 @@ FINISH_INTERRUPTED = "interrupted"
 STREAM_FAILED_NOTE = "\n\n（回答中断：模型服务出错了，可以点「重新生成」再试一次。）"
 
 
-def _retrieval_query(messages: list[dict[str, str]], retrieval_query: str | None) -> str:
-    """检索词：有前端给的检索提示就用它，否则用最后一条用户消息。
+def _retrieval_query(messages: list[dict[str, str]], retrieval_query: str | None) -> tuple[str, bool]:
+    """返回 (检索词, 是不是前端显式给的)。
+
+    前端显式给的（论文模式的「题目 + 关键词」）要原样用，**不能**再去补上文：
+    它本来就是替代原问题的检索提示，补一遍只会把它冲淡。
+
+    没给的时候返回原问题，由「理解问题」那一步决定要不要补上文
+    （图里是 understand_question 节点，流式路径在下面直接调同一个函数）。
 
     last_user_message 无论如何都要调——没有用户消息的请求照旧 400。
     """
     question = last_user_message(messages)
-    return retrieval_query or question
+    if retrieval_query:
+        return retrieval_query, True
+    return question, False
 
 
 class ChatService:
@@ -51,16 +61,19 @@ class ChatService:
         *,
         mode: str = "qa",
         retrieval_query: str | None = None,
+        tuning: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        query = _retrieval_query(messages, retrieval_query)
+        query, explicit = _retrieval_query(messages, retrieval_query)
         try:
             result = self.graph.invoke(
                 {
                     "messages": messages,
                     "provider": provider,
                     "query": query,
+                    "query_is_explicit": explicit,
                     "notebook_ids": notebook_ids or [],
                     "mode": mode,
+                    "tuning": tuning or {},
                     "step_log": [],
                 }
             )
@@ -82,20 +95,30 @@ class ChatService:
         *,
         mode: str = "qa",
         retrieval_query: str | None = None,
+        tuning: dict[str, Any] | None = None,
         on_citations: Callable[[list[dict[str, Any]]], None] | None = None,
     ):
         """产出 (文字, 结束原因)。检索完、开始生成之前，用到的材料的出处交给 on_citations。
 
         出处不混进产出里：别处都按两元组读这个生成器。
         """
-        query = _retrieval_query(messages, retrieval_query)
+        query, explicit = _retrieval_query(messages, retrieval_query)
+        if not explicit:
+            # 和图里的 understand_question 节点用同一个函数：
+            # 两条路必须按同一个检索词取材，否则同一个问题给出的依据会不一样
+            query = resolve_query(messages, query)
         try:
             context, documents = self.knowledge_base.retrieve(query, notebook_ids=notebook_ids)
             if on_citations is not None:
                 on_citations(citations_from_documents(documents))
             prompt_messages = build_prompt_messages(messages, context, mode=mode)
             finish_reason = None
-            for chunk in self.client_factory.get(provider).stream(prompt_messages):
+            client = self.client_factory.get(provider)
+            bind_kwargs = tuning_bind_kwargs(provider, tuning)
+            if bind_kwargs:
+                # 绑在缓存好的 client 上，不进缓存键——否则换个温度就多一个连接池
+                client = client.bind(**bind_kwargs)
+            for chunk in client.stream(prompt_messages):
                 metadata = getattr(chunk, "response_metadata", None) or {}
                 # A final usage-only chunk can contain finish_reason=None.
                 # It must not erase the preceding stop/length/filter reason.

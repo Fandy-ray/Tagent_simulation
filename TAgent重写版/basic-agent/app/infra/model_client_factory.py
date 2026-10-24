@@ -87,3 +87,42 @@ class ModelClientFactory:
             http_client = self._http_clients.pop(key, None)
             if http_client is not None:
                 http_client.close()
+
+
+# ====================== 每次请求的可调参数 ======================
+#
+# 客户端是按 (模型, 超时, 重试) 缓存的，每次请求的参数**不能**进缓存键——
+# 那等于每换一次温度就新建一个带连接池的 client。正确做法是在缓存好的
+# client 上 .bind()，langchain 会把它们并进这一次调用的请求体。
+
+# 只认模型真正支持的这几项。前端面板上多出来的开关一律不接——
+# 与其让学生调一个没效果的滑块，不如不给。
+TUNABLE = ("temperature", "top_p", "max_tokens")
+
+
+def tuning_bind_kwargs(provider, tuning: dict | None) -> dict:
+    """把可调参数翻译成 .bind() 的入参。没有可调项时返回空 dict。
+
+    max_tokens 要特别处理：langchain 的 ChatOpenAI 会把它改名成
+    max_completion_tokens 发出去，而 DeepSeek 只认 max_tokens，改了名就等于没传。
+    所以它必须塞进 extra_body 原样透传。
+
+    而 extra_body 又是**合并**不是覆盖：登记模型时填的厂商参数（例如关闭思考）
+    也在里面，直接 bind 一个新的会把它整个冲掉。
+    """
+    if not tuning:
+        return {}
+
+    kwargs: dict = {}
+    for name in ("temperature", "top_p"):
+        value = tuning.get(name)
+        if value is not None:
+            kwargs[name] = value
+
+    max_tokens = tuning.get("max_tokens")
+    if max_tokens is not None:
+        merged = dict(provider.extra_body or {})
+        merged["max_tokens"] = max_tokens
+        kwargs["extra_body"] = merged
+
+    return kwargs
