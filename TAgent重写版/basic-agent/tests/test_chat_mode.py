@@ -172,7 +172,9 @@ def test_usage_only_chunk_does_not_erase_the_finish_reason(reason):
             yield types.SimpleNamespace(content="", response_metadata={"finish_reason": None})
 
     chunks = list(make(RecordingKB(), WithUsage()).stream_answer(MESSAGES, PROVIDER))
-    assert chunks == [("好", None), ("", reason)]
+    # length 时中间会多一块截断说明（见 test_a_truncated_stream_says_so_and_closes_the_formula）
+    assert chunks[0] == ("好", None)
+    assert chunks[-1] == ("", reason)
 
 
 
@@ -210,3 +212,44 @@ def test_closing_the_stream_closes_the_upstream_stream_right_away():
     stream.close()
     assert model.closed, "上游的流没被关掉"
     assert model.sent < 5, f"关掉之后上游还在往下吐（吐到了第 {model.sent} 块）"
+
+
+# ====================== 到了长度上限 ======================
+
+
+class CutModel(RecordingModel):
+    """被 max_tokens 截在一个独立公式中间。"""
+
+    def stream(self, messages):
+        self.messages = messages
+        yield types.SimpleNamespace(content="Little 公式通常表述为：\n\n$$\nL = ", response_metadata={})
+        yield types.SimpleNamespace(content="", response_metadata={"finish_reason": "length"})
+
+    def invoke(self, messages):
+        self.messages = messages
+        return types.SimpleNamespace(
+            content="Little 公式通常表述为：\n\n$$\nL = ",
+            response_metadata={"finish_reason": "length"},
+        )
+
+
+def test_a_truncated_stream_says_so_and_closes_the_formula():
+    # 页面实测：结尾留着一个 $$，后面什么都没有，学生分不清是截断还是就这么答的
+    chunks = list(make(RecordingKB(), CutModel()).stream_answer(MESSAGES, PROVIDER))
+    text = "".join(token for token, _ in chunks)
+    assert "长度上限" in text and "max_tokens" in text
+    assert text.count("$$") % 2 == 0, "截在公式中间要先把公式收尾，说明才不会被当成公式"
+    assert chunks[-1] == ("", "length")
+
+
+def test_a_truncated_non_stream_answer_says_so_too():
+    result = make(RecordingKB(), CutModel()).answer(MESSAGES, PROVIDER)
+    assert "长度上限" in result["content"]
+    assert result["content"].count("$$") % 2 == 0
+
+
+def test_inline_formula_cut_in_half_is_closed():
+    from app.agent.graphs.answer import truncation_tail
+
+    assert truncation_tail("服务强度 $\\rho = ").startswith("$")
+    assert not truncation_tail("服务强度 $\\rho$ 是").startswith("$")

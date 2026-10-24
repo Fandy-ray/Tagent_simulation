@@ -10,7 +10,12 @@ from __future__ import annotations
 import math
 from typing import Any, Callable
 
-from app.agent.graphs.answer import ANSWER_GRAPH, answer_client, prompt_messages
+from app.agent.graphs.answer import (
+    ANSWER_GRAPH,
+    answer_client,
+    prompt_messages,
+    truncation_tail,
+)
 from app.agent.runtime import AgentDeps
 from app.errors.api_errors import AgentAPIError
 from app.infra.upstream_errors import translate_upstream_error
@@ -139,6 +144,7 @@ class ChatService:
             if on_citations is not None:
                 on_citations(citations_from_documents(state.get("retrieved_documents") or []))
             finish_reason = None
+            spoken: list[str] = []
             for chunk in answer_client(deps).stream(prompt_messages(state)):
                 metadata = getattr(chunk, "response_metadata", None) or {}
                 # A final usage-only chunk can contain finish_reason=None.
@@ -147,10 +153,13 @@ class ChatService:
                     finish_reason = metadata["finish_reason"]
                 content = content_text(chunk.content)
                 if content:
+                    spoken.append(content)
                     yield content, None
             if finish_reason is None:
                 yield STREAM_INTERRUPTED_NOTE, None
                 finish_reason = FINISH_INTERRUPTED
+            elif finish_reason == "length":
+                yield truncation_tail("".join(spoken)), None
             yield "", finish_reason
         except AgentAPIError:
             raise

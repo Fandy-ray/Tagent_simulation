@@ -38,6 +38,25 @@ from app.rag.followup import resolve_query
 from app.util.text import content_text
 
 
+# 回答被长度上限（「控制」里的 max_tokens，或模型自己的上限）截断时补的一句。
+# 不补的话学生只看到话说到一半，常常还停在半截公式上，分不清是被截断了还是
+# 模型就这么答的（2026-10-24 页面实测：结尾留着一个 $$，后面什么都没有）。
+TRUNCATED_NOTE = "\n\n（回答到了长度上限，后面被截掉了。想看完整回答，可以在「控制」里把 max_tokens 调大再重新生成。）"
+
+
+def truncation_tail(text: str) -> str:
+    """截断时接在回答后面的内容：先把截在半中间的公式收尾，再补说明。
+
+    公式不收尾的话，后面那句说明会被当成公式的一部分，渲染出来一团乱。
+    """
+    tail = ""
+    if text.count("$$") % 2:
+        tail += "\n$$"
+    if text.replace("$$", "").count("$") % 2:
+        tail += "$"
+    return tail + TRUNCATED_NOTE
+
+
 class AnswerState(TypedDict, total=False):
     messages: list[dict[str, str]]
     query: str
@@ -97,8 +116,12 @@ def _retrieve(state: AnswerState, runtime: Runtime[AgentDeps]) -> dict:
 
 def _generate(state: AnswerState, runtime: Runtime[AgentDeps]) -> dict:
     response = answer_client(runtime.context).invoke(prompt_messages(state))
+    content = content_text(response.content)
+    metadata = getattr(response, "response_metadata", None) or {}
+    if metadata.get("finish_reason") == "length":
+        content += truncation_tail(content)
     return {
-        "content": content_text(response.content),
+        "content": content,
         "step_log": [*state.get("step_log", []), "Generated the answer."],
     }
 
