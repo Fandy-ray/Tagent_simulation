@@ -1,6 +1,8 @@
 """Production wiring tests for dynamic-provider exam grading."""
 
+import asyncio
 import json
+import time
 import types
 
 import pytest
@@ -322,6 +324,28 @@ def test_complete_exam_summary_includes_results_from_every_grading_batch(last_es
         assert "总分 93/100" in review.overall_comment
         assert "20 题满分，1 题部分得分，0 题未得分" in review.overall_comment
         assert "复习失分知识点" in review.overall_comment
+
+
+def test_grading_batches_run_at_the_same_time():
+    # 三道大题切成两批（每批 2 道）。批与批互不依赖，总耗时该是最慢的一批，不是相加
+    class SlowGradeLLM(ScriptedGradeLLM):
+        async def ainvoke(self, prompt):
+            await asyncio.sleep(0.3)
+            return await super().ainvoke(prompt)
+
+    exam = make_report_exam()
+    client = SlowGradeLLM({
+        "items": [
+            {"question_id": q.id, "score_ratio": 1, "feedback": "好"} for q in exam.essay
+        ],
+        "overall_comment": "",
+    })
+    answers = {question.id: "作答内容" for question in exam.essay}
+    started = time.perf_counter()
+    review = make_sim(exam, client).review_exam(exam.exam_id, answers, TEST_PROVIDER)
+    assert time.perf_counter() - started < 0.5
+    assert client.calls == 2
+    assert all(r.feedback == "好" for r in review.results if r.type == "essay")
 
 
 def test_grade_llm_wrong_ids_retry_then_502():

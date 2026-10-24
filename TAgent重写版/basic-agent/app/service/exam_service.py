@@ -1,26 +1,21 @@
-"""整卷服务：三段并发出卷、本地+LLM 分批判卷。
+"""整卷、闪卡、判卷的门面：建依赖、拿闸门、跑图、存取试卷缓存。
 
+流程本身在 app/agent/graphs/ 里（exam.py / flash.py / grade.py）。
 关键约束（改动前务必读 app/config.py 里的压测注释，连同开头那段"数据出处"警示
 一起读——里面的秒数是导入前某个未记录模型上的旧值，只能当相对结论用）：
-- 出卷按题型分三段并发，整卷一次性输出会顶穿单次调用超时；
-- 闪卡只出能本地判定的题型（填空 + 选择），按材料分片并发（generate_flash_deck），卡组不计分；
-- 判卷先本地判客观题，只把语义题按题型分批送给模型；
+- 出卷按题型分段并发，整卷一次性输出会顶穿单次调用超时；
+- 闪卡只出能本地判定的题型（填空 + 选择），按材料分片并发，卡组不计分；
+- 判卷先本地判客观题，只把语义题按题型分批（并发）送给模型；
 - 试卷缓存里锁定了出卷用的模型，判卷必须用同一个，否则 ModelMismatchError。
 """
 
 from __future__ import annotations
 
-import json
-import time
 from typing import Any
 
 from app.config import (
     EXAM_LLM_BUDGET,
-    GRADE_CLOZE_BATCH,
-    GRADE_ESSAY_BATCH,
     GRADE_LLM_BUDGET,
-    GRADE_LLM_TIMEOUT,
-    GRADE_MIN_ATTEMPT_TIMEOUT,
     FLASH_LLM_BUDGET,
 )
 from app.errors.exam_errors import (
@@ -29,17 +24,11 @@ from app.errors.exam_errors import (
 )
 from app.agent.graphs.exam import EXAM_GRAPH
 from app.agent.graphs.flash import FLASH_GRAPH
+from app.agent.graphs.grade import GRADE_GRAPH
 from app.agent.runtime import AgentDeps
-from app.infra.llm_json import call_json_llm
-from app.prompts.exam_prompts import (
-    build_cloze_grade_prompt,
-    build_essay_grade_prompt,
-)
 from app.repository.exam_cache import ExamCache, LLMGate, StoredExam
 from app.schema.exam import (
     ExamReview,
-    LLMGradeBatch,
-    LLMGradeItem,
     PrivateExam,
     PublicExam,
     QuestionResult,
@@ -47,7 +36,6 @@ from app.schema.exam import (
     grade_cloze_locally,
     ratio_to_score,
     to_public,
-    validate_grade_batch,
     verdict_from_score,
 )
 from app.schema.flash import (
@@ -55,7 +43,6 @@ from app.schema.flash import (
     to_public_deck,
 )
 from app.schema.provider import ModelProvider
-from app.util.text import chunked
 
 
 def _build_exam_overall_comment(
@@ -148,74 +135,6 @@ class ExamService:
             budget_seconds=budget_seconds,
         )
 
-    def _grade_batches(
-        self,
-        llm_items: list[dict[str, Any]],
-        provider: ModelProvider,
-        operation_started: float,
-    ) -> list[LLMGradeItem]:
-        """按题型把送评题目切成小批逐批评分，返回打平的评分条目。
-
-        分批而不是一次评完，是题量提高后判分准确性的主要保障：
-        - 填空复核与解答题各用一套互不干扰的准则（二值判定 vs 逐要点计数），
-          混在同一条 prompt 里时两种尺度会互相污染；
-        - 每批 ID 集合小，validate_grade_batch 的"不多不少"更容易满足，
-          少一次整批重试就少一次评分漂移；
-        - max_tokens 按批内题数给，避免十几条 feedback 撑爆输出导致 JSON 截断。
-
-        预算按"剩余时间 / 剩余批数"平分：靠前的批次（含其内部重试）吃不掉
-        整个 GRADE_LLM_BUDGET，最后一批不会必然 504。
-        """
-        essay_items = [item for item in llm_items if item["type"] == "essay"]
-        cloze_items = [item for item in llm_items if item["type"] == "cloze"]
-
-        batches: list[tuple[str, list[dict[str, Any]]]] = [
-            ("essay", chunk) for chunk in chunked(essay_items, GRADE_ESSAY_BATCH)
-        ]
-        batches += [("cloze", chunk) for chunk in chunked(cloze_items, GRADE_CLOZE_BATCH)]
-
-        graded: list[LLMGradeItem] = []
-        deadline = operation_started + GRADE_LLM_BUDGET
-
-        with self.llm_gate.acquire():
-            if essay_items:
-                for item in essay_items:
-                    documents = self.knowledge_base.search(item["question"], k=3)
-                    item["knowledge_context"] = [
-                        document.page_content[:600] for document in documents
-                    ]
-
-            for index, (kind, chunk) in enumerate(batches):
-                batch_started = time.monotonic()
-                slice_budget = max(0.0, (deadline - batch_started) / (len(batches) - index))
-                # 同 generate_exam：余量必须大于 cancel_grace(5s)，否则批次可能
-                # 一次都不尝试就因"预算放不下最坏耗时"直接 504
-                attempt_timeout = min(
-                    GRADE_LLM_TIMEOUT, max(GRADE_MIN_ATTEMPT_TIMEOUT, slice_budget - 15.0)
-                )
-                expected_ids = {item["question_id"] for item in chunk}
-                build_prompt = (
-                    build_essay_grade_prompt if kind == "essay" else build_cloze_grade_prompt
-                )
-                client = self.client_factory.get(
-                    provider,
-                    timeout_seconds=int(attempt_timeout),
-                    max_retries=0,
-                ).bind(max_tokens=600 + 500 * len(chunk))
-                batch = call_json_llm(
-                    client,
-                    build_prompt(json.dumps(chunk, ensure_ascii=False, indent=1)),
-                    LLMGradeBatch,
-                    attempt_timeout=attempt_timeout,
-                    budget_seconds=slice_budget,
-                    # 默认参数绑定当前批的 ID 集合：闭包会让所有批都校验最后一批
-                    post_validate=lambda value, ids=expected_ids: validate_grade_batch(value, ids),
-                    start_time=batch_started,
-                )
-                graded.extend(batch.items)
-
-        return graded
-
     def essay_question_for_annotation(
         self, exam_id: str, question_id: str, provider: ModelProvider
     ) -> tuple[str, str]:
@@ -241,8 +160,9 @@ class ExamService:
         answers: dict[str, object],
         provider: ModelProvider | None = None,
     ) -> ExamReview:
-        """Grade locally or in typed LLM batches, then summarize the entire exam."""
-        operation_started = time.monotonic()
+        """本机能判的先判，语义题按题型分批送模型（app/agent/graphs/grade.py），最后汇总整卷。"""
+        # 截止时间从进门算起：本机判那一段也算在预算里（只有几毫秒）
+        deps = self._deps(provider, GRADE_LLM_BUDGET)
         cached = self.exam_cache.get_copy(exam_id)
         if isinstance(cached, StoredExam):
             if provider is None or provider.served_model_id != cached.served_model_id:
@@ -343,9 +263,9 @@ class ExamService:
         if llm_items:
             if provider is None:
                 raise ModelMismatchError("判卷模型不可用，请重新生成试卷")
-            graded = self._grade_batches(
-                llm_items, provider, operation_started
-            )
+            # 只在真有题要送模型时才拿闸门：本机就能判完的卷子不该排队，闸门满时也不该被拒
+            with self.llm_gate.acquire():
+                graded = GRADE_GRAPH.invoke({"items": llm_items}, context=deps)["graded"]
             for item in graded:
                 question, answer = llm_meta[item.question_id]
                 score = ratio_to_score(item.score_ratio, question.points)
