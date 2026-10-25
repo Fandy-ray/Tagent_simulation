@@ -23,6 +23,7 @@
 		connection_type?: string;
 		azure?: boolean;
 		api_version?: string;
+		api_type?: string;
 	};
 	export type ConnectionDraft = { url: string; key: string; config: ConnectionConfig };
 
@@ -38,6 +39,7 @@
 		show?: boolean;
 		edit?: boolean;
 		direct?: boolean;
+		ollama?: boolean;
 		connection?: ConnectionDraft | null;
 		onSubmit?: (connection: ConnectionDraft) => void;
 		onDelete?: () => void;
@@ -47,6 +49,7 @@
 		show = $bindable(false),
 		edit = false,
 		direct = false,
+		ollama = false,
 		connection = null,
 		onSubmit = () => {},
 		onDelete = () => {}
@@ -56,16 +59,26 @@
 	let key = $state('');
 	let auth_type = $state('bearer');
 	let connectionType = $state('external');
-	let azure = $state(false);
+	// 跟着地址自动判断是不是 Azure；载入已有连接时会被那条连接自己的设置覆盖（可写的 $derived）
+	let azure = $derived(
+		(url.includes('azure.') || url.includes('cognitive.microsoft.com')) && !direct && !ollama
+	);
 	let apiVersion = $state('');
 	let prefixId = $state('');
 	let enable = $state(true);
 	let headers = $state('');
+	let apiType = $state('');
 	let tags: Array<{ name: string }> = $state([]);
 	let modelId = $state('');
 	let modelIds: string[] = $state([]);
 	let loading = $state(false);
 	let showDeleteConfirmDialog = $state(false);
+
+	$effect(() => {
+		if (show && !connection) {
+			connectionType = ollama ? 'local' : 'external';
+		}
+	});
 
 	const verifyOpenAIHandler = async () => {
 		url = url.replace(/\/$/, '');
@@ -151,6 +164,7 @@
 				connection_type: connectionType,
 				auth_type,
 				headers: headers ? JSON.parse(headers) : undefined,
+				...(apiType ? { api_type: apiType } : {}),
 				...(azure ? { azure: true, api_version: apiVersion } : {})
 			}
 		};
@@ -163,6 +177,7 @@
 		url = '';
 		key = '';
 		auth_type = 'bearer';
+		apiType = '';
 		prefixId = '';
 		tags = [];
 		modelIds = [];
@@ -183,11 +198,12 @@
 			prefixId = connection.config?.prefix_id ?? '';
 			modelIds = connection.config?.model_ids ?? [];
 
-			connectionType = connection.config?.connection_type ?? 'external';
+			connectionType = connection.config?.connection_type ?? (ollama ? 'local' : 'external');
 			azure =
 				connection.config?.azure ??
-				((url.includes('azure.') || url.includes('cognitive.microsoft.com')) && !direct);
+				((url.includes('azure.') || url.includes('cognitive.microsoft.com')) && !direct && !ollama);
 			apiVersion = connection.config?.api_version ?? '';
+			apiType = connection.config?.api_type ?? '';
 		}
 	};
 
@@ -269,7 +285,7 @@
 										bind:value={url}
 										placeholder={$i18n.t('API Base URL')}
 										autocomplete="off"
-										list="suggestions"
+										list={ollama ? undefined : 'suggestions'}
 										required
 									/>
 
@@ -336,7 +352,7 @@
 										>
 											<option value="none">{$i18n.t('None')}</option>
 											<option value="bearer">{$i18n.t('Bearer')}</option>
-											{#if !direct}
+											{#if !direct && !ollama}
 												<option value="session">{$i18n.t('Session')}</option>
 												<option value="system_oauth">{$i18n.t('OAuth')}</option>
 												{#if azure}
@@ -375,7 +391,7 @@
 							</div>
 						</div>
 
-						{#if !direct}
+						{#if !direct && !ollama}
 							<div class="mt-2 flex gap-2">
 								<div class="flex w-full flex-col">
 									<label for="headers-input" class="mb-0.5 text-xs text-gray-500">
@@ -424,7 +440,7 @@
 							</div>
 						</div>
 
-						{#if !direct}
+						{#if !direct && !ollama}
 							<div class="mt-2 flex w-full flex-row items-center justify-between">
 								<label for="provider-type" class="mb-0.5 text-xs text-gray-500">
 									{$i18n.t('Provider Type')}
@@ -442,6 +458,18 @@
 										{azure ? $i18n.t('Azure OpenAI') : $i18n.t('OpenAI')}
 									</button>
 								</div>
+							</div>
+						{/if}
+
+						{#if !ollama && !direct}
+							<div class="mt-1 flex w-full items-center justify-between">
+								<div class="mb-0.5 text-xs text-gray-500">{$i18n.t('API Type')}</div>
+								<button
+									type="button"
+									class="text-xs text-gray-700 dark:text-gray-300"
+									onclick={() => (apiType = apiType === 'responses' ? '' : 'responses')}
+									>{apiType === 'responses' ? 'Responses' : 'Chat Completions'}</button
+								>
 							</div>
 						{/if}
 
@@ -500,7 +528,11 @@
 								</ul>
 							{:else}
 								<div class="px-10 py-2 text-center text-xs text-gray-500">
-									{#if azure}
+									{#if ollama}
+										{$i18n.t('Leave empty to include all models from "{{url}}/api/tags" endpoint', {
+											url
+										})}
+									{:else if azure}
 										{$i18n.t('Deployment names are required for Azure OpenAI')}
 									{:else}
 										{$i18n.t('Leave empty to include all models from "{{url}}/models" endpoint', {

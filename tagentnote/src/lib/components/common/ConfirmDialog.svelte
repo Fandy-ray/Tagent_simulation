@@ -10,6 +10,7 @@
 		confirmLabel?: string;
 		onConfirm?: () => void | Promise<void>;
 		onCancel?: () => void;
+		children?: import('svelte').Snippet;
 	};
 
 	let {
@@ -19,7 +20,8 @@
 		cancelLabel = '取消',
 		confirmLabel = '确认',
 		onConfirm = () => {},
-		onCancel = () => {}
+		onCancel = () => {},
+		children
 	}: Props = $props();
 
 	function scaleFly(_node: Element, { duration = 120 }: { duration?: number } = {}) {
@@ -80,7 +82,11 @@
 		>
 			<div class="flex flex-col px-7 py-6">
 				<div class="mb-2.5 text-lg font-medium text-gray-200">{title}</div>
-				<div class="flex-1 text-sm text-gray-400">{message}</div>
+				{#if children}
+					<div class="flex-1">{@render children()}</div>
+				{:else}
+					<div class="flex-1 text-sm text-gray-400">{message}</div>
+				{/if}
 				<div class="mt-6 flex justify-between gap-1.5">
 					<button
 						type="button"

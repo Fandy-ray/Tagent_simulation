@@ -484,8 +484,6 @@
 						variant="navbar"
 						className="w-[240px]"
 						userRole="admin"
-						showPlayground={false}
-						showAdmin={false}
 						{userName}
 						{avatarText}
 						align="end"

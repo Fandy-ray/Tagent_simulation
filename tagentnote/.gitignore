@@ -25,3 +25,8 @@ vite.config.ts.timestamp-*
 # 范例正文：自己写的、有权公开的直接放 src/lib/samples/*.txt 入库，大家一起用；
 # 期刊、教材等别人的文章命名成 *.local.txt，只留在本机（仓库是公开的，不能转载）
 src/lib/samples/*.local.txt
+
+# Local build logs / scratch files
+*.log
+*.tmp
+admin-test.txt

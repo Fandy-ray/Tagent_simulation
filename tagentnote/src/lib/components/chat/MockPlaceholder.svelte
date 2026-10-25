@@ -12,15 +12,23 @@
 		temporaryChat?: boolean;
 		landingPageMode?: string;
 		ctrlEnterToSend?: boolean;
+		largeTextAsFile?: boolean;
 		enableMessageQueue?: boolean;
 		showFormattingToolbar?: boolean;
 		richTextInput?: boolean;
 		promptAutocomplete?: boolean;
+		imageCompression?: boolean;
+		imageCompressionSize?: { width: string; height: string };
 		insertSuggestionPrompt?: boolean;
 		lastUserMessage?: string;
+		speechAutoSend?: boolean;
+		webSearchAlways?: boolean;
+		noteOptions?: { id: string; name: string }[];
+		chatOptions?: { id: string; name: string }[];
 		onSubmit?: (content: string) => void;
 		onStop?: () => void;
 		onInsertSuggestion?: (content: string) => void;
+		onToast?: (message: string) => void;
 		/** 论文模式的「交稿批改」「填入范例」，原样转给输入框（见 MockMessageInput） */
 		onReview?: ((text: string) => void) | null;
 		onFillSample?: (() => void) | null;
@@ -38,15 +46,23 @@
 		temporaryChat = false,
 		landingPageMode = '',
 		ctrlEnterToSend = false,
+		largeTextAsFile = false,
 		enableMessageQueue = true,
 		showFormattingToolbar = false,
 		richTextInput = true,
 		promptAutocomplete = false,
+		imageCompression = false,
+		imageCompressionSize = { width: '', height: '' },
 		insertSuggestionPrompt = false,
 		lastUserMessage = '',
+		speechAutoSend = false,
+		webSearchAlways = false,
+		noteOptions = [],
+		chatOptions = [],
 		onSubmit = () => {},
 		onStop = () => {},
 		onInsertSuggestion = () => {},
+		onToast = () => {},
 		onReview = null,
 		onFillSample = null,
 		knowledgeOptions = [],
@@ -125,13 +141,22 @@
 					placeholder="有什么我能帮您的吗？"
 					{generating}
 					{ctrlEnterToSend}
+					{largeTextAsFile}
 					{enableMessageQueue}
 					{showFormattingToolbar}
 					{richTextInput}
 					{promptAutocomplete}
+					{imageCompression}
+					{imageCompressionSize}
 					{lastUserMessage}
+					{speechAutoSend}
+					{webSearchAlways}
+					{noteOptions}
+					{chatOptions}
+					{modelName}
 					{onSubmit}
 					{onStop}
+					{onToast}
 					{onReview}
 					{onFillSample}
 					{knowledgeOptions}

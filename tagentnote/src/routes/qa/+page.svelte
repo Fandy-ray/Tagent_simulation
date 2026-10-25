@@ -162,6 +162,18 @@
 			}))
 	);
 
+	// 输入框「+」菜单里引用笔记、引用其他对话（restored_frontend 放回来的输入框扩展）
+	const inputNoteOptions = $derived(
+		collections.flatMap((nb) =>
+			nb.files.filter((f) => f.kind === 'note').map((f) => ({ id: f.id, name: f.title }))
+		)
+	);
+	const inputChatOptions = $derived(
+		chats
+			.filter((c) => !c.archived && c.id !== activeChatId)
+			.map((c) => ({ id: c.id, name: c.title }))
+	);
+
 	const archivedChats = $derived(
 		modeChats
 			.filter((chat) => chat.archived)
@@ -389,6 +401,10 @@
 	onMount(() => {
 		closeSidebarIfNarrow();
 		userSettings = loadUserSettings();
+		const sidebarAction = $page.url.searchParams.get('sidebar-action');
+		settingsOpen = sidebarAction === 'settings';
+		archivedOpen = sidebarAction === 'archived';
+		shortcutsOpen = sidebarAction === 'shortcuts';
 		folders = loadQaFolders();
 		applyTheme(userSettings.theme);
 		applyTextScale(userSettings.textScale);
@@ -2449,6 +2465,14 @@
 								{modelOptions}
 								onSelectKnowledge={selectKnowledgeFromInput}
 								onSelectModel={selectModelFromInput}
+								largeTextAsFile={userSettings.largeTextAsFile}
+								imageCompression={userSettings.imageCompression}
+								imageCompressionSize={userSettings.imageCompressionSize}
+								speechAutoSend={userSettings.speechAutoSend}
+								webSearchAlways={userSettings.webSearchAlways}
+								noteOptions={inputNoteOptions}
+								chatOptions={inputChatOptions}
+								onToast={toast}
 							/>
 						</div>
 					</div>
@@ -2527,6 +2551,10 @@
 						</div>
 					{/if}
 
+					{#if userSettings.webSearchAlways}
+						<div class="px-4 pb-1 text-center text-[11px] text-sky-400/80">联网搜索：始终开启</div>
+					{/if}
+
 					<div class="relative z-10 shrink-0 px-4 pt-4 pb-2">
 						<div
 							class={`mx-auto w-full ${userSettings.widescreenMode ? 'max-w-full' : 'max-w-3xl'}`}
@@ -2541,6 +2569,7 @@
 								richTextInput={userSettings.richTextInput}
 								promptAutocomplete={userSettings.promptAutocomplete}
 								{lastUserMessage}
+								modelName={currentModelName}
 								onSubmit={submitPrompt}
 								onReview={assistMode === 'paper' ? submitPaperForReview : null}
 								onFillSample={assistMode === 'paper' && samples.length > 0 ? fillSample : null}
@@ -2549,6 +2578,14 @@
 								{modelOptions}
 								onSelectKnowledge={selectKnowledgeFromInput}
 								onSelectModel={selectModelFromInput}
+								largeTextAsFile={userSettings.largeTextAsFile}
+								imageCompression={userSettings.imageCompression}
+								imageCompressionSize={userSettings.imageCompressionSize}
+								speechAutoSend={userSettings.speechAutoSend}
+								webSearchAlways={userSettings.webSearchAlways}
+								noteOptions={inputNoteOptions}
+								chatOptions={inputChatOptions}
+								onToast={toast}
 							/>
 						</div>
 
@@ -2610,7 +2647,7 @@
 			open={settingsOpen}
 			initialTab={settingsTab}
 			userRole="admin"
-			showAdminPanel={false}
+			showAdminPanel={true}
 			onClose={() => {
 				settingsOpen = false;
 			}}
