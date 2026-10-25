@@ -1275,6 +1275,16 @@
 		void goto(resolve(`/notebook?${params.toString()}`));
 	};
 
+	// 侧栏「工作空间」（restored_frontend 放回来的入口）。10-02 隐藏时连同按钮一起删掉过
+	const openWorkspace = () => {
+		commitActive();
+		const params = new SvelteURLSearchParams();
+		if (selectedModelId) params.set('model', selectedModelId);
+		if (activeChatId) params.set('chat', activeChatId);
+		const search = params.toString();
+		void goto(resolve(search ? `/workspace/models?${search}` : '/workspace/models'));
+	};
+
 	const chatPlainText = () =>
 		messages
 			.map((message) => `### ${message.role.toUpperCase()}\n${message.content}`)
@@ -2297,6 +2307,7 @@
 			}}
 			onSelectFolder={handleSelectFolder}
 			onOpenNotes={openNotes}
+			onOpenWorkspace={openWorkspace}
 			onSettings={openSettings}
 			onArchivedChats={openArchivedChats}
 			onPlayground={openPlayground}

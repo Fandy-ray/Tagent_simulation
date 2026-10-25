@@ -33,6 +33,16 @@
 	let completionText = $state('');
 	let imagePrompt = $state('');
 	let imageInput = $state<HTMLInputElement | null>(null);
+
+	// 示例图片取自 picsum.photos。种子只给一个本地算出来的数字，别把学生输入的提示词原样发到第三方
+	const imageSeed = (text: string) => {
+		let hash = 2166136261;
+		for (const char of text) {
+			hash ^= char.codePointAt(0) ?? 0;
+			hash = Math.imul(hash, 16777619);
+		}
+		return (hash >>> 0).toString(36);
+	};
 	let generatedImages = $state<string[]>([]);
 	let uploadedImages = $state<string[]>([]);
 	let loading = $state(false);
@@ -304,7 +314,7 @@
 		loading = true;
 		await new Promise((resolve) => setTimeout(resolve, 650));
 		generatedImages = [
-			`https://picsum.photos/seed/${encodeURIComponent(imagePrompt || 'uploaded-image')}-${generatedImages.length}/720/520`,
+			`https://picsum.photos/seed/${imageSeed(imagePrompt || 'uploaded-image')}-${generatedImages.length}/720/520`,
 			...generatedImages
 		];
 		imagePrompt = '';
