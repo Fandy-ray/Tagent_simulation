@@ -1,17 +1,18 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { onMount, untrack } from 'svelte';
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import MockSidebar from '$lib/components/chat/MockSidebar.svelte';
 	import type { FolderFormValue } from '$lib/components/chat/FolderModal.svelte';
-	import { saveQaChats, type QaChat } from '$lib/data/qaConversations';
+	import { getAgentModels, streamAgentChat, type AgentModel } from '$lib/apis/agent';
+	import { loadQaChats, saveQaChats, type QaChat } from '$lib/data/qaConversations';
 	import {
 		collectFolderTreeIds,
 		createQaFolder,
+		loadQaFolders,
 		saveQaFolders,
 		type QaFolder
 	} from '$lib/data/qaFolders';
-	import { ensureQaSeed } from '$lib/data/qaSeed';
 
 	type Role = 'user' | 'assistant';
 	type Message = { id: number; role: Role; content: string };
@@ -23,18 +24,18 @@
 	let system = $state('');
 	let role = $state<Role>('user');
 	let message = $state('');
-	let selectedModel = $state('TAgent-Chat');
+	let selectedModel = $state('');
+	// Playground 的对话只在这个页面里，不写进答疑的会话记录（以前会把答疑当前那段对话读进来、
+	// 改动又写回去，在这里试几句就改坏了学生真正的答疑记录）
 	let messages = $state<Message[]>([]);
 	let chats = $state<QaChat[]>([]);
 	let folders = $state<QaFolder[]>([]);
-	let activeChatId = $state<string | null>(null);
 	let selectedFolderId = $state<string | null>(null);
-	let hydrated = $state(false);
 	let completionText = $state('');
 	let imagePrompt = $state('');
 	let imageInput = $state<HTMLInputElement | null>(null);
 
-	// 示例图片取自 picsum.photos。种子只给一个本地算出来的数字，别把学生输入的提示词原样发到第三方
+	// 图像生成没有接后端，示例图片取自 picsum.photos。种子只给一个本地算出来的数字，别把学生输入的提示词原样发到第三方
 	const imageSeed = (text: string) => {
 		let hash = 2166136261;
 		for (const char of text) {
@@ -46,38 +47,25 @@
 	let generatedImages = $state<string[]>([]);
 	let uploadedImages = $state<string[]>([]);
 	let loading = $state(false);
-	let stopRequested = false;
+	let abortController: AbortController | null = null;
 	let moreOpen = $state(false);
 	let modelOpen = $state(false);
 	let modelSearch = $state('');
-	let modelScope = $state<'全部' | '本地' | 'Tagent'>('全部');
 	let nextId = 1;
+	let models = $state<AgentModel[]>([]);
+	let modelsError = $state('');
+	let runError = $state('');
 
-	const models = ['TAgent-Chat', 'TAgent-Reasoner', 'Qwen2.5-72B', 'DeepSeek-V3'];
-	const completionModels = ['qwen2.5:7b', 'Arena Model', 'deepseek'];
 	let completionModel = $state('');
-	const modelSizes: Record<string, string> = {
-		'qwen2.5:7b': '7.6B',
-		'Arena Model': '',
-		deepseek: ''
-	};
+	const modelLabel = (id: string) => models.find((model) => model.id === id)?.name || id;
 	const filteredModels = $derived(
-		completionModels.filter(
-			(model) =>
-				model.toLowerCase().includes(modelSearch.trim().toLowerCase()) &&
-				(modelScope === '全部' ||
-					(modelScope === '本地' ? model === 'qwen2.5:7b' : model !== 'qwen2.5:7b'))
+		models.filter((model) =>
+			`${model.name} ${model.id}`.toLowerCase().includes(modelSearch.trim().toLowerCase())
 		)
 	);
 
+	// 侧栏是答疑的会话列表：这里只读、点了去答疑页打开，文件夹操作照常存
 	const sidebarChats = $derived(chats.filter((chat) => !chat.archived));
-
-	const toEditorMessages = (chat: QaChat | undefined | null): Message[] =>
-		(chat?.messages ?? []).map((item, index) => ({
-			id: index + 1,
-			role: item.role,
-			content: item.content
-		}));
 
 	const loadChat = (chatId: string) => {
 		if (!chats.some((item) => item.id === chatId)) return;
@@ -85,60 +73,43 @@
 	};
 
 	onMount(() => {
-		const seed = ensureQaSeed();
-		chats = seed.chats;
-		folders = seed.folders;
-		activeChatId = seed.activeId ?? seed.chats[0]?.id ?? null;
-		messages = toEditorMessages(seed.chats.find((item) => item.id === activeChatId));
-		nextId = messages.length + 1;
-		hydrated = true;
+		chats = loadQaChats().chats;
+		folders = loadQaFolders();
+		getAgentModels()
+			.then((list) => {
+				models = list.data;
+				selectedModel ||= list.data[0]?.id ?? '';
+				completionModel ||= list.data[0]?.id ?? '';
+				modelsError = list.data.length ? '' : '还没有登记模型：先去「模型」页登记一个。';
+			})
+			.catch((error: unknown) => {
+				modelsError = error instanceof Error ? error.message : '读取模型列表失败。';
+			});
 	});
 
-	$effect(() => {
-		const snapshot = messages.map((item) => ({
-			id: String(item.id),
-			role: item.role,
-			content: item.content
-		}));
-		const chatId = activeChatId;
-		if (!hydrated || !chatId) return;
-		const firstUser = snapshot.find((item) => item.role === 'user' && item.content.trim());
-
-		untrack(() => {
-			const nextChats = chats.map((chat) =>
-				chat.id === chatId
-					? {
-							...chat,
-							title:
-								firstUser && (!chat.title || chat.title === '新的对话')
-									? firstUser.content.trim().slice(0, 28)
-									: chat.title,
-							updatedAt: Date.now(),
-							messages: snapshot
-						}
-					: chat
-			);
-			chats = nextChats;
-			saveQaChats(nextChats, chatId);
-		});
-	});
-
-	const startNewChat = () => {
-		const now = Date.now();
-		const chat: QaChat = {
-			id: `chat-${now}`,
-			title: '新的对话',
-			updatedAt: now,
-			folderId: selectedFolderId,
-			mode: 'qa',
-			messages: []
-		};
-		chats = [chat, ...chats];
-		saveQaChats(chats, chat.id);
-		activeChatId = chat.id;
-		messages = [];
-		nextId = 1;
+	/** 直接和模型聊（mode = chat）：不检索知识库，系统指令、消息原样发出去 */
+	const streamDirect = async (
+		model: string,
+		turns: { role: Role; content: string }[],
+		systemPrompt: string,
+		onDelta: (content: string) => void
+	) => {
+		const last = turns.at(-1);
+		if (!last) return;
+		abortController = new AbortController();
+		try {
+			await streamAgentChat(last.content, model, onDelta, abortController.signal, {
+				mode: 'chat',
+				system: systemPrompt.trim() || undefined,
+				history: turns.slice(0, -1)
+			});
+		} finally {
+			abortController = null;
+		}
 	};
+
+	const failed = (error: unknown) =>
+		!(error instanceof DOMException && error.name === 'AbortError');
 
 	const handleSelectFolder = (folderId: string | null) => {
 		selectedFolderId = folderId;
@@ -189,17 +160,13 @@
 				.filter((chat) => chat.folderId && ids.has(chat.folderId))
 				.map((chat) => chat.id);
 			chats = chats.filter((chat) => !chat.folderId || !ids.has(chat.folderId));
-			if (activeChatId && removed.includes(activeChatId)) {
-				activeChatId = chats[0]?.id ?? null;
-				messages = toEditorMessages(chats.find((item) => item.id === activeChatId));
-				nextId = messages.length + 1;
-			}
-			saveQaChats(chats, activeChatId);
+			const stored = loadQaChats();
+			saveQaChats(chats, removed.includes(stored.activeId ?? '') ? null : stored.activeId);
 		} else {
 			chats = chats.map((chat) =>
 				chat.folderId && ids.has(chat.folderId) ? { ...chat, folderId: null } : chat
 			);
-			saveQaChats(chats, activeChatId);
+			saveQaChats(chats, loadQaChats().activeId);
 		}
 
 		if (selectedFolderId && ids.has(selectedFolderId)) selectedFolderId = null;
@@ -209,7 +176,7 @@
 		chats = chats.map((chat) =>
 			chat.id === chatId ? { ...chat, folderId, updatedAt: Date.now() } : chat
 		);
-		saveQaChats(chats, activeChatId);
+		saveQaChats(chats, loadQaChats().activeId);
 	};
 
 	const handleMoveFolder = (folderId: string, parentId: string | null) => {
@@ -230,26 +197,31 @@
 		if (loading) return;
 		if (message.trim()) addMessage();
 		if (messages.length === 0 || messages.at(-1)?.role !== 'user') return;
+		if (!selectedModel) {
+			runError = modelsError || '先选一个模型。';
+			return;
+		}
 
 		loading = true;
-		stopRequested = false;
+		runError = '';
+		const turns = messages.map(({ role, content }) => ({ role, content }));
 		const assistantId = nextId++;
 		messages = [...messages, { id: assistantId, role: 'assistant', content: '' }];
-		const answer =
-			'这是基于当前对话上下文生成的 mock 回复。你可以继续添加消息、调整系统指令或切换模型进行测试。';
-
-		for (const char of answer) {
-			if (stopRequested) break;
-			await new Promise((resolve) => setTimeout(resolve, 18));
-			messages = messages.map((item) =>
-				item.id === assistantId ? { ...item, content: item.content + char } : item
-			);
+		try {
+			await streamDirect(selectedModel, turns, system, (content) => {
+				messages = messages.map((item) => (item.id === assistantId ? { ...item, content } : item));
+			});
+		} catch (error) {
+			if (failed(error)) runError = error instanceof Error ? error.message : '运行失败。';
+		} finally {
+			// 一个字都没回（出错、马上取消）就别留一条空的助手消息
+			messages = messages.filter((item) => item.id !== assistantId || item.content);
+			loading = false;
 		}
-		loading = false;
 	};
 
 	const stopResponse = () => {
-		stopRequested = true;
+		abortController?.abort();
 	};
 
 	const chatToText = () =>
@@ -283,13 +255,28 @@
 		messages = messages.filter((item) => item.id !== id);
 	};
 
+	/** 续写：让模型接着文本往下写，写出来的直接接在原文后面 */
 	const runCompletion = async () => {
 		if (!completionText.trim() || loading) return;
+		if (!completionModel) {
+			runError = modelsError || '先选一个模型。';
+			return;
+		}
 		loading = true;
+		runError = '';
 		const input = completionText;
-		await new Promise((resolve) => setTimeout(resolve, 500));
-		completionText = `${input}\n\n[Mock completion]\n${input.slice(-120)} — 以上内容由 ${selectedModel} 模拟续写。`;
-		loading = false;
+		try {
+			await streamDirect(
+				completionModel,
+				[{ role: 'user', content: input }],
+				'接着用户给的文字往下写。只输出续写的部分，不要重复原文，不要解释，不要加引号或标题。',
+				(content) => (completionText = input + content)
+			);
+		} catch (error) {
+			if (failed(error)) runError = error instanceof Error ? error.message : '运行失败。';
+		} finally {
+			loading = false;
+		}
 	};
 
 	const addImages = (event: Event) => {
@@ -329,7 +316,7 @@
 <div class="playground-shell">
 	{#if sidebarOpen}
 		<MockSidebar
-			{activeChatId}
+			activeChatId={null}
 			{selectedFolderId}
 			chats={sidebarChats}
 			searchChats={chats}
@@ -338,7 +325,7 @@
 			avatarText="T"
 			activeNav="chats"
 			onHome={() => goto(resolve('/qa'))}
-			onNewChat={startNewChat}
+			onNewChat={() => goto(resolve('/qa'))}
 			onSelectChat={loadChat}
 			onSelectFolder={handleSelectFolder}
 			onCreateFolder={handleCreateFolder}
@@ -474,6 +461,7 @@
 								</button>
 							</article>
 						{/each}
+						{#if runError}<p class="run-error" role="alert">{runError}</p>{/if}
 					</div>
 				</div>
 
@@ -500,7 +488,9 @@
 							</button>
 							<div class="composer-right">
 								<select class="model-select" bind:value={selectedModel} aria-label="选择模型">
-									{#each models as model (model)}<option value={model}>{model}</option>{/each}
+									{#each models as model (model.id)}<option value={model.id}
+											>{model.name || model.id}</option
+										>{/each}
 								</select>
 								{#if !loading}
 									<button class="add-button" disabled={!message} onclick={addMessage}>添加</button>
@@ -521,7 +511,7 @@
 						aria-expanded={modelOpen}
 						onclick={() => (modelOpen = !modelOpen)}
 					>
-						<span>选择模型</span>
+						<span>{completionModel ? modelLabel(completionModel) : '选择模型'}</span>
 						<svg
 							width="16"
 							height="16"
@@ -550,43 +540,21 @@
 								>
 								<input aria-label="搜索模型" placeholder="搜索模型" bind:value={modelSearch} />
 							</div>
-							<div class="model-scopes">
-								{#each ['全部', '本地', 'Tagent'] as scope (scope)}
-									<button
-										class:chosen={modelScope === scope}
-										onclick={() => (modelScope = scope as typeof modelScope)}>{scope}</button
-									>
-								{/each}
-							</div>
 							<div class="model-options">
-								{#each filteredModels as model, index (model)}
+								{#each filteredModels as model, index (model.id)}
 									<button
 										class="model-option"
-										class:highlighted={completionModel === model ||
+										class:highlighted={completionModel === model.id ||
 											(!completionModel && index === 0)}
 										onclick={() => {
-											completionModel = model;
+											completionModel = model.id;
 											modelOpen = false;
 										}}
 									>
-										<span class="model-logo">OI</span>
-										<span>{model}</span>
-										{#if modelSizes[model]}<span class="model-size">{modelSizes[model]}</span>{/if}
-										{#if model === 'Arena Model'}<span
-												class="model-info"
-												title="随机选择一个 mock 模型">i</span
-											>{/if}
-										{#if model === 'deepseek'}<svg
-												width="18"
-												height="18"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												stroke-width="2"
-												><path d="M4 7h16v10H4l-3-5 3-5Z" /><circle cx="7" cy="12" r="1" /></svg
-											>{/if}
+										<span class="model-logo">T</span>
+										<span>{model.name || model.id}</span>
 									</button>
-								{:else}<p class="model-empty">未找到模型</p>{/each}
+								{:else}<p class="model-empty">{modelsError || '未找到模型'}</p>{/each}
 							</div>
 						</div>
 					{/if}
@@ -603,6 +571,7 @@
 						}}></textarea>
 				</div>
 				<div class="completion-actions">
+					{#if runError}<p class="run-error" role="alert">{runError}</p>{/if}
 					{#if !loading}
 						<button
 							class="run-button"
@@ -610,7 +579,7 @@
 							onclick={() => void runCompletion()}>运行</button
 						>
 					{:else}
-						<button class="cancel-button" onclick={() => (loading = false)}>取消</button>
+						<button class="cancel-button" onclick={stopResponse}>取消</button>
 					{/if}
 				</div>
 			</section>
@@ -635,7 +604,10 @@
 								/>{/each}
 						</div>
 					{:else}
-						<div class="image-empty">生成的图像将显示在此处</div>
+						<div class="image-empty">
+							<span>生成的图像将显示在此处</span>
+							<small>图像生成还没有接后端：点「运行」显示的是示例图片</small>
+						</div>
 					{/if}
 				</div>
 				<div class="input-area">
@@ -677,6 +649,11 @@
 <style>
 	:global(*) {
 		box-sizing: border-box;
+	}
+	.run-error {
+		margin: 8px 0 0;
+		color: #f87171;
+		font-size: 13px;
 	}
 	:global(body) {
 		margin: 0;
@@ -1149,21 +1126,6 @@
 	.model-search input::placeholder {
 		color: #9ca3af;
 	}
-	.model-scopes {
-		display: flex;
-		gap: 4px;
-		padding: 2px 7px 8px;
-	}
-	.model-scopes button {
-		padding: 5px 8px;
-		color: #737373;
-		background: transparent;
-		border-radius: 7px;
-		font-size: 13px;
-	}
-	.model-scopes button.chosen {
-		color: #f3f4f6;
-	}
 	.model-options {
 		padding: 0 1px 2px;
 	}
@@ -1197,24 +1159,6 @@
 		font-size: 9px;
 		font-weight: 800;
 	}
-	.model-size {
-		color: #a3a3a3;
-		font-size: 12px;
-	}
-	.model-info {
-		display: grid;
-		width: 16px;
-		height: 16px;
-		place-items: center;
-		color: #d4d4d4;
-		border: 1px solid #9ca3af;
-		border-radius: 50%;
-		font-size: 10px;
-	}
-	.model-option > svg {
-		margin-left: auto;
-		color: #d1d5db;
-	}
 	.model-empty {
 		margin: 0;
 		padding: 14px 10px;
@@ -1246,7 +1190,12 @@
 		display: flex;
 		flex: none;
 		justify-content: flex-end;
+		align-items: center;
+		gap: 12px;
 		padding: 6px 0 0;
+	}
+	.completion-actions .run-error {
+		margin: 0 auto 0 0;
 	}
 	.completion-actions .run-button {
 		padding: 6px 11px;
@@ -1270,10 +1219,13 @@
 	}
 	.image-empty {
 		display: flex;
+		flex-direction: column;
+		gap: 4px;
 		height: 100%;
 		min-height: 160px;
 		align-items: center;
 		justify-content: center;
+		text-align: center;
 		color: #6b7280;
 		font-size: 14px;
 	}

@@ -16,6 +16,8 @@
 		type QaFolder
 	} from '$lib/data/qaFolders';
 	import { loadUserSettings } from '$lib/data/userSettings';
+	import { adminToken } from '$lib/apis/admin';
+	import AdminTokenGate from '$lib/components/admin/AdminTokenGate.svelte';
 
 	let sidebarOpen = $state(true);
 	let sidebarChats = $state<
@@ -241,11 +243,23 @@
 						{/each}
 					</div>
 				</div>
+				{#if $adminToken}
+					<button
+						type="button"
+						class="dark:hover:bg-gray-850 shrink-0 rounded-lg px-2 py-1 text-xs text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:text-white"
+						onclick={() => adminToken.set('')}
+						title="清掉这个标签页里的管理口令">锁定</button
+					>
+				{/if}
 			</div>
 		</nav>
 
 		<div class="min-h-0 flex-1 overflow-y-auto pb-1">
-			{@render children?.()}
+			{#if $adminToken}
+				{@render children?.()}
+			{:else}
+				<AdminTokenGate />
+			{/if}
 		</div>
 	</section>
 </div>

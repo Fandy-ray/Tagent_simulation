@@ -1,5 +1,6 @@
 <script lang="ts">
 	import MockMessageInput from './MockMessageInput.svelte';
+	import type { InputAttachment } from './MessageInput/InputMenu.svelte';
 	import MockSuggestions from './MockSuggestions.svelte';
 
 	type AssistMode = 'qa' | 'paper';
@@ -25,7 +26,8 @@
 		webSearchAlways?: boolean;
 		noteOptions?: { id: string; name: string }[];
 		chatOptions?: { id: string; name: string }[];
-		onSubmit?: (content: string) => void;
+		onSubmit?: (content: string, display?: string, retrievalQuery?: string) => void;
+		resolveAttachment?: (attachment: InputAttachment) => Promise<string | undefined>;
 		onStop?: () => void;
 		onInsertSuggestion?: (content: string) => void;
 		onToast?: (message: string) => void;
@@ -60,6 +62,7 @@
 		noteOptions = [],
 		chatOptions = [],
 		onSubmit = () => {},
+		resolveAttachment = async () => undefined,
 		onStop = () => {},
 		onInsertSuggestion = () => {},
 		onToast = () => {},
@@ -117,10 +120,10 @@
 					<div class="flex shrink-0 justify-center">
 						<div class="flex -space-x-4">
 							<div
-								class="flex size-10 items-center justify-center rounded-full bg-white text-[11px] font-black text-black"
+								class="flex size-10 items-center justify-center rounded-full bg-white text-base font-black text-black"
 								aria-hidden="true"
 							>
-								OI
+								T
 							</div>
 						</div>
 					</div>
@@ -155,6 +158,7 @@
 					{chatOptions}
 					{modelName}
 					{onSubmit}
+					{resolveAttachment}
 					{onStop}
 					{onToast}
 					{onReview}

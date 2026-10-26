@@ -2,6 +2,7 @@
 	import PlusAlt from '$lib/components/icons/PlusAlt.svelte';
 	import ComponentIcon from '$lib/components/icons/Component.svelte';
 	import VoiceIcon from '$lib/components/icons/Voice.svelte';
+	import { composeMessage, type AttachmentPart } from '$lib/data/attachments';
 	import { countCharacters, ESSAY_MAX_CHARS, ESSAY_MIN_CHARS } from '$lib/data/essay';
 	import { listPrompts, listSkills, listTools } from '$lib/data/workspaceResources';
 	import InputMenu, { type InputAttachment } from './MessageInput/InputMenu.svelte';
@@ -33,14 +34,20 @@
 		noteOptions?: { id: string; name: string }[];
 		chatOptions?: { id: string; name: string }[];
 		modelName?: string;
-		onSubmit?: (content: string) => void;
+		/**
+		 * 发送。content 是发给模型的（带上附件内容、技能要求），display 是聊天里显示的（只列附件名），
+		 * retrievalQuery 是检索知识库用的那句话（带了附件时只用学生打的字）
+		 */
+		onSubmit?: (content: string, display?: string, retrievalQuery?: string) => void;
+		/** 笔记、对话这类附件：发送时按编号取正文。取不到返回 undefined */
+		resolveAttachment?: (attachment: InputAttachment) => Promise<string | undefined>;
 		onStop?: () => void;
 		onPasteAsFile?: (file: File) => void;
 		onEditLastMessage?: (content: string) => void;
 		onToast?: (message: string) => void;
 		/**
 		 * 论文模式才传：显示「交稿批改」，把输入框里的**原始正文**交出去。
-		 * 不走 buildPayload——那个会加「[附件:…]」之类的前缀，批注下标就对不上原文了。
+		 * 不走 composeMessage——那个会接上附件和技能要求，批注下标就对不上原文了。
 		 */
 		onReview?: ((text: string) => void) | null;
 		/** 本机有范例论文时才传：显示「填入范例」，演示批改用 */
@@ -72,6 +79,7 @@
 		chatOptions = [],
 		modelName = '',
 		onSubmit = () => {},
+		resolveAttachment = async () => undefined,
 		onStop = () => {},
 		onPasteAsFile = () => {},
 		onEditLastMessage = () => {},
@@ -105,7 +113,8 @@
 	const filters = listSkills().map((skill) => ({
 		id: skill.id,
 		name: skill.name,
-		description: skill.description
+		description: skill.description,
+		content: skill.content
 	}));
 	const valvesStorageKey = (target: { type: string; id: string }) =>
 		`tagentnote.valves.${target.type}.${target.id}`;
@@ -243,26 +252,61 @@
 		onReview(prompt);
 	};
 
-	const buildPayload = (content: string) => {
-		const parts: string[] = [];
-		if (webSearchEnabled || webSearchAlways) parts.push('[联网搜索]');
-		if (imageGenerationEnabled) parts.push('[图像生成]');
-		if (codeInterpreterEnabled) parts.push('[代码解释器]');
-		if (selectedToolIds.length) parts.push(`[工具:${selectedToolIds.join(',')}]`);
-		if (selectedFilterIds.length) parts.push(`[过滤器:${selectedFilterIds.join(',')}]`);
-		if (attachments.length) {
-			parts.push(`[附件:${attachments.map((a) => a.name).join(' | ')}]`);
+	// 联网搜索、图像生成、代码解释器、工具后端都还没有：开关照常能点，但不再往问题前面
+	// 拼「[联网搜索]」这类标签——那只会让模型和检索都看到一段莫名其妙的前缀。
+	// 技能（「过滤器」菜单里列的）有正文，作为回答要求接在问题后面。
+	let composing = false;
+
+	/** 附件逐个变成「名字 + 内容」：笔记、对话按编号去取，知识库改成本次检索的笔记本 */
+	const attachmentParts = async (items: InputAttachment[]): Promise<AttachmentPart[]> => {
+		const parts: AttachmentPart[] = [];
+		for (const item of items) {
+			if (item.type === 'knowledge') {
+				if (item.refId) onSelectKnowledge(item.refId, item.name);
+				continue;
+			}
+			if (item.content !== undefined || item.unsupported) {
+				parts.push({ name: item.name, content: item.content, unsupported: item.unsupported });
+				continue;
+			}
+			const content = await resolveAttachment(item).catch(() => undefined);
+			parts.push({
+				name: item.name,
+				content,
+				unsupported: content === undefined ? '没有取到内容' : undefined
+			});
 		}
-		const prefix = parts.length ? `${parts.join(' ')}\n` : '';
-		return `${prefix}${content}`.trim();
+		return parts;
 	};
 
-	const submit = () => {
+	const submit = async () => {
 		const content = prompt.trim();
-		if ((!content && attachments.length === 0) || disabled) return;
+		if ((!content && attachments.length === 0) || disabled || composing) return;
 		if (generating && !enableMessageQueue) return;
-		onSubmit(buildPayload(content || '请结合附件回答'));
-		attachments = [];
+		composing = true;
+		try {
+			const sent = attachments;
+			const parts = await attachmentParts(sent);
+			const skills = selectedFilterIds
+				.map((id) => filters.find((item) => item.id === id))
+				.filter((item) => item !== undefined)
+				.map((item) => ({ name: item.name, content: item.content }));
+			const message = composeMessage(content, parts, skills);
+			const skipped = message.skipped
+				.map((item) => `${item.name}（${item.unsupported ?? '读不了'}）`)
+				.join('；');
+			if (!message.request) {
+				// 只引用了知识库、什么也没问；或者带的附件全都读不了
+				if (skipped) onToast(`没有可以发送的内容：${skipped}`);
+				attachments = [];
+				return;
+			}
+			if (skipped) onToast(`没有发送这些附件的内容：${skipped}`);
+			onSubmit(message.request, message.display, message.retrievalQuery);
+			attachments = attachments.filter((item) => !sent.includes(item));
+		} finally {
+			composing = false;
+		}
 	};
 
 	const handleKeydown = (event: KeyboardEvent) => {
@@ -348,7 +392,7 @@
 
 		if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && event.shiftKey) {
 			event.preventDefault();
-			submit();
+			void submit();
 			return;
 		}
 
@@ -356,13 +400,13 @@
 		if (ctrlEnterToSend) {
 			if (event.ctrlKey || event.metaKey) {
 				event.preventDefault();
-				submit();
+				void submit();
 			}
 			return;
 		}
 		if (!event.shiftKey) {
 			event.preventDefault();
-			submit();
+			void submit();
 		}
 	};
 
@@ -415,9 +459,14 @@
 					onPasteAsFile(file);
 					attachments = [
 						...attachments,
-						{ id: `paste-${Date.now()}`, type: 'file', name: file.name }
+						{
+							id: `paste-${Date.now()}`,
+							type: 'file',
+							name: file.name,
+							unsupported: '图片目前还不能识别，没有发送'
+						}
 					];
-					onToast('内容已转为本地文件引用');
+					onToast('已粘贴图片（图片目前还不能识别，发送时不会带上）');
 					return;
 				}
 			}
@@ -431,9 +480,9 @@
 		onPasteAsFile(file);
 		attachments = [
 			...attachments,
-			{ id: `paste-text-${Date.now()}`, type: 'file', name: file.name }
+			{ id: `paste-text-${Date.now()}`, type: 'file', name: file.name, content: text }
 		];
-		onToast('内容已转为本地文件引用');
+		onToast('长文本已转成附件，发送时会带上它的内容（太长的会截断）');
 	};
 
 	const startDictate = async () => {
@@ -476,7 +525,7 @@
 				prompt = `${prompt}${prompt ? ' ' : ''}${text}`.trim();
 				recording = false;
 				if (speechAutoSend) {
-					queueMicrotask(() => submit());
+					queueMicrotask(() => void submit());
 				} else {
 					focus();
 				}
@@ -516,9 +565,12 @@
 			<div class="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
 				{#each attachments as item (item.id)}
 					<span
-						class="inline-flex max-w-full items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] text-gray-300"
+						class="inline-flex max-w-full items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] {item.unsupported
+							? 'text-gray-500'
+							: 'text-gray-300'}"
+						title={item.unsupported ?? undefined}
 					>
-						<span class="truncate">{item.name}</span>
+						<span class="truncate {item.unsupported ? 'line-through' : ''}">{item.name}</span>
 						<button
 							type="button"
 							class="shrink-0 text-gray-500 hover:text-white"
@@ -537,18 +589,21 @@
 		{#if webSearchEnabled || imageGenerationEnabled || codeInterpreterEnabled || selectedToolIds.length || selectedFilterIds.length}
 			<div class="flex flex-wrap gap-1.5 px-2.5 pt-2">
 				{#if webSearchEnabled}
-					<span class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] text-sky-300"
-						>联网搜索</span
+					<span
+						class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] text-sky-300"
+						title="联网搜索还没有接后端，这次提问不会用到">联网搜索（未接入）</span
 					>
 				{/if}
 				{#if imageGenerationEnabled}
-					<span class="rounded-full bg-violet-500/15 px-2 py-0.5 text-[11px] text-violet-300"
-						>图像</span
+					<span
+						class="rounded-full bg-violet-500/15 px-2 py-0.5 text-[11px] text-violet-300"
+						title="图像生成还没有接后端，这次提问不会用到">图像（未接入）</span
 					>
 				{/if}
 				{#if codeInterpreterEnabled}
-					<span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300"
-						>代码解释器</span
+					<span
+						class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300"
+						title="代码解释器还没有接后端，这次提问不会用到">代码解释器（未接入）</span
 					>
 				{/if}
 				{#each selectedFilterIds as filterId (filterId)}
@@ -838,7 +893,7 @@
 		callOpen = false;
 	}}
 	onSubmit={(content) => {
-		onSubmit(content);
+		onSubmit(content, content);
 	}}
 />
 

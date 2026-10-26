@@ -673,31 +673,28 @@ export async function enrichCitationsWithPages(
 	question: string,
 	getText: (fileId: string) => Promise<string>
 ) {
-	const kept: Citation[] = [];
 	const maybeEnglish = contentTerms(question).some((term) => Boolean(ALIASES[term]));
+	// 先过一遍：哪些原样留下、哪些丢掉、哪些要取原文补页码
+	const steps: { citation: Citation; needsText: boolean }[] = [];
 
 	for (const citation of citations) {
 		// 教材、论文：后端已经给了章页 / 期刊出处，也不在笔记本里，没有原文可取
 		if (citation.grounded && !citation.fileId.startsWith('source:')) {
-			kept.push(citation);
+			steps.push({ citation, needsText: false });
 			continue;
 		}
 
 		const titleRelevant = isCitationRelevant(citation, question);
 
-		if (!titleRelevant && !citation.fileId.startsWith('source:')) {
-			continue;
-		}
-
 		if (!citation.fileId.startsWith('source:')) {
 			if (titleRelevant) {
-				kept.push(citation);
+				steps.push({ citation, needsText: false });
 			}
 			continue;
 		}
 
 		if ((titleRelevant || citation.grounded) && citation.chapter && citation.page) {
-			kept.push(citation);
+			steps.push({ citation, needsText: false });
 			continue;
 		}
 
@@ -706,7 +703,28 @@ export async function enrichCitationsWithPages(
 			continue;
 		}
 
-		const text = await getText(citation.fileId);
+		steps.push({ citation, needsText: true });
+	}
+
+	// 要取原文的几条同时去取：以前一条等一条，五条出处就是五个来回，常常把 4 秒的上限等满
+	const texts = new Map<string, Promise<string>>();
+	for (const { citation, needsText } of steps) {
+		if (needsText && !texts.has(citation.fileId)) {
+			texts.set(
+				citation.fileId,
+				getText(citation.fileId).catch(() => '')
+			);
+		}
+	}
+
+	const kept: Citation[] = [];
+	for (const { citation, needsText } of steps) {
+		if (!needsText) {
+			kept.push(citation);
+			continue;
+		}
+
+		const text = (await texts.get(citation.fileId)) ?? '';
 		const corpus = `${citation.title} ${citation.snippet ?? ''} ${text}`;
 
 		if (!citation.grounded && !isRelevantToQuery(corpus, question)) {

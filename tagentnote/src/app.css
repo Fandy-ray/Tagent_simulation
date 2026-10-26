@@ -1,5 +1,12 @@
 @import 'tailwindcss';
 
+/*
+  dark: 跟着页面自己的主题走（app.html 按设置给 <html> 加 dark / light / system），不跟操作系统。
+  Tailwind v4 默认按 prefers-color-scheme 判断：系统是浅色、页面是默认的暗色时，管理员面板、设置弹窗这些
+  写了 dark: 的地方会变成浅色，和写死暗色的侧栏拼在一起一半黑一半白。
+*/
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
 	--color-gray-50: oklch(0.98 0 0);
 	--color-gray-100: oklch(0.94 0 0);

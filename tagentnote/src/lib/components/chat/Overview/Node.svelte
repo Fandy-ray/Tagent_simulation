@@ -45,9 +45,9 @@
 	{:else}
 		<div class="flex w-full">
 			<div
-				class="flex size-5 shrink-0 -translate-y-px items-center justify-center rounded-full bg-white text-[8px] font-black text-black"
+				class="flex size-5 shrink-0 -translate-y-px items-center justify-center rounded-full bg-white text-[11px] font-black text-black"
 			>
-				OI
+				T
 			</div>
 			<div class="ml-2 min-w-0 flex-1">
 				<div class="flex items-center justify-between gap-1">

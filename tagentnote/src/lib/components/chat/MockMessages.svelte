@@ -39,6 +39,8 @@
 		onQuickAction?: (prompt: string, displayContent?: string) => void;
 		onFollowUp?: (prompt: string, insertOnly?: boolean) => void;
 		onToast?: (message: string) => void;
+		/** 点「有帮助 / 没有帮助」；undefined = 再点一次同一个按钮，撤销 */
+		onRate?: (messageId: string, rating: 'up' | 'down' | undefined) => void;
 		/** 任务卡上当前的论文题目，题目卡据此显示「已设为本次题目」 */
 		currentTopic?: string;
 		onAdoptTopic?: (topic: EssayTopic) => void;
@@ -76,12 +78,12 @@
 		onQuickAction = () => {},
 		onFollowUp = () => {},
 		onToast = () => {},
+		onRate = () => {},
 		currentTopic = '',
 		onAdoptTopic = () => {},
 		onRetryPaperCard = () => {}
 	}: Props = $props();
 
-	let feedback = $state<Record<string, 'up' | 'down' | undefined>>({});
 	let editingId = $state<string | null>(null);
 	let editDraft = $state('');
 	let speakingId = $state<string | null>(null);
@@ -315,9 +317,9 @@
 				>
 					<div class="mt-1 mr-3 hidden shrink-0 sm:flex">
 						<div
-							class="flex size-8 items-center justify-center rounded-full bg-white text-[9px] font-black text-black"
+							class="flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
 						>
-							OI
+							T
 						</div>
 					</div>
 
@@ -510,11 +512,10 @@
 									<button
 										type="button"
 										class={`rounded-lg p-1.5 transition hover:bg-white/[0.06] hover:text-white ${
-											feedback[message.id] === 'up' ? 'bg-white/[0.08] text-white' : ''
+											message.rating === 'up' ? 'bg-white/[0.08] text-white' : ''
 										}`}
-										onclick={() => {
-											feedback[message.id] = feedback[message.id] === 'up' ? undefined : 'up';
-										}}
+										onclick={() => onRate(message.id, message.rating === 'up' ? undefined : 'up')}
+										aria-pressed={message.rating === 'up'}
 										title="有帮助"
 										aria-label="有帮助"
 									>
@@ -536,11 +537,11 @@
 									<button
 										type="button"
 										class={`rounded-lg p-1.5 transition hover:bg-white/[0.06] hover:text-white ${
-											feedback[message.id] === 'down' ? 'bg-white/[0.08] text-white' : ''
+											message.rating === 'down' ? 'bg-white/[0.08] text-white' : ''
 										}`}
-										onclick={() => {
-											feedback[message.id] = feedback[message.id] === 'down' ? undefined : 'down';
-										}}
+										onclick={() =>
+											onRate(message.id, message.rating === 'down' ? undefined : 'down')}
+										aria-pressed={message.rating === 'down'}
 										title="没有帮助"
 										aria-label="没有帮助"
 									>
@@ -698,9 +699,9 @@
 			<article class="flex w-full">
 				<div class="mt-1 mr-3 hidden shrink-0 sm:flex">
 					<div
-						class="flex size-8 items-center justify-center rounded-full bg-white text-[9px] font-black text-black"
+						class="flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
 					>
-						OI
+						T
 					</div>
 				</div>
 

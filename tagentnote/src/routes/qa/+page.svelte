@@ -24,9 +24,11 @@
 		generateEssayTopic,
 		getAgentModels,
 		reviewEssay,
+		sendAnswerFeedback,
 		streamAgentChat
 	} from '$lib/apis/agent';
 	import {
+		getNoteText,
 		getSourceText,
 		listNotebookKnowledge,
 		listNotebooks,
@@ -34,6 +36,7 @@
 		type NotebookSummary
 	} from '$lib/apis/opennotebook';
 	import MockMessageInput from '$lib/components/chat/MockMessageInput.svelte';
+	import type { InputAttachment } from '$lib/components/chat/MessageInput/InputMenu.svelte';
 	import PaperTaskCard from '$lib/components/chat/PaperTaskCard.svelte';
 	import MockMessages, { type MockMessage } from '$lib/components/chat/MockMessages.svelte';
 	import ChatControlsPanel from '$lib/components/chat/ChatControlsPanel.svelte';
@@ -62,6 +65,12 @@
 		type ChatControlParams
 	} from '$lib/data/chatControls';
 	import type { KnowledgeCollection } from '$lib/data/knowledge';
+	import {
+		listKnowledge,
+		listModels,
+		listSkills,
+		type WorkspaceModel
+	} from '$lib/data/workspaceResources';
 	import {
 		loadQaChats,
 		saveQaChats,
@@ -103,7 +112,7 @@
 	} from '$lib/data/userSettings';
 
 	type AssistMode = 'qa' | 'paper';
-	type QueuedPrompt = { requestContent: string; displayContent: string };
+	type QueuedPrompt = { requestContent: string; displayContent: string; retrievalQuery?: string };
 
 	let sidebarOpen = $state(true);
 	let activeChatId = $state<string | null>(null);
@@ -189,6 +198,26 @@
 	const currentModelName = $derived(
 		modelOptions.find((model) => model.id === selectedModelId)?.name ?? selectedModelId
 	);
+
+	// 工作空间里自己搭的模型（基础模型 + 系统提示 + 知识库 + 参数），在模型列表里排在登记的模型后面
+	const WORKSPACE_MODEL_PREFIX = 'workspace:';
+	let workspaceModels = $state<WorkspaceModel[]>([]);
+	const activeWorkspaceModel = $derived(
+		selectedModelId.startsWith(WORKSPACE_MODEL_PREFIX)
+			? (workspaceModels.find((model) => WORKSPACE_MODEL_PREFIX + model.id === selectedModelId) ??
+					null)
+			: null
+	);
+	/** 这个选项实际发给后端的登记模型 */
+	const servedIdOf = (id: string) =>
+		id.startsWith(WORKSPACE_MODEL_PREFIX)
+			? (workspaceModels.find((model) => WORKSPACE_MODEL_PREFIX + model.id === id)?.baseModelId ??
+				id)
+			: id;
+	const servedModelId = $derived(servedIdOf(selectedModelId));
+	/** 回答头上显示谁：选的是自定义模型就显示它（学生选的是它），否则用后端说的实际模型 */
+	const answeredBy = (reported: string | undefined) =>
+		activeWorkspaceModel ? selectedModelId : reported || selectedModelId;
 
 	/**
 	 * 把模型 id 换成登记时填的显示名。
@@ -468,10 +497,22 @@
 
 		void getAgentModels()
 			.then((list) => {
-				modelOptions = list.data.map((model) => ({
-					id: model.id,
-					name: model.name || model.id
-				}));
+				const registered = new Set(list.data.map((model) => model.id));
+				// 只列基础模型还在、没停用的自定义模型：基础模型删了，它也就没法用了
+				workspaceModels = listModels().filter(
+					(model) =>
+						model.isActive !== false &&
+						!model.meta?.hidden &&
+						Boolean(model.baseModelId) &&
+						registered.has(model.baseModelId!)
+				);
+				modelOptions = [
+					...list.data.map((model) => ({ id: model.id, name: model.name || model.id })),
+					...workspaceModels.map((model) => ({
+						id: WORKSPACE_MODEL_PREFIX + model.id,
+						name: `${model.name} · 自定义`
+					}))
+				];
 				const ids = modelOptions.map((model) => model.id);
 				if (ids.length > 0 && !ids.includes(selectedModelId)) {
 					selectedModelId = ids[0];
@@ -780,6 +821,48 @@
 				: chat
 		);
 		persistChats(id);
+	};
+
+	/**
+	 * 学生点「有帮助 / 没有帮助」：记在这条消息上（刷新后还在），同时报给后端给老师看。
+	 * 只改这一条，不动会话的更新时间——点个赞不该把这段对话顶到侧栏最前面。
+	 */
+	const rateMessage = (messageId: string, rating: 'up' | 'down' | undefined) => {
+		const index = messages.findIndex((message) => message.id === messageId);
+		if (index < 0) return;
+		const rated = messages[index];
+		messages = messages.map((message) =>
+			message.id === messageId ? { ...message, rating } : message
+		);
+		if (!activeChatId || isTemporarySession()) return;
+		const chatId = activeChatId;
+		chats = chats.map((chat) =>
+			chat.id === chatId
+				? {
+						...chat,
+						messages: chat.messages.map((message) =>
+							message.id === messageId ? { ...message, rating } : message
+						)
+					}
+				: chat
+		);
+		persistChats(chatId);
+
+		// 这条回答答的是哪一问：往前找最近的一条学生消息（论文模式发出去的是 requestContent）
+		const asked = messages
+			.slice(0, index)
+			.reverse()
+			.find((message) => message.role === 'user');
+		sendAnswerFeedback({
+			message_id: messageId,
+			rating: rating ?? null,
+			model: servedIdOf(rated.model || selectedModelId) || 'unknown',
+			mode: assistMode,
+			question: asked?.requestContent || asked?.content || '',
+			answer: rated.content
+		}).catch((error: unknown) => {
+			toast(`评价没有记到后台：${error instanceof Error ? error.message : '连不上服务'}`);
+		});
 	};
 
 	const syncUrl = () => {
@@ -1257,7 +1340,7 @@
 	const openExam = () => {
 		void goto(
 			resolve(
-				`/exam?model=${encodeURIComponent(selectedModelId)}&from=qa&topic=${encodeURIComponent(collectionId)}`
+				`/exam?model=${encodeURIComponent(servedModelId)}&from=qa&topic=${encodeURIComponent(collectionId)}`
 			)
 		);
 	};
@@ -1287,7 +1370,7 @@
 
 	const chatPlainText = () =>
 		messages
-			.map((message) => `### ${message.role.toUpperCase()}\n${message.content}`)
+			.map((message) => `### ${message.role === 'user' ? '我' : '助手'}\n${message.content}`)
 			.join('\n\n')
 			.trim();
 
@@ -1300,12 +1383,17 @@
 			return;
 		}
 
-		const url = window.location.href;
-		try {
-			await navigator.clipboard.writeText(url);
-			saveToast = '已复制分享链接';
-		} catch {
-			saveToast = '复制链接失败';
+		// 对话只存在这台设备的浏览器里，复制链接给别人是打不开的：复制对话全文
+		const text = chatPlainText();
+		if (!text) {
+			saveToast = '当前没有可分享的对话';
+		} else {
+			try {
+				await navigator.clipboard.writeText(text);
+				saveToast = '对话只存在这台设备上，链接别人打不开，已复制对话全文，可以直接粘贴给别人';
+			} catch {
+				saveToast = '复制失败：浏览器没有允许访问剪贴板';
+			}
 		}
 		window.setTimeout(() => {
 			saveToast = '';
@@ -1521,11 +1609,49 @@
 		return query ? { retrieval_query: query } : {};
 	};
 
+	/**
+	 * 这次请求发给哪个模型、带什么。选的是工作空间里的自定义模型时：发给它基于的登记模型；
+	 * 系统提示依次接上自定义模型的、它带的技能、文件夹的、对话高级参数里的；知识库并上它关联的笔记本；
+	 * 参数以对话里的高级参数为准，那边没设的才用自定义模型的。
+	 */
+	const requestSetup = () => {
+		const custom = activeWorkspaceModel;
+		const baseOptions = toAgentOptions(chatControls);
+		const customOptions = custom ? toAgentOptions(custom.params ?? {}) : {};
+		const skillIds = custom?.meta?.skillIds ?? [];
+		const skills = skillIds.length
+			? listSkills()
+					.filter((skill) => skillIds.includes(skill.id))
+					.map((skill) => skill.content.trim())
+			: [];
+		const knowledgeIds = custom?.meta?.knowledgeIds ?? [];
+		const knowledge = knowledgeIds.length ? listKnowledge() : [];
+		const customNotebooks = knowledgeIds
+			.map((id) => knowledge.find((item) => item.id === id)?.notebookId)
+			.filter((id): id is string => Boolean(id));
+		const system = [
+			custom?.system?.trim(),
+			...skills,
+			selectedFolder?.systemPrompt?.trim(),
+			baseOptions.system
+		]
+			.filter(Boolean)
+			.join('\n\n');
+		return {
+			model: servedModelId,
+			notebookIds: Array.from(new Set([...currentNotebookIds(), ...customNotebooks])),
+			options: { ...customOptions, ...baseOptions, ...(system ? { system } : {}) }
+		};
+	};
+
 	const ask = async (question: string, seq: number) => {
 		const controller = new AbortController();
 		abortController = controller;
 		const assistantId = `assistant-${Date.now()}`;
 		let created = false;
+		// 带了附件、技能时，发出去的是一大段；检索、挑出处、出追问建议和标签都只看学生打的那句
+		const asked = [...messages].reverse().find((message) => message.role === 'user');
+		const topic = asked?.retrievalQuery || question;
 		const citationQuery =
 			assistMode === 'paper'
 				? [
@@ -1536,7 +1662,7 @@
 					]
 						.filter(Boolean)
 						.join(' ')
-				: question;
+				: topic;
 		/**
 		 * 出处的后备来源：直接问 OpenNotebook 要几条命中。
 		 *
@@ -1592,25 +1718,16 @@
 		};
 
 		try {
-			const folderPrompt = selectedFolder?.systemPrompt?.trim() ?? '';
-			const baseOptions = toAgentOptions(chatControls);
-			const mergedSystem = [folderPrompt, baseOptions.system].filter(Boolean).join('\n\n');
-			const notebookIds = currentNotebookIds();
+			const setup = requestSetup();
 
-			const result = await streamAgentChat(
-				question,
-				selectedModelId,
-				writeDelta,
-				controller.signal,
-				{
-					notebookIds,
-					mode: assistMode,
-					history: historyForRequest(messages),
-					...paperRetrievalOptions(),
-					...baseOptions,
-					...(mergedSystem ? { system: mergedSystem } : {})
-				}
-			);
+			const result = await streamAgentChat(question, setup.model, writeDelta, controller.signal, {
+				notebookIds: setup.notebookIds,
+				mode: assistMode,
+				history: historyForRequest(messages),
+				...(asked?.retrievalQuery ? { retrieval_query: asked.retrievalQuery } : {}),
+				...paperRetrievalOptions(),
+				...setup.options
+			});
 
 			if (seq !== generationSeq) {
 				return;
@@ -1641,7 +1758,7 @@
 				controller.signal.addEventListener('abort', stopEnrich, { once: true });
 				const enrichTimer = window.setTimeout(stopEnrich, 4000);
 				try {
-					citations = await enrichCitationsWithPages(citations, question, (fileId) =>
+					citations = await enrichCitationsWithPages(citations, topic, (fileId) =>
 						getSourceText(fileId, enrichController.signal)
 					);
 				} finally {
@@ -1657,10 +1774,10 @@
 					message.id === assistantId
 						? {
 								...message,
-								model: result.model || selectedModelId,
+								model: answeredBy(result.model),
 								citations,
-								followUps: userSettings.autoFollowUps ? buildFollowUps(question) : undefined,
-								tags: userSettings.autoTags ? buildTags(question) : undefined
+								followUps: userSettings.autoFollowUps ? buildFollowUps(topic) : undefined,
+								tags: userSettings.autoTags ? buildTags(topic) : undefined
 							}
 						: message
 				);
@@ -1697,7 +1814,9 @@
 			if (messageQueue.length > 0) {
 				const next = messageQueue[0];
 				messageQueue = messageQueue.slice(1);
-				void tick().then(() => submitPrompt(next.requestContent, next.displayContent));
+				void tick().then(() =>
+					submitPrompt(next.requestContent, next.displayContent, next.retrievalQuery)
+				);
 			}
 		} finally {
 			// 后备检索现在是按需发的，它自己绑了 controller.signal，这里不用再收一次
@@ -1744,7 +1863,26 @@
 		}
 	};
 
-	const submitPrompt = (content: string, displayContent = content) => {
+	/** 输入框里引用的笔记、对话：发送时取正文 */
+	const resolveAttachment = async (attachment: InputAttachment) => {
+		if (!attachment.refId) return undefined;
+		if (attachment.type === 'note') {
+			return (await getNoteText(attachment.refId)) || undefined;
+		}
+		if (attachment.type === 'chat') {
+			const chat = chats.find((item) => item.id === attachment.refId);
+			const lines = (chat?.messages ?? [])
+				.filter((message) => message.content.trim() && !message.paperCard)
+				.map(
+					(message) =>
+						`${message.role === 'user' ? '学生' : '助手'}：${(message.requestContent ?? message.content).trim()}`
+				);
+			return lines.length ? lines.join('\n\n') : undefined;
+		}
+		return undefined;
+	};
+
+	const submitPrompt = (content: string, displayContent = content, retrievalQuery?: string) => {
 		const trimmedContent = content.trim();
 		const trimmedDisplayContent = displayContent.trim() || trimmedContent;
 
@@ -1771,7 +1909,7 @@
 			}
 			messageQueue = [
 				...messageQueue,
-				{ requestContent: trimmedContent, displayContent: trimmedDisplayContent }
+				{ requestContent: trimmedContent, displayContent: trimmedDisplayContent, retrievalQuery }
 			];
 			prompt = '';
 			saveToast = `已加入队列（${messageQueue.length}）`;
@@ -1794,7 +1932,8 @@
 			id: `user-${Date.now()}`,
 			role: 'user',
 			content: trimmedDisplayContent,
-			requestContent: trimmedContent
+			requestContent: trimmedContent,
+			retrievalQuery
 		};
 
 		messages = [...messages, userMessage];
@@ -1852,20 +1991,22 @@
 
 		try {
 			if (card.kind === 'topic') {
+				const setup = requestSetup();
 				const topic = await generateEssayTopic(
-					selectedModelId,
+					setup.model,
 					card.hint,
-					currentNotebookIds(),
+					setup.notebookIds,
 					controller.signal
 				);
 				next = { ...card, topic, error: undefined };
 				content = essayTopicMarkdown(topic);
 			} else {
+				const setup = requestSetup();
 				const review = await reviewEssay(
-					selectedModelId,
+					setup.model,
 					card.text,
 					card.topic || undefined,
-					currentNotebookIds(),
+					setup.notebookIds,
 					controller.signal
 				);
 				next = { ...card, review, error: undefined };
@@ -1909,7 +2050,9 @@
 		if (messageQueue.length > 0) {
 			const queued = messageQueue[0];
 			messageQueue = messageQueue.slice(1);
-			void tick().then(() => submitPrompt(queued.requestContent, queued.displayContent));
+			void tick().then(() =>
+				submitPrompt(queued.requestContent, queued.displayContent, queued.retrievalQuery)
+			);
 		}
 	};
 
@@ -2194,23 +2337,19 @@
 
 		void (async () => {
 			try {
-				const folderPrompt = selectedFolder?.systemPrompt?.trim() ?? '';
-				const baseOptions = toAgentOptions(chatControls);
-				const mergedSystem = [folderPrompt, baseOptions.system].filter(Boolean).join('\n\n');
-				const notebookIds = currentNotebookIds();
+				const setup = requestSetup();
 
 				const result = await streamAgentChat(
 					continuePrompt,
-					selectedModelId,
+					setup.model,
 					writeDelta,
 					controller.signal,
 					{
-						notebookIds,
+						notebookIds: setup.notebookIds,
 						mode: assistMode,
 						history: historyForRequest(messages),
 						...paperRetrievalOptions(),
-						...baseOptions,
-						...(mergedSystem ? { system: mergedSystem } : {})
+						...setup.options
 					}
 				);
 
@@ -2227,7 +2366,7 @@
 								...message,
 								content: finalContent,
 								streaming: false,
-								model: result.model || selectedModelId
+								model: answeredBy(result.model)
 							}
 						: message
 				);
@@ -2469,6 +2608,7 @@
 								{lastUserMessage}
 								modelName={currentModelName}
 								onSubmit={submitPrompt}
+								{resolveAttachment}
 								onReview={assistMode === 'paper' ? submitPaperForReview : null}
 								onFillSample={assistMode === 'paper' && samples.length > 0 ? fillSample : null}
 								onStop={stopResponse}
@@ -2533,6 +2673,7 @@
 							onEditMessage={editMessage}
 							onSaveToNotebook={openSaveToNotebook}
 							onToast={toast}
+							onRate={rateMessage}
 							onQuickAction={(content, displayContent) => {
 								prompt = content;
 								submitPrompt(content, displayContent);
@@ -2582,6 +2723,7 @@
 								{lastUserMessage}
 								modelName={currentModelName}
 								onSubmit={submitPrompt}
+								{resolveAttachment}
 								onReview={assistMode === 'paper' ? submitPaperForReview : null}
 								onFillSample={assistMode === 'paper' && samples.length > 0 ? fillSample : null}
 								onStop={stopResponse}

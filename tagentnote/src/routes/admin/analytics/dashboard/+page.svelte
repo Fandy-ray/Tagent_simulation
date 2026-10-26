@@ -1,173 +1,104 @@
 <script lang="ts">
-	type Period = '24h' | '7d' | '30d' | '90d' | 'all';
-	type ModelStat = { id: string; name: string; count: number; tokens: number };
-	type UserStat = {
-		id: string;
-		name: string;
-		email: string;
-		count: number;
-		tokens: number;
-		group: string;
-	};
-	type ChartPoint = { label: string; values: number[] };
+	import { onMount } from 'svelte';
+
+	import {
+		AdminError,
+		getLearningAnalytics,
+		getModelStats,
+		MODE_LABELS,
+		percent,
+		type ActiveStudent,
+		type DailyActivity,
+		type LearningAnalytics,
+		type ModelStat
+	} from '$lib/apis/admin';
+
+	type Period = '7d' | '14d' | '30d' | '90d' | '365d';
+	type Series = { key: keyof Omit<DailyActivity, 'day' | 'active_students'>; name: string };
 
 	const periods: { id: Period; label: string; days: number }[] = [
-		{ id: '24h', label: '最近 24 小时', days: 1 },
 		{ id: '7d', label: '最近 7 天', days: 7 },
+		{ id: '14d', label: '最近 14 天', days: 14 },
 		{ id: '30d', label: '最近 30 天', days: 30 },
 		{ id: '90d', label: '最近 90 天', days: 90 },
-		{ id: 'all', label: '全部时间', days: 180 }
+		{ id: '365d', label: '最近一年', days: 365 }
 	];
 	const chartColors = ['#3b82f6', '#10b981', '#f59e0b', '#a78bfa'];
-	const modelCatalog = [
-		{ id: 'tagent-chat', name: 'TAgent Chat', share: 0.36 },
-		{ id: 'qwen-2.5', name: 'Qwen 2.5', share: 0.29 },
-		{ id: 'deepseek-v3', name: 'DeepSeek V3', share: 0.21 },
-		{ id: 'gpt-4o', name: 'GPT-4o', share: 0.14 }
+	const series: Series[] = [
+		{ key: 'chat_turns', name: '答疑' },
+		{ key: 'essay_reviews', name: '论文批改' },
+		{ key: 'exams_generated', name: '出卷' },
+		{ key: 'exams_reviewed', name: '交卷' }
 	];
-	const userCatalog: UserStat[] = [
-		{
-			id: 'u-1001',
-			name: '林知夏',
-			email: 'lin.zx@example.com',
-			count: 486,
-			tokens: 1284300,
-			group: '研究生'
-		},
-		{
-			id: 'u-1002',
-			name: '陈嘉木',
-			email: 'chen.jm@example.com',
-			count: 362,
-			tokens: 948200,
-			group: '研究生'
-		},
-		{
-			id: 'u-1003',
-			name: '周予安',
-			email: 'zhou.ya@example.com',
-			count: 294,
-			tokens: 731800,
-			group: '教师'
-		},
-		{
-			id: 'u-1004',
-			name: '许清禾',
-			email: 'xu.qh@example.com',
-			count: 218,
-			tokens: 602100,
-			group: '本科生'
-		},
-		{
-			id: 'u-1005',
-			name: '沈星野',
-			email: 'shen.xy@example.com',
-			count: 164,
-			tokens: 418600,
-			group: '本科生'
-		},
-		{
-			id: 'u-1006',
-			name: '顾言之',
-			email: 'gu.yz@example.com',
-			count: 121,
-			tokens: 286400,
-			group: '教师'
-		}
-	];
-	const groupOptions = ['全部用户', '教师', '研究生', '本科生'];
 
 	let period = $state<Period>('7d');
-	let group = $state('全部用户');
-	let modelSort = $state<'name' | 'count' | 'tokens' | 'percentage'>('count');
+	let analytics = $state<LearningAnalytics | null>(null);
+	let models = $state<ModelStat[]>([]);
+	let loadError = $state('');
+	let loading = $state(false);
+	let modelSort = $state<'name' | 'count' | 'duration' | 'percentage'>('count');
 	let modelDirection = $state<'asc' | 'desc'>('desc');
-	let userSort = $state<'name' | 'count' | 'tokens'>('count');
+	let userSort = $state<'name' | 'count' | 'essays' | 'exams'>('count');
 	let userDirection = $state<'asc' | 'desc'>('desc');
 	let selectedModel = $state<ModelStat | null>(null);
 	let hoverIndex = $state<number | null>(null);
 
-	if (typeof localStorage !== 'undefined') {
+	try {
 		const saved = localStorage.getItem('admin-analytics-period');
 		if (saved && periods.some((item) => item.id === saved)) period = saved as Period;
+	} catch {
+		/* 读不到就用默认 */
 	}
 
 	const dayCount = $derived(periods.find((item) => item.id === period)?.days ?? 7);
-	const scale = $derived(Math.min(dayCount / 7, 5.4));
-	const visibleUsers = $derived(
-		userCatalog.filter((user) => group === '全部用户' || user.group === group)
+	const totals = $derived(
+		analytics?.totals ?? { chat_turns: 0, essay_reviews: 0, exams_generated: 0, exams_reviewed: 0 }
 	);
-	const totalMessages = $derived(
-		Math.round(visibleUsers.reduce((sum, user) => sum + user.count, 0) * scale)
-	);
-	const totalTokens = $derived(
-		Math.round(visibleUsers.reduce((sum, user) => sum + user.tokens, 0) * scale)
-	);
-	const totalChats = $derived(Math.round(totalMessages * 0.31));
-	const totalUsers = $derived(visibleUsers.length);
-	const modelStats = $derived<ModelStat[]>(
-		modelCatalog.map((model, index) => ({
-			id: model.id,
-			name: model.name,
-			count: Math.round(totalMessages * model.share),
-			tokens: Math.round(totalTokens * model.share * (0.88 + index * 0.08))
-		}))
-	);
+	const modelTurns = $derived(models.reduce((sum, model) => sum + model.chat_turns, 0));
+	const nameOf = (user: ActiveStudent) => user.name.trim() || '未填昵称';
 	const sortedModels = $derived(
-		[...modelStats].sort((a, b) => {
+		[...models].sort((a, b) => {
 			const result =
 				modelSort === 'name'
-					? a.name.localeCompare(b.name)
-					: modelSort === 'tokens'
-						? a.tokens - b.tokens
-						: a.count - b.count;
+					? a.model.localeCompare(b.model)
+					: modelSort === 'duration'
+						? (a.avg_duration_ms ?? -1) - (b.avg_duration_ms ?? -1)
+						: a.chat_turns - b.chat_turns;
 			return modelDirection === 'asc' ? result : -result;
 		})
 	);
 	const sortedUsers = $derived(
-		[...visibleUsers].sort((a, b) => {
+		[...(analytics?.students ?? [])].sort((a, b) => {
 			const result =
 				userSort === 'name'
-					? a.name.localeCompare(b.name)
-					: userSort === 'tokens'
-						? a.tokens - b.tokens
-						: a.count - b.count;
+					? nameOf(a).localeCompare(nameOf(b))
+					: userSort === 'essays'
+						? a.essay_reviews - b.essay_reviews
+						: userSort === 'exams'
+							? a.exams_reviewed - b.exams_reviewed
+							: a.chat_turns - b.chat_turns;
 			return userDirection === 'asc' ? result : -result;
 		})
 	);
-	const chartData = $derived.by<ChartPoint[]>(() => {
-		const points = period === '24h' ? 24 : Math.min(dayCount, 30);
-		return Array.from({ length: points }, (_, index) => {
-			const angle = index * 1.47;
-			const trend =
-				0.34 + 0.38 * Math.abs(Math.sin(angle)) + 0.16 * Math.abs(Math.sin(angle * 0.37 + 1.1));
-			return {
-				label:
-					period === '24h'
-						? `${String(index).padStart(2, '0')}:00`
-						: new Date(Date.now() - (points - index - 1) * 86400000).toLocaleDateString('zh-CN', {
-								month: 'numeric',
-								day: 'numeric'
-							}),
-				values: modelStats.map((model, modelIndex) =>
-					Math.round((model.count / points) * trend * (0.78 + modelIndex * 0.11))
-				)
-			};
-		});
-	});
+	const chartData = $derived(
+		(analytics?.daily ?? []).map((point) => ({
+			label: new Date(`${point.day}T00:00:00`).toLocaleDateString('zh-CN', {
+				month: 'numeric',
+				day: 'numeric'
+			}),
+			values: series.map((item) => point[item.key])
+		}))
+	);
 	const maxChartValue = $derived(Math.max(1, ...chartData.flatMap((point) => point.values)));
-	const linePoints = (modelIndex: number) =>
+	const linePoints = (seriesIndex: number) =>
 		chartData
 			.map((point, index) => {
 				const x = chartData.length <= 1 ? 50 : (index / (chartData.length - 1)) * 100;
-				const y = 100 - (point.values[modelIndex] / maxChartValue) * 96;
+				const y = 100 - (point.values[seriesIndex] / maxChartValue) * 96;
 				return `${x},${y}`;
 			})
 			.join(' ');
-	const formatNumber = (value: number) =>
-		Intl.NumberFormat('zh-CN', {
-			notation: value >= 1000000 ? 'compact' : 'standard',
-			maximumFractionDigits: 1
-		}).format(value);
+	const seconds = (ms: number | null) => (ms === null ? '—' : `${(ms / 1000).toFixed(1)} 秒`);
 
 	const axisLabels = $derived.by(() => {
 		const total = chartData.length;
@@ -182,9 +113,33 @@
 		});
 	});
 
+	// 快速来回切时间范围时，先发的请求可能后回来（一年的比七天的慢）：只认最后发出的那一次
+	let latestRequest = 0;
+
+	async function refresh() {
+		const request = ++latestRequest;
+		loading = true;
+		try {
+			const result = await Promise.all([getLearningAnalytics(dayCount), getModelStats(dayCount)]);
+			if (request !== latestRequest) return;
+			[analytics, models] = result;
+			loadError = '';
+		} catch (error) {
+			if (request !== latestRequest) return;
+			loadError = error instanceof AdminError ? error.message : '读取失败，再试一次。';
+		} finally {
+			if (request === latestRequest) loading = false;
+		}
+	}
+
 	function updatePeriod(value: Period) {
 		period = value;
-		if (typeof localStorage !== 'undefined') localStorage.setItem('admin-analytics-period', value);
+		try {
+			localStorage.setItem('admin-analytics-period', value);
+		} catch {
+			/* 记不住也不要紧 */
+		}
+		void refresh();
 	}
 
 	function sortModels(key: typeof modelSort) {
@@ -202,6 +157,8 @@
 			userDirection = key === 'name' ? 'asc' : 'desc';
 		}
 	}
+
+	onMount(refresh);
 </script>
 
 <svelte:head><title>分析 | 管理员面板</title></svelte:head>
@@ -212,13 +169,7 @@
 	>
 		<h1 class="px-0.5 text-sm font-medium">分析</h1>
 		<div class="flex items-center gap-2">
-			<select
-				class="w-fit max-w-32 rounded-sm bg-transparent px-1.5 py-1 text-right text-xs text-gray-600 outline-none dark:text-gray-300"
-				bind:value={group}
-				aria-label="筛选用户组"
-			>
-				{#each groupOptions as option (option)}<option value={option}>{option}</option>{/each}
-			</select>
+			{#if loading}<span class="text-[10px] text-gray-400">读取中…</span>{/if}
 			<select
 				class="w-fit rounded-sm bg-transparent px-1.5 py-1 text-right text-xs text-gray-600 outline-none dark:text-gray-300"
 				value={period}
@@ -231,28 +182,47 @@
 		</div>
 	</header>
 
+	{#if loadError}<div
+			class="mb-2 border-l-2 border-red-500 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-200"
+			role="alert"
+		>
+			{loadError}
+		</div>{/if}
+
 	<div
 		class="flex flex-wrap items-center gap-x-4 gap-y-0.5 px-0.5 pb-1 text-xs text-gray-500 dark:text-gray-400"
 	>
 		<span
 			><span class="font-medium text-gray-900 dark:text-gray-300"
-				>{totalMessages.toLocaleString()}</span
-			> 条消息</span
-		>
-		<span title="Token 数量为估算值"
-			><span class="font-medium text-gray-900 dark:text-gray-300">{formatNumber(totalTokens)}</span> tokens</span
+				>{totals.chat_turns.toLocaleString()}</span
+			> 次答疑</span
 		>
 		<span
 			><span class="font-medium text-gray-900 dark:text-gray-300"
-				>{totalChats.toLocaleString()}</span
-			> 对话</span
+				>{totals.essay_reviews.toLocaleString()}</span
+			> 篇论文批改</span
 		>
-		<span><span class="font-medium text-gray-900 dark:text-gray-300">{totalUsers}</span> 用户</span>
+		<span
+			><span class="font-medium text-gray-900 dark:text-gray-300"
+				>{totals.exams_generated.toLocaleString()}</span
+			>
+			份试卷 · {totals.exams_reviewed.toLocaleString()} 份交卷</span
+		>
+		<span
+			><span class="font-medium text-gray-900 dark:text-gray-300"
+				>{analytics?.active_students ?? 0}</span
+			> 位学生</span
+		>
+		{#if analytics && Object.keys(analytics.chat_modes).length}
+			<span class="text-gray-400"
+				>（{Object.entries(analytics.chat_modes)
+					.map(([mode, count]) => `${MODE_LABELS[mode] ?? mode} ${count}`)
+					.join(' · ')}）</span
+			>
+		{/if}
 	</div>
 
-	<div class="px-0.5 pb-1 text-xs font-medium text-gray-600 dark:text-gray-400">
-		{period === '24h' ? '每小时消息数' : '每日消息数'}
-	</div>
+	<div class="px-0.5 pb-1 text-xs font-medium text-gray-600 dark:text-gray-400">每日活动</div>
 
 	<div class="relative h-44 w-full overflow-hidden px-0.5">
 		<div class="absolute inset-x-0 top-0 bottom-6 flex flex-col justify-between" aria-hidden="true">
@@ -269,7 +239,7 @@
 				preserveAspectRatio="none"
 				class="block h-full w-full"
 				role="img"
-				aria-label="按模型统计的消息趋势"
+				aria-label="每日答疑、批改、出卷、交卷数"
 				onmousemove={(event) => {
 					const rect = event.currentTarget.getBoundingClientRect();
 					const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
@@ -277,7 +247,7 @@
 				}}
 				onmouseleave={() => (hoverIndex = null)}
 			>
-				{#each modelStats as model, index (model.id)}
+				{#each series as item, index (item.key)}
 					<polyline
 						points={linePoints(index)}
 						fill="none"
@@ -318,9 +288,9 @@
 				class="pointer-events-none absolute top-0 right-1 min-w-[132px] rounded border border-gray-100 bg-white/95 px-2 py-1.5 text-[10px] shadow-sm dark:border-gray-800 dark:bg-gray-900/95"
 			>
 				<p class="mb-1 text-gray-400">{chartData[hoverIndex]?.label}</p>
-				{#each modelStats as model, index (model.id)}
+				{#each series as item, index (item.key)}
 					<div class="flex items-center justify-between gap-3 py-0.5">
-						<span style={`color:${chartColors[index]}`}>{model.name}</span>
+						<span style={`color:${chartColors[index]}`}>{item.name}</span>
 						<span class="text-gray-900 tabular-nums dark:text-white"
 							>{chartData[hoverIndex]?.values[index]}</span
 						>
@@ -328,6 +298,15 @@
 				{/each}
 			</div>
 		{/if}
+	</div>
+
+	<div class="flex flex-wrap gap-3 px-0.5 pt-1 text-[10px] text-gray-500">
+		{#each series as item, index (item.key)}
+			<span class="inline-flex items-center gap-1"
+				><span class="inline-block size-2 rounded-full" style={`background:${chartColors[index]}`}
+				></span>{item.name}</span
+			>
+		{/each}
 	</div>
 
 	<div class="mt-2 grid gap-4 md:grid-cols-2">
@@ -347,14 +326,16 @@
 							>
 							<th class="px-2.5 py-2 text-right"
 								><button class="inline-flex items-center gap-1" onclick={() => sortModels('count')}
-									>消息{#if modelSort === 'count'}<span class="font-normal"
+									>答疑{#if modelSort === 'count'}<span class="font-normal"
 											>{modelDirection === 'asc' ? '↑' : '↓'}</span
 										>{/if}</button
 								></th
 							>
 							<th class="px-2.5 py-2 text-right"
-								><button class="inline-flex items-center gap-1" onclick={() => sortModels('tokens')}
-									>Tokens{#if modelSort === 'tokens'}<span class="font-normal"
+								><button
+									class="inline-flex items-center gap-1"
+									onclick={() => sortModels('duration')}
+									>平均耗时{#if modelSort === 'duration'}<span class="font-normal"
 											>{modelDirection === 'asc' ? '↑' : '↓'}</span
 										>{/if}</button
 								></th
@@ -371,7 +352,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each sortedModels as model, index (model.id)}
+						{#each sortedModels as model, index (model.model)}
 							<tr
 								class="dark:border-gray-850/30 dark:hover:bg-gray-850 cursor-pointer border-b border-gray-50 text-gray-700 transition hover:bg-gray-50 dark:text-gray-300"
 								onclick={() => (selectedModel = model)}
@@ -385,13 +366,13 @@
 								<td class="px-2.5 py-1.5 font-medium text-gray-900 dark:text-white">
 									<span
 										class="mr-2 inline-block size-2 rounded-full align-middle"
-										style={`background:${chartColors[index]}`}
-									></span>{model.name}
+										style={`background:${chartColors[index % chartColors.length]}`}
+									></span>{model.model}
 								</td>
-								<td class="px-2.5 py-1.5 text-right">{model.count.toLocaleString()}</td>
-								<td class="px-2.5 py-1.5 text-right">{formatNumber(model.tokens)}</td>
+								<td class="px-2.5 py-1.5 text-right">{model.chat_turns.toLocaleString()}</td>
+								<td class="px-2.5 py-1.5 text-right">{seconds(model.avg_duration_ms)}</td>
 								<td class="px-2.5 py-1.5 text-right text-gray-400"
-									>{totalMessages ? ((model.count / totalMessages) * 100).toFixed(1) : '0.0'}%</td
+									>{modelTurns ? ((model.chat_turns / modelTurns) * 100).toFixed(1) : '0.0'}%</td
 								>
 							</tr>
 						{:else}
@@ -418,14 +399,21 @@
 							>
 							<th class="px-2.5 py-2 text-right"
 								><button class="inline-flex items-center gap-1" onclick={() => sortUsers('count')}
-									>消息{#if userSort === 'count'}<span class="font-normal"
+									>答疑{#if userSort === 'count'}<span class="font-normal"
 											>{userDirection === 'asc' ? '↑' : '↓'}</span
 										>{/if}</button
 								></th
 							>
 							<th class="px-2.5 py-2 text-right"
-								><button class="inline-flex items-center gap-1" onclick={() => sortUsers('tokens')}
-									>Tokens{#if userSort === 'tokens'}<span class="font-normal"
+								><button class="inline-flex items-center gap-1" onclick={() => sortUsers('essays')}
+									>批改{#if userSort === 'essays'}<span class="font-normal"
+											>{userDirection === 'asc' ? '↑' : '↓'}</span
+										>{/if}</button
+								></th
+							>
+							<th class="px-2.5 py-2 text-right"
+								><button class="inline-flex items-center gap-1" onclick={() => sortUsers('exams')}
+									>交卷{#if userSort === 'exams'}<span class="font-normal"
 											>{userDirection === 'asc' ? '↑' : '↓'}</span
 										>{/if}</button
 								></th
@@ -441,20 +429,19 @@
 								<td class="px-2.5 py-1.5">
 									<span
 										class="mr-2 inline-flex size-5 items-center justify-center rounded-full bg-blue-100 align-middle text-[9px] font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-										>{user.name.slice(0, 1)}</span
+										>{nameOf(user).slice(0, 1)}</span
 									>
-									<span class="font-medium text-gray-900 dark:text-white">{user.name}</span>
-									<span class="ml-1.5 text-[10px] text-gray-400">{user.email}</span>
+									<span class="font-medium text-gray-900 dark:text-white">{nameOf(user)}</span>
+									<span class="ml-1.5 font-mono text-[10px] text-gray-400" title={user.id}
+										>{user.id.slice(0, 8)}</span
+									>
 								</td>
-								<td class="px-2.5 py-1.5 text-right"
-									>{Math.round(user.count * scale).toLocaleString()}</td
-								>
-								<td class="px-2.5 py-1.5 text-right"
-									>{formatNumber(Math.round(user.tokens * scale))}</td
-								>
+								<td class="px-2.5 py-1.5 text-right">{user.chat_turns.toLocaleString()}</td>
+								<td class="px-2.5 py-1.5 text-right">{user.essay_reviews.toLocaleString()}</td>
+								<td class="px-2.5 py-1.5 text-right">{user.exams_reviewed.toLocaleString()}</td>
 							</tr>
 						{:else}
-							<tr><td colspan="4" class="px-2.5 py-3 text-center text-gray-400">暂无数据</td></tr>
+							<tr><td colspan="5" class="px-2.5 py-3 text-center text-gray-400">暂无数据</td></tr>
 						{/each}
 					</tbody>
 				</table>
@@ -463,7 +450,7 @@
 	</div>
 
 	<p class="mt-1.5 pr-1 text-right text-[10px] text-gray-400">
-		ⓘ 消息条数仅统计模型的回复（不含用户发送的消息）。
+		ⓘ 「答疑」只算课程答疑和论文助手，模型用量里还含 Playground 的直接对话；按本机时区的自然日统计。
 	</p>
 </section>
 
@@ -484,7 +471,7 @@
 		>
 			<div class="flex items-start justify-between">
 				<div>
-					<h2 id="model-detail-title" class="text-lg font-semibold">{selectedModel.name}</h2>
+					<h2 id="model-detail-title" class="text-lg font-semibold">{selectedModel.model}</h2>
 					<p class="mt-1 text-xs text-gray-500">
 						模型使用明细 · {periods.find((item) => item.id === period)?.label}
 					</p>
@@ -497,12 +484,41 @@
 			</div>
 			<div class="mt-5 grid grid-cols-2 gap-3">
 				<div class="rounded-xl border border-gray-200 p-3 dark:border-gray-800">
-					<p class="text-xs text-gray-500">消息数</p>
-					<p class="mt-1 text-xl font-semibold">{selectedModel.count.toLocaleString()}</p>
+					<p class="text-xs text-gray-500">答疑次数</p>
+					<p class="mt-1 text-xl font-semibold">{selectedModel.chat_turns.toLocaleString()}</p>
 				</div>
 				<div class="rounded-xl border border-gray-200 p-3 dark:border-gray-800">
-					<p class="text-xs text-gray-500">Token 用量</p>
-					<p class="mt-1 text-xl font-semibold">{formatNumber(selectedModel.tokens)}</p>
+					<p class="text-xs text-gray-500">平均耗时</p>
+					<p class="mt-1 text-xl font-semibold">{seconds(selectedModel.avg_duration_ms)}</p>
+				</div>
+				<div class="rounded-xl border border-gray-200 p-3 dark:border-gray-800">
+					<p class="text-xs text-gray-500">答完率</p>
+					<p class="mt-1 text-xl font-semibold">{percent(selectedModel.completion_rate)}</p>
+					<p class="mt-0.5 text-[10px] text-gray-400">
+						中途停止或出错 {selectedModel.interrupted} 次
+					</p>
+				</div>
+				<div class="rounded-xl border border-gray-200 p-3 dark:border-gray-800">
+					<p class="text-xs text-gray-500">好评率</p>
+					<p class="mt-1 text-xl font-semibold">{percent(selectedModel.thumbs_up_rate)}</p>
+					<p class="mt-0.5 text-[10px] text-gray-400">
+						👍 {selectedModel.thumbs_up} · 👎 {selectedModel.thumbs_down}
+					</p>
+				</div>
+				<div class="rounded-xl border border-gray-200 p-3 dark:border-gray-800">
+					<p class="text-xs text-gray-500">论文批改</p>
+					<p class="mt-1 text-xl font-semibold">{selectedModel.essay_reviews}</p>
+					<p class="mt-0.5 text-[10px] text-gray-400">平均 {selectedModel.essay_avg ?? '—'} 分</p>
+				</div>
+				<div class="rounded-xl border border-gray-200 p-3 dark:border-gray-800">
+					<p class="text-xs text-gray-500">整卷</p>
+					<p class="mt-1 text-xl font-semibold">{selectedModel.exams_reviewed}</p>
+					<p class="mt-0.5 text-[10px] text-gray-400">
+						平均得分率 {selectedModel.exam_avg_percent ?? '—'}{selectedModel.exam_avg_percent ===
+						null
+							? ''
+							: '%'}
+					</p>
 				</div>
 			</div>
 			<div class="mt-5 flex justify-end">

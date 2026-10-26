@@ -5,6 +5,7 @@
 		formatPoints,
 		fullMarks,
 		humanizeRefs,
+		integerPoints,
 		rubricLines,
 		type DimensionName,
 		type DimensionResult
@@ -43,9 +44,8 @@
 
 	const totalFull = $derived(columns.reduce((sum, column) => sum + fullMarks(column.weight), 0));
 
-	const weighted = $derived(
-		dimensions ? dimensions.reduce((sum, item) => sum + dimensionPoints(item), 0) : null
-	);
+	// 格子里显示整数，三格加起来等于总分；精确值在点开的细则里
+	const points = $derived(dimensions ? integerPoints(dimensions, score) : null);
 
 	const current = $derived(dimensions?.find((item) => item.name === selected) ?? null);
 
@@ -102,8 +102,12 @@
 					{#each columns as column, index (column.name)}
 						<td>
 							{#if column.result}
-								<span class="hand" style={`--order: ${index}`}>
-									{formatPoints(dimensionPoints(column.result))}
+								<span
+									class="hand"
+									style={`--order: ${index}`}
+									title={`按要点折算 ${formatPoints(dimensionPoints(column.result))} 分`}
+								>
+									{points?.get(column.name) ?? formatPoints(dimensionPoints(column.result))}
 								</span>
 							{:else if pending}
 								<span class="pending" aria-label="批改中">…</span>
@@ -123,19 +127,14 @@
 		</table>
 	</div>
 
-	{#if weighted !== null && score !== null && formatPoints(weighted) !== String(score)}
-		<!-- 每维 4 条要点、权重 35/25，加权合计常带 .25/.5/.75，这里把取整说出来，
-		     免得学生把上面三格加起来发现和总分对不上 -->
-		<p class="note">三项相加 {formatPoints(weighted)} 分，总分取整为 {score} 分。</p>
-	{/if}
-
 	{#if current}
 		<div id="rubric-detail" class="rubric">
 			<p class="rubric-head">
 				{current.label}：{current.hits.length + current.misses.length} 条要点命中
 				{current.hits.length} 条，{current.hits.length}/{current.hits.length +
 					current.misses.length} × {fullMarks(current.weight)} =
-				{formatPoints(dimensionPoints(current))} 分
+				{formatPoints(dimensionPoints(current))} 分{#if points?.has(current.name) && String(points.get(current.name)) !== formatPoints(dimensionPoints(current))}，记
+					{points.get(current.name)} 分（三项取整后加起来等于总分）{/if}
 			</p>
 
 			<!-- 编号是评语里「第几条」的出处，不是装饰：只有和后端顺序对得上时才有 -->

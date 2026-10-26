@@ -8,6 +8,7 @@
 	import AdminEvaluationSettings from '$lib/components/admin/EvaluationSettings.svelte';
 	import AdminIntegrations from '$lib/components/admin/Integrations.svelte';
 	import AdminDocumentsSettings from '$lib/components/admin/DocumentsSettings.svelte';
+	import AdminDatabase from '$lib/components/admin/Database.svelte';
 
 	type SettingItem = {
 		key: string;
@@ -1009,24 +1010,28 @@
 
 	<main class="mt-2 min-w-0 flex-1 overflow-y-auto px-3 lg:mt-0 lg:px-4">
 		{#if currentTab}
-			<form
-				class="flex min-h-full flex-col"
-				onsubmit={(event) => {
-					event.preventDefault();
-					saveSettings();
-				}}
-			>
-				{#if selectedTab === 'models'}
-					<AdminModels />
-				{:else if selectedTab === 'agent-models'}
-					<AdminAgentModels />
-				{:else if selectedTab === 'evaluations'}
-					<AdminEvaluationSettings />
-				{:else if selectedTab === 'integrations'}
-					<AdminIntegrations />
-				{:else if selectedTab === 'documents'}
-					<AdminDocumentsSettings />
-				{:else}
+			<!-- 有自己组件的分类不套外层表单：它们里面有自己的表单，提交事件会冒泡上来，
+			     连带触发外层的「保存设置」（那只是存本地的界面示例） -->
+			{#if selectedTab === 'models'}
+				<AdminModels />
+			{:else if selectedTab === 'agent-models'}
+				<AdminAgentModels />
+			{:else if selectedTab === 'evaluations'}
+				<AdminEvaluationSettings />
+			{:else if selectedTab === 'integrations'}
+				<AdminIntegrations />
+			{:else if selectedTab === 'documents'}
+				<AdminDocumentsSettings />
+			{:else if selectedTab === 'db'}
+				<AdminDatabase />
+			{:else}
+				<form
+					class="flex min-h-full flex-col"
+					onsubmit={(event) => {
+						event.preventDefault();
+						saveSettings();
+					}}
+				>
 					<header
 						class="sticky top-0 z-10 flex items-center justify-between bg-white/95 py-2 backdrop-blur dark:bg-gray-900/95"
 					>
@@ -1304,6 +1309,12 @@
 								</section>
 							{/each}
 						{:else if selectedTab === 'connections'}
+							<p
+								class="mb-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-gray-800/60 dark:text-gray-300"
+							>
+								这一页是界面示例，设置只存在这个浏览器里。学生实际能用的模型在
+								<a class="underline" href={resolve('/admin/settings/agent-models')}>智能体模型</a> 里登记。
+							</p>
 							<section class="mb-4">
 								<h2 class="mt-1 mb-2.5 text-base font-medium">通用</h2>
 								<hr class="dark:border-gray-850/30 my-2 border-gray-100/30" />
@@ -1593,23 +1604,23 @@
 							{/each}
 						{/if}
 					</div>
-				{/if}
-				<footer
-					class="sticky bottom-0 flex items-center justify-between border-t border-gray-100 bg-white/95 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95"
-				>
-					<button
-						type="button"
-						class="dark:hover:bg-gray-850 rounded-lg px-3 py-2 text-xs text-gray-500 hover:bg-gray-100"
-						onclick={resetSettings}>恢复默认值</button
+					<footer
+						class="sticky bottom-0 flex items-center justify-between border-t border-gray-100 bg-white/95 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95"
 					>
-					<button
-						type="submit"
-						disabled={!dirty}
-						class="rounded-lg bg-gray-900 px-4 py-2 text-xs font-medium text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
-						>保存设置</button
-					>
-				</footer>
-			</form>
+						<button
+							type="button"
+							class="dark:hover:bg-gray-850 rounded-lg px-3 py-2 text-xs text-gray-500 hover:bg-gray-100"
+							onclick={resetSettings}>恢复默认值</button
+						>
+						<button
+							type="submit"
+							disabled={!dirty}
+							class="rounded-lg bg-gray-900 px-4 py-2 text-xs font-medium text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
+							>保存设置</button
+						>
+					</footer>
+				</form>
+			{/if}
 		{/if}
 	</main>
 </div>

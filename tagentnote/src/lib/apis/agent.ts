@@ -147,6 +147,25 @@ async function agentFetch<T>(path: string, init?: RequestInit): Promise<T> {
 	return payload as T;
 }
 
+export type AnswerFeedback = {
+	/** 前端的消息编号（同一条回答改评价是覆盖） */
+	message_id: string;
+	/** null = 撤销（再点一次同一个按钮） */
+	rating: 'up' | 'down' | null;
+	model: string;
+	mode: 'qa' | 'paper' | 'chat';
+	question: string;
+	answer: string;
+};
+
+/** 学生点「有帮助 / 没有帮助」：记进学习记录库，老师在管理员面板「评估」里看。临时对话后端不记 */
+export const sendAnswerFeedback = (feedback: AnswerFeedback) =>
+	agentFetch<{ recorded: boolean }>('/learner/feedback', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(feedback)
+	});
+
 export async function getAgentModels(): Promise<AgentModelList> {
 	return agentFetch<AgentModelList>('/v1/models');
 }
@@ -193,7 +212,8 @@ const mergeCitationPayload = (
 	}
 };
 
-export type AgentChatMode = 'qa' | 'paper';
+/** qa 课程答疑、paper 论文助手，都先检索知识库；chat 是 Playground，不检索、直接和模型聊 */
+export type AgentChatMode = 'qa' | 'paper' | 'chat';
 
 export type AgentChatOptions = {
 	notebookIds?: string[];
@@ -240,7 +260,7 @@ export async function streamAgentChat(
 		stream: options.stream_response === false ? false : true,
 		messages,
 		notebook_ids: options.notebookIds?.filter(Boolean),
-		// basic-agent：qa=课程答疑 prompt；paper=论文写作 prompt（需后端识别）
+		// basic-agent：qa=课程答疑 prompt；paper=论文写作 prompt；chat=不检索，消息原样发给模型
 		mode: options.mode ?? 'qa'
 	};
 

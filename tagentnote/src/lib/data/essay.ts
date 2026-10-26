@@ -263,6 +263,43 @@ export const circled = (n: number) => CIRCLED[n - 1] ?? `(${n})`;
 export const dimensionPoints = (dimension: Pick<DimensionResult, 'score_ratio' | 'weight'>) =>
 	dimension.score_ratio * dimension.weight * 100;
 
+/**
+ * 各维的整数得分，加起来正好等于后端给的总分（最大余数法）。
+ *
+ * 每维 4 条要点、权重 35/40/25，折算出来常带 .25/.5/.75；直接显示小数，学生会问「17.5 分是怎么来的」，
+ * 各自四舍五入又可能加不回总分。先各取整数部分，差的那几分给小数部分最大的几维（一样大时给满分高的）。
+ * total 为 null（还没出总分）时按四舍五入后的合计算。
+ */
+export function integerPoints(
+	dimensions: readonly Pick<DimensionResult, 'name' | 'score_ratio' | 'weight'>[],
+	total: number | null = null
+): Map<DimensionName, number> {
+	const exact = dimensions.map((item) => ({
+		name: item.name,
+		value: dimensionPoints(item),
+		full: fullMarks(item.weight)
+	}));
+	// 浮点误差（0.35 × 0.75 × 100 = 26.249999…）先抹掉，免得整数部分少算一分
+	const tidy = exact.map((item) => ({ ...item, value: Math.round(item.value * 1e6) / 1e6 }));
+	const floors = tidy.map((item) => Math.floor(item.value));
+	const target = total ?? Math.round(tidy.reduce((sum, item) => sum + item.value, 0));
+	let left = Math.max(
+		0,
+		Math.min(tidy.length, target - floors.reduce((sum, value) => sum + value, 0))
+	);
+	const order = tidy
+		.map((item, index) => ({ index, remainder: item.value - floors[index], full: item.full }))
+		.sort((a, b) => b.remainder - a.remainder || b.full - a.full);
+	const points = [...floors];
+	for (const item of order) {
+		if (left === 0) break;
+		if (item.remainder === 0 || points[item.index] >= tidy[item.index].full) continue;
+		points[item.index] += 1;
+		left -= 1;
+	}
+	return new Map(tidy.map((item, index) => [item.name, points[index]]));
+}
+
 /** 权重 → 满分（0.35 → 35） */
 export const fullMarks = (weight: number) => Math.round(weight * 100);
 

@@ -277,9 +277,9 @@
 			aria-label="返回选择智能体"
 		>
 			<div
-				class="flex size-6 items-center justify-center rounded-full border border-black/20 bg-white text-[8px] font-black text-black dark:border-transparent"
+				class="flex size-6 items-center justify-center rounded-full border border-black/20 bg-white text-xs font-black text-black dark:border-transparent"
 			>
-				OI
+				T
 			</div>
 		</button>
 

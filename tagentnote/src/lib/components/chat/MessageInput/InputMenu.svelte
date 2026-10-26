@@ -1,9 +1,17 @@
 <script lang="ts">
+	import { isTextFile, MAX_ATTACHMENT_BYTES, unsupportedReason } from '$lib/data/attachments';
+
 	export type InputAttachment = {
 		id: string;
 		type: 'file' | 'webpage' | 'knowledge' | 'note' | 'chat';
 		name: string;
 		url?: string;
+		/** 笔记、知识库、对话在原处的编号（发送时按它去取内容） */
+		refId?: string;
+		/** 读出来的文字（文本文件、粘贴的长文） */
+		content?: string;
+		/** 读不了的原因：发送时不带它，并告诉学生 */
+		unsupported?: string;
 	};
 
 	type ListItem = { id: string; name: string; description?: string };
@@ -54,6 +62,24 @@
 		if (attachments.some((a) => a.id === item.id)) return;
 		attachments = [...attachments, item];
 		onAttachmentsChange(attachments);
+	};
+
+	/** 文本文件把内容读出来带上；读不了的照样列出来，但记下原因（发送时不带、并提示） */
+	const addFiles = async (files: File[], idPrefix: string) => {
+		for (const file of files) {
+			const readable = isTextFile(file) && file.size <= MAX_ATTACHMENT_BYTES;
+			let content: string | undefined;
+			if (readable) {
+				content = await file.text().catch(() => undefined);
+			}
+			addAttachment({
+				id: `${idPrefix}-${file.name}-${file.size}-${Date.now()}`,
+				type: 'file',
+				name: file.name,
+				content,
+				unsupported: content === undefined ? unsupportedReason(file) : undefined
+			});
+		}
 	};
 
 	const close = () => {
@@ -108,11 +134,9 @@
 			addAttachment({
 				id: `capture-${Date.now()}`,
 				type: 'file',
-				name
+				name,
+				unsupported: blob ? '图片目前还不能识别，没有发送' : '截图失败'
 			});
-			if (blob) {
-				/* teaching frontend keeps local reference only */
-			}
 			onToast('已添加截图');
 			close();
 		} catch {
@@ -138,7 +162,9 @@
 				id: `web-${url}-${Date.now()}`,
 				type: 'webpage',
 				name: url,
-				url
+				url,
+				// 浏览器里取不到别的网站的内容（跨域），后端也还没有抓网页
+				unsupported: '网页内容目前还不能抓取，可以复制正文粘贴进来'
 			});
 		}
 		onToast(urls.length === 1 ? '已引用网页' : `已引用 ${urls.length} 个网页`);
@@ -200,20 +226,20 @@
 	type="file"
 	class="hidden"
 	multiple
-	onchange={() => {
+	onchange={async () => {
 		const files = Array.from(fileInput?.files ?? []);
-		for (const file of files) {
-			addAttachment({
-				id: `file-${file.name}-${file.size}-${Date.now()}`,
-				type: 'file',
-				name: file.name
-			});
-		}
-		if (files.length) {
-			onToast(`已添加 ${files.length} 个文件`);
-			close();
-		}
 		if (fileInput) fileInput.value = '';
+		if (!files.length) return;
+		close();
+		await addFiles(files, 'file');
+		const unreadable = files.filter(
+			(file) => !isTextFile(file) || file.size > MAX_ATTACHMENT_BYTES
+		);
+		onToast(
+			unreadable.length
+				? `已添加 ${files.length} 个文件，其中 ${unreadable.length} 个目前读不了（PDF、Word、图片等），发送时不会带上内容`
+				: `已添加 ${files.length} 个文件`
+		);
 	}}
 />
 
@@ -223,20 +249,14 @@
 	accept="image/*"
 	capture="environment"
 	class="hidden"
-	onchange={(e) => {
-		const files = Array.from((e.currentTarget as HTMLInputElement).files ?? []);
-		for (const file of files) {
-			addAttachment({
-				id: `camera-${file.name}-${Date.now()}`,
-				type: 'file',
-				name: file.name
-			});
-		}
-		if (files.length) {
-			onToast('已添加截图');
-			close();
-		}
-		(e.currentTarget as HTMLInputElement).value = '';
+	onchange={async (e) => {
+		const input = e.currentTarget as HTMLInputElement;
+		const files = Array.from(input.files ?? []);
+		input.value = '';
+		if (!files.length) return;
+		close();
+		await addFiles(files, 'camera');
+		onToast('已添加照片（图片目前还不能识别，发送时不会带上）');
 	}}
 />
 
@@ -494,7 +514,12 @@
 									selectedIdx = idx;
 								}}
 								onclick={() => {
-									addAttachment({ id: `note-${item.id}`, type: 'note', name: item.name });
+									addAttachment({
+										id: `note-${item.id}`,
+										type: 'note',
+										name: item.name,
+										refId: item.id
+									});
 									onToast(`已引用笔记「${item.name}」`);
 									close();
 								}}
@@ -570,7 +595,8 @@
 									addAttachment({
 										id: `knowledge-${item.id}`,
 										type: 'knowledge',
-										name: item.name
+										name: item.name,
+										refId: item.id
 									});
 									onToast(`已引用知识库「${item.name}」`);
 									close();
@@ -630,7 +656,12 @@
 									selectedIdx = idx;
 								}}
 								onclick={() => {
-									addAttachment({ id: `chat-${item.id}`, type: 'chat', name: item.name });
+									addAttachment({
+										id: `chat-${item.id}`,
+										type: 'chat',
+										name: item.name,
+										refId: item.id
+									});
 									onToast(`已引用对话「${item.name}」`);
 									close();
 								}}

@@ -1,6 +1,22 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+
+	import { adminLockReason, adminToken } from '$lib/apis/admin';
+	import {
+		createModelProvider,
+		deleteModelProvider,
+		listModelProviders,
+		ModelAdminError,
+		probeModel,
+		setDefaultModelProvider,
+		updateModelProvider,
+		type ModelProvider,
+		type ModelProviderInput,
+		type ModelRegistry
+	} from '$lib/apis/model-providers';
+
 	type AuthMode = 'bearer' | 'none';
-	type Provider = {
+	type ProviderForm = {
 		name: string;
 		served_model_id: string;
 		base_url: string;
@@ -9,28 +25,12 @@
 		api_key: string;
 		temperature: number;
 		enabled: boolean;
-	};
-	type ProviderForm = Provider;
-	type StoredRegistry = { default_model_id: string; providers: Provider[] };
-
-	const STORAGE_KEY = 'admin-agent-model-providers-mock';
-	const initialRegistry: StoredRegistry = {
-		default_model_id: 'openai-compatible:gpt-4o-mini',
-		providers: [
-			{
-				name: 'OpenAI Compatible',
-				served_model_id: 'openai-compatible:gpt-4o-mini',
-				base_url: 'https://api.openai.com/v1',
-				upstream_model: 'gpt-4o-mini',
-				auth_mode: 'bearer',
-				api_key: '',
-				temperature: 0.1,
-				enabled: true
-			}
-		]
+		/** 附加参数的 JSON 原文，保存时才解析 */
+		extra_body: string;
 	};
 
-	let registry = $state<StoredRegistry>(initialRegistry);
+	let registry = $state<ModelRegistry>({ version: 1, default_model_id: '', providers: [] });
+	let loading = $state(true);
 	let editingId = $state<string | null>(null);
 	let editingHasKey = $state(false);
 	let form = $state<ProviderForm>(emptyForm());
@@ -39,6 +39,7 @@
 	let search = $state('');
 	let filter = $state<'all' | 'enabled' | 'disabled'>('all');
 	let saving = $state(false);
+	let probing = $state<string | null>(null);
 	let confirmDelete = $state<string | null>(null);
 
 	let filteredProviders = $derived(
@@ -64,21 +65,35 @@
 			auth_mode: 'bearer',
 			api_key: '',
 			temperature: 0.1,
-			enabled: true
+			enabled: true,
+			extra_body: ''
 		};
 	}
 
-	function persist() {
-		try {
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(registry));
-		} catch {
-			loadError = '无法保存到浏览器本地存储';
-		}
+	function inform(message: string, duration = 2400) {
+		notice = message;
+		setTimeout(() => (notice = ''), duration);
 	}
 
-	function inform(message: string) {
-		notice = message;
-		setTimeout(() => (notice = ''), 2400);
+	function failure(error: unknown) {
+		if (!(error instanceof ModelAdminError)) return '操作没有成功，再试一次。';
+		// 口令被后端拒了（后端换过口令）：和别的管理页一样回到输入口令那一页
+		if (error.status === 403) {
+			adminLockReason.set(error.message);
+			adminToken.set('');
+		}
+		return error.message;
+	}
+
+	async function refresh() {
+		try {
+			registry = await listModelProviders($adminToken);
+			loadError = '';
+		} catch (error) {
+			loadError = failure(error);
+		} finally {
+			loading = false;
+		}
 	}
 
 	function resetForm() {
@@ -87,10 +102,35 @@
 		form = emptyForm();
 	}
 
-	function editProvider(provider: Provider) {
+	function editProvider(provider: ModelProvider) {
 		editingId = provider.served_model_id;
-		editingHasKey = Boolean(provider.api_key);
-		form = { ...provider, api_key: '' };
+		editingHasKey = provider.has_api_key;
+		form = {
+			name: provider.name,
+			served_model_id: provider.served_model_id,
+			base_url: provider.base_url,
+			upstream_model: provider.upstream_model,
+			auth_mode: provider.auth_mode,
+			api_key: '',
+			temperature: provider.temperature,
+			enabled: provider.enabled,
+			extra_body: Object.keys(provider.extra_body ?? {}).length
+				? JSON.stringify(provider.extra_body, null, 2)
+				: ''
+		};
+	}
+
+	function parseExtraBody(): Record<string, unknown> | string {
+		const text = form.extra_body.trim();
+		if (!text) return {};
+		try {
+			const value = JSON.parse(text) as unknown;
+			if (value && typeof value === 'object' && !Array.isArray(value))
+				return value as Record<string, unknown>;
+		} catch {
+			/* 落到下面的提示 */
+		}
+		return '附加参数要写成一个 JSON 对象，例如 {"thinking": {"type": "disabled"}}';
 	}
 
 	function validate() {
@@ -119,92 +159,103 @@
 			)
 		)
 			return '该模型 ID 已存在';
-		return '';
+		const extra = parseExtraBody();
+		return typeof extra === 'string' ? extra : '';
 	}
 
-	function saveProvider() {
+	async function saveProvider() {
 		const error = validate();
 		if (error) {
 			inform(error);
 			return;
 		}
 		saving = true;
-		const provider: Provider = {
-			...form,
+		const input: ModelProviderInput = {
 			name: form.name.trim(),
 			served_model_id: form.served_model_id.trim(),
 			base_url: form.base_url.trim().replace(/\/$/, ''),
 			upstream_model: form.upstream_model.trim(),
+			auth_mode: form.auth_mode,
+			api_key: form.auth_mode === 'none' ? '' : form.api_key,
 			temperature: Number(form.temperature),
-			api_key:
-				form.auth_mode === 'none'
-					? ''
-					: form.api_key ||
-						registry.providers.find((item) => item.served_model_id === editingId)?.api_key ||
-						''
+			enabled: form.enabled,
+			extra_body: parseExtraBody() as Record<string, unknown>
 		};
-		if (editingId) {
-			registry.providers = registry.providers.map((item) =>
-				item.served_model_id === editingId ? provider : item
-			);
-			if (registry.default_model_id === editingId)
-				registry.default_model_id = provider.served_model_id;
-		} else {
-			registry.providers = [...registry.providers, provider];
-			if (!registry.default_model_id && provider.enabled)
-				registry.default_model_id = provider.served_model_id;
-		}
-		persist();
-		resetForm();
-		saving = false;
-		inform('智能体模型提供商已保存（本地 mock）');
-	}
-
-	function toggleProvider(provider: Provider) {
-		registry.providers = registry.providers.map((item) =>
-			item.served_model_id === provider.served_model_id ? { ...item, enabled: !item.enabled } : item
-		);
-		if (!provider.enabled) registry.default_model_id = provider.served_model_id;
-		else if (registry.default_model_id === provider.served_model_id)
-			registry.default_model_id =
-				registry.providers.find(
-					(item) => item.enabled && item.served_model_id !== provider.served_model_id
-				)?.served_model_id ?? '';
-		persist();
-	}
-
-	function setDefault(provider: Provider) {
-		if (!provider.enabled) return;
-		registry.default_model_id = provider.served_model_id;
-		persist();
-		inform('默认智能体模型已更新（本地 mock）');
-	}
-
-	function deleteProvider(id: string) {
-		registry.providers = registry.providers.filter((provider) => provider.served_model_id !== id);
-		if (registry.default_model_id === id)
-			registry.default_model_id =
-				registry.providers.find((provider) => provider.enabled)?.served_model_id ?? '';
-		if (editingId === id) resetForm();
-		confirmDelete = null;
-		persist();
-		inform('智能体模型提供商已删除（本地 mock）');
-	}
-
-	$effect(() => {
 		try {
-			const stored = localStorage.getItem(STORAGE_KEY);
-			if (stored) {
-				const parsed = JSON.parse(stored) as StoredRegistry;
-				if (Array.isArray(parsed.providers)) registry = parsed;
-			} else {
-				registry = structuredClone(initialRegistry);
-				persist();
-			}
-		} catch {
-			loadError = '读取本地智能体模型配置失败';
+			if (editingId) await updateModelProvider($adminToken, editingId, input);
+			else await createModelProvider($adminToken, input);
+			await refresh();
+			resetForm();
+			inform('已保存，学生刷新页面后就能看到');
+		} catch (cause) {
+			inform(failure(cause), 4000);
+		} finally {
+			saving = false;
 		}
+	}
+
+	/** 只改一两个字段时：其余照原样带上（Key 不带 = 沿用原来的） */
+	const inputOf = (provider: ModelProvider, patch: Partial<ModelProviderInput>) => ({
+		name: provider.name,
+		served_model_id: provider.served_model_id,
+		base_url: provider.base_url,
+		upstream_model: provider.upstream_model,
+		auth_mode: provider.auth_mode,
+		api_key: '',
+		temperature: provider.temperature,
+		enabled: provider.enabled,
+		extra_body: provider.extra_body ?? {},
+		...patch
 	});
+
+	async function toggleProvider(provider: ModelProvider) {
+		try {
+			await updateModelProvider(
+				$adminToken,
+				provider.served_model_id,
+				inputOf(provider, { enabled: !provider.enabled })
+			);
+			await refresh();
+		} catch (error) {
+			inform(failure(error), 4000);
+		}
+	}
+
+	async function setDefault(provider: ModelProvider) {
+		if (!provider.enabled) return;
+		try {
+			registry = await setDefaultModelProvider($adminToken, provider.served_model_id);
+			inform('默认模型已更新');
+		} catch (error) {
+			inform(failure(error), 4000);
+		}
+	}
+
+	async function deleteProvider(id: string) {
+		confirmDelete = null;
+		try {
+			await deleteModelProvider($adminToken, id);
+			if (editingId === id) resetForm();
+			await refresh();
+			inform('已删除');
+		} catch (error) {
+			inform(failure(error), 4000);
+		}
+	}
+
+	async function probe(provider: ModelProvider) {
+		probing = provider.served_model_id;
+		const result = await probeModel($adminToken, provider.served_model_id);
+		probing = null;
+		inform(
+			result.ok
+				? `连通了（${result.seconds.toFixed(1)} 秒）：${result.reply.slice(0, 40)}`
+				: result.reason,
+			result.ok ? 3000 : 6000
+		);
+	}
+
+	onMount(refresh);
 </script>
 
 <div class="flex min-h-full flex-col">
@@ -249,7 +300,9 @@
 					></select
 				>
 			</div>
-			{#if filteredProviders.length === 0}
+			{#if loading}
+				<div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">正在读取…</div>
+			{:else if filteredProviders.length === 0}
 				<div
 					class="border-y border-gray-100 py-10 text-center text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400"
 				>
@@ -279,8 +332,8 @@
 										</div>
 										<div class="mt-0.5 truncate text-xs text-gray-500">
 											{provider.auth_mode === 'bearer'
-												? provider.api_key
-													? '••••••••'
+												? provider.has_api_key
+													? provider.api_key_masked
 													: '未配置 API Key'
 												: '无需认证'}
 										</div></td
@@ -319,6 +372,14 @@
 													aria-label="设为默认"
 													title="设为默认">☆</button
 												>{/if}<button
+												class="icon-button"
+												type="button"
+												onclick={() => probe(provider)}
+												disabled={probing !== null}
+												aria-label="测试连通"
+												title="测试连通：真发一句很短的话"
+												>{probing === provider.served_model_id ? '…' : '⚡'}</button
+											><button
 												class="icon-button"
 												type="button"
 												onclick={() => editProvider(provider)}
@@ -463,10 +524,21 @@
 						class="field-input font-mono"
 						type="password"
 						bind:value={form.api_key}
-						placeholder={editingId && editingHasKey ? '留空以保留当前密钥' : '输入 API Key（mock）'}
+						placeholder={editingId && editingHasKey ? '留空以保留当前密钥' : '输入 API Key'}
 						autocomplete="new-password"
 					/>
 				</div>{/if}
+			<div>
+				<label class="field-label" for="agent-provider-extra">附加参数（JSON，可留空）</label
+				><textarea
+					id="agent-provider-extra"
+					class="field-input min-h-16 font-mono text-xs"
+					bind:value={form.extra_body}
+					placeholder={'{"thinking": {"type": "disabled"}}'}></textarea>
+				<p class="mt-1 text-[11px] text-gray-500">
+					原样并进发给上游的请求体。DeepSeek 等会思考的模型建议关掉思考，不然短回答可能被思考占满。
+				</p>
+			</div>
 			<div class="flex items-center justify-between py-1">
 				<span class="text-sm text-gray-700 dark:text-gray-200">启用提供商</span><button
 					type="button"
@@ -515,7 +587,9 @@
 			tabindex="-1"
 		>
 			<h3 id="agent-delete-title" class="font-medium">删除模型提供商？</h3>
-			<p class="mt-2 text-sm text-gray-500">此操作会从本地 mock 配置中移除该提供商。</p>
+			<p class="mt-2 text-sm text-gray-500">
+				删掉后学生就不能再选这个模型了，已有的学习记录不受影响。
+			</p>
 			<div class="mt-5 flex justify-end gap-2">
 				<button
 					class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm dark:border-gray-700"

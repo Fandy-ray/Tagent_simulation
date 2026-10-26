@@ -1,6 +1,20 @@
 <script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
+
 	import Switch from '$lib/components/common/Switch.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import {
+		AdminError,
+		clearRetrievalCache,
+		formatTime,
+		getKnowledgeAdmin,
+		knowledgeSources,
+		refreshReferences,
+		reloadKnowledge,
+		type JobStatus,
+		type KnowledgeAdmin,
+		type LocalKnowledgeSnapshot
+	} from '$lib/apis/admin';
 
 	type RagConfig = {
 		contentEngine: string;
@@ -148,10 +162,89 @@
 	let showResetVector = $state(false);
 	let showReindex = $state(false);
 
-	function inform(message: string) {
+	function inform(message: string, duration = 2400) {
 		notice = message;
-		setTimeout(() => (notice = ''), 2400);
+		setTimeout(() => (notice = ''), duration);
 	}
+
+	// ---------- 后端实际在用的知识库（只读）和三个动作 ----------
+	const SOURCE_LABELS: Record<string, string> = {
+		local: '教材 + 参考文献',
+		notebook: '笔记本',
+		composite: '教材 + 参考文献 + 笔记本'
+	};
+	const JOB_LABELS: Record<JobStatus['status'], string> = {
+		idle: '',
+		running: '进行中…',
+		succeeded: '完成',
+		failed: '失败'
+	};
+
+	const JOBS = [
+		['reload', '重建索引'],
+		['references', '补参考文献']
+	] as const;
+
+	let knowledge = $state<KnowledgeAdmin | null>(null);
+	let knowledgeError = $state('');
+	let pollTimer: ReturnType<typeof setTimeout> | undefined;
+	// 离开这一页时请求可能还没回来：回来后别再排下一次轮询
+	let destroyed = false;
+
+	const sources = $derived(knowledge ? knowledgeSources(knowledge.knowledge_base) : []);
+	const local = $derived(
+		sources.find((source): source is LocalKnowledgeSnapshot => source.kind === 'local') ?? null
+	);
+	const jobsRunning = $derived(
+		knowledge !== null && Object.values(knowledge.jobs).some((job) => job.status === 'running')
+	);
+
+	const failure = (error: unknown) =>
+		error instanceof AdminError ? error.message : '操作没有成功，再试一次。';
+
+	async function refreshKnowledge() {
+		clearTimeout(pollTimer);
+		try {
+			knowledge = await getKnowledgeAdmin();
+			knowledgeError = '';
+		} catch (error) {
+			knowledgeError = failure(error);
+			return;
+		}
+		// 后台任务跑着时每 2 秒看一次进度
+		if (jobsRunning && !destroyed) pollTimer = setTimeout(refreshKnowledge, 2000);
+	}
+
+	async function runAction(action: 'cache' | 'reload' | 'references') {
+		try {
+			if (action === 'cache') {
+				const { cleared } = await clearRetrievalCache();
+				inform(`已清掉 ${cleared} 条检索缓存`);
+			} else {
+				const { started } = await (action === 'reload' ? reloadKnowledge() : refreshReferences());
+				inform(started ? '已开始，在后台进行' : '上一次还没做完，等它做完再点');
+			}
+		} catch (error) {
+			inform(failure(error), 5000);
+		}
+		await refreshKnowledge();
+	}
+
+	// 下面表单里后端真有的那几项（嵌入模型、切块、Top K）显示实际值，不让改
+	$effect(() => {
+		if (!local) return;
+		config.embeddingEngine = '';
+		config.embeddingModel = local.embedding.model;
+		config.chunkSize = local.chunking.chunk_size;
+		config.chunkOverlap = local.chunking.chunk_overlap;
+		config.topK = local.retrieval.qa_top_k;
+	});
+
+	onMount(refreshKnowledge);
+	onDestroy(() => {
+		destroyed = true;
+		clearTimeout(pollTimer);
+	});
 
 	function persist() {
 		try {
@@ -255,9 +348,9 @@
 <ConfirmDialog
 	bind:show={showReindex}
 	title="重建知识库向量"
-	message="将重新计算所有知识库文件的向量（mock 操作）。"
+	message="重新读教材和参考文献、重建索引，建好后整体换上，不用重启后端。建的过程中答疑照常可用。"
 	confirmLabel="重建"
-	onConfirm={() => inform('已开始重建知识库向量（本地 mock）')}
+	onConfirm={() => runAction('reload')}
 />
 
 <form
@@ -268,6 +361,141 @@
 	}}
 >
 	<div class="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1.5">
+		<section class="mb-3">
+			<div class="mt-0.5 mb-2.5 flex items-center justify-between">
+				<div class="text-base font-medium">当前知识库</div>
+				<span class="text-xs text-gray-400">后端实际在用，只读</span>
+			</div>
+			<hr class="dark:border-gray-850/30 my-2 border-gray-100/30" />
+			{#if knowledgeError}
+				<p
+					class="border-l-2 border-red-500 bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-200"
+					role="alert"
+				>
+					{knowledgeError}
+				</p>
+			{:else if !knowledge}
+				<p class="py-2 text-xs text-gray-500">正在读取…</p>
+			{:else}
+				<div class="mb-2.5 flex w-full justify-between gap-3">
+					<div class="self-center text-xs font-medium">知识来源</div>
+					<div class="text-right text-xs">
+						{SOURCE_LABELS[knowledge.source] ?? knowledge.source}
+					</div>
+				</div>
+				{#each sources as source, index (index)}
+					{#if source.kind === 'notebook'}
+						<div class="mb-2.5 flex w-full justify-between gap-3">
+							<div class="self-center text-xs font-medium">笔记本服务</div>
+							<div class="min-w-0 truncate text-right text-xs" title={source.url}>
+								{source.url} ·
+								{knowledge.notebook_reachable === null
+									? '还没探测'
+									: knowledge.notebook_reachable
+										? '连得上'
+										: '连不上'}{source.resting_seconds
+									? ` · 出错暂停 ${Math.ceil(source.resting_seconds)} 秒`
+									: ''}
+							</div>
+						</div>
+					{:else if source.kind === 'local'}
+						<div class="mb-2.5 flex w-full justify-between gap-3">
+							<div class="self-center text-xs font-medium">教材</div>
+							<div class="text-right text-xs">
+								{source.textbook.file} · {source.textbook.chunks} 块
+							</div>
+						</div>
+						<div class="mb-2.5 flex w-full justify-between gap-3">
+							<div class="self-center text-xs font-medium">参考文献</div>
+							<div class="text-right text-xs">
+								{source.references.enabled
+									? `${source.references.papers} 篇 · ${source.references.chunks} 块`
+									: '没有启用'}
+							</div>
+						</div>
+						<div class="mb-2.5 flex w-full justify-between gap-3">
+							<div class="self-center text-xs font-medium">嵌入模型</div>
+							<div
+								class="min-w-0 truncate text-right text-xs"
+								title={source.embedding.revision ?? ''}
+							>
+								{source.embedding.model} · {source.embedding.loaded ? '已加载' : '第一次检索时加载'}
+							</div>
+						</div>
+						<div class="mb-2.5 flex w-full justify-between gap-3">
+							<div class="self-center text-xs font-medium">切块</div>
+							<div class="text-right text-xs">
+								教材 {source.chunking.chunk_size} 字、重叠 {source.chunking.chunk_overlap}；论文窗口
+								{source.chunking.reference_window} 字、重叠 {source.chunking
+									.reference_window_overlap}
+							</div>
+						</div>
+						<div class="mb-2.5 flex w-full justify-between gap-3">
+							<div class="self-center text-xs font-medium">索引</div>
+							<div class="text-right text-xs">
+								{source.index.ready
+									? `${source.index.vectors ?? '?'} 条向量${source.index.disk_cache ? ' · 有磁盘缓存' : ''}`
+									: '还没建（第一次检索时建）'}
+							</div>
+						</div>
+						<div class="mb-2.5 flex w-full justify-between gap-3">
+							<div class="self-center text-xs font-medium">答疑检索</div>
+							<div class="text-right text-xs">
+								每问取 {source.retrieval.qa_top_k} 块 · 结果缓存 {source.retrieval.cache
+									.entries}/{source.retrieval.cache.max_entries} 条，{source.retrieval.cache
+									.ttl_seconds} 秒内复用
+							</div>
+						</div>
+						<div class="mb-2.5 flex w-full justify-between gap-3">
+							<div class="self-center text-xs font-medium">出题取材</div>
+							<div class="text-right text-xs">
+								抽 {source.exam.sample_k} 块，教材至少 {Math.round(
+									source.exam.textbook_min_share * 100
+								)}%，MMR λ={source.exam.mmr_lambda}（候选 {source.exam.mmr_fetch_k}），材料上限
+								{source.exam.context_char_limit} 字
+							</div>
+						</div>
+					{/if}
+				{/each}
+
+				<div class="mt-3 flex flex-wrap items-center justify-end gap-2">
+					<button
+						type="button"
+						class="dark:hover:bg-gray-850 rounded-lg border border-gray-200 px-3 py-1.5 text-xs hover:bg-gray-50 dark:border-gray-700"
+						onclick={() => runAction('cache')}
+						title="同一个问题 60 秒内会复用检索结果；改了教材想立刻看到效果时用">清检索缓存</button
+					>
+					<button
+						type="button"
+						class="dark:hover:bg-gray-850 rounded-lg border border-gray-200 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700"
+						onclick={() => runAction('reload')}
+						disabled={!local || jobsRunning}
+						title="重新读教材和参考文献，建好后整体换上">重建索引</button
+					>
+					<button
+						type="button"
+						class="dark:hover:bg-gray-850 rounded-lg border border-gray-200 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700"
+						onclick={() => runAction('references')}
+						disabled={!local?.references.enabled || jobsRunning}
+						title="缺的论文去期刊官网下载，下完自动重建索引（可能要几分钟）">补参考文献</button
+					>
+				</div>
+				{#each JOBS as [key, label] (key)}
+					{@const job = knowledge.jobs[key]}
+					{#if job.status !== 'idle'}
+						<p
+							class="mt-2 text-right text-xs {job.status === 'failed'
+								? 'text-red-600 dark:text-red-400'
+								: 'text-gray-500'}"
+						>
+							{label}：{JOB_LABELS[job.status]}{job.message ? ` · ${job.message}` : ''}
+							<span class="text-gray-400">（{formatTime(job.finished_at ?? job.started_at)}）</span>
+						</p>
+					{/if}
+				{/each}
+			{/if}
+		</section>
+
 		<section class="mb-3">
 			<div class="mt-0.5 mb-2.5 text-base font-medium">常规</div>
 			<hr class="dark:border-gray-850/30 my-2 border-gray-100/30" />
@@ -500,19 +728,23 @@
 					<div class="w-full justify-between">
 						<div class="mb-1 min-w-fit self-center text-xs font-medium">分块大小</div>
 						<input
-							class="dark:bg-gray-850 w-full rounded-lg bg-gray-50 px-4 py-1.5 text-sm outline-none dark:text-gray-300"
+							class="dark:bg-gray-850 w-full rounded-lg bg-gray-50 px-4 py-1.5 text-sm outline-none disabled:opacity-60 dark:text-gray-300"
 							type="number"
 							min="0"
 							bind:value={config.chunkSize}
+							disabled={!!local}
+							title={local ? '后端实际值：改了要重建索引、重测出题质量，不在网页上改' : undefined}
 						/>
 					</div>
 					<div class="w-full">
 						<div class="mb-1 min-w-fit self-center text-xs font-medium">分块重叠</div>
 						<input
-							class="dark:bg-gray-850 w-full rounded-lg bg-gray-50 px-4 py-1.5 text-sm outline-none dark:text-gray-300"
+							class="dark:bg-gray-850 w-full rounded-lg bg-gray-50 px-4 py-1.5 text-sm outline-none disabled:opacity-60 dark:text-gray-300"
 							type="number"
 							min="0"
 							bind:value={config.chunkOverlap}
+							disabled={!!local}
+							title={local ? '后端实际值：改了要重建索引、重测出题质量，不在网页上改' : undefined}
 						/>
 					</div>
 				</div>
@@ -542,8 +774,9 @@
 					<div class="flex w-full justify-between">
 						<div class="self-center text-xs font-medium">嵌入模型引擎</div>
 						<select
-							class="w-fit rounded-sm bg-transparent p-1 px-2 pr-8 text-right text-xs outline-none"
+							class="w-fit rounded-sm bg-transparent p-1 px-2 pr-8 text-right text-xs outline-none disabled:opacity-60"
 							value={config.embeddingEngine}
+							disabled={!!local}
 							onchange={(event) =>
 								switchEmbeddingEngine((event.currentTarget as HTMLSelectElement).value)}
 						>
@@ -613,11 +846,12 @@
 					<div class="mb-1 text-xs font-medium">嵌入模型</div>
 					<div class="flex w-full gap-2">
 						<input
-							class="w-full flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
+							class="w-full flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400 disabled:opacity-60"
 							placeholder="设置嵌入模型"
 							bind:value={config.embeddingModel}
+							disabled={!!local}
 						/>
-						{#if config.embeddingEngine === ''}
+						{#if config.embeddingEngine === '' && !local}
 							<button
 								type="button"
 								class="dark:hover:bg-gray-850 rounded-lg px-2.5 text-gray-800 transition hover:bg-gray-100 dark:text-gray-100"
@@ -641,7 +875,9 @@
 						{/if}
 					</div>
 					<div class="mt-1 mb-1 text-xs text-gray-400 dark:text-gray-500">
-						更换嵌入模型后需要重建知识库向量，可通过下方「重建」按钮完成。
+						{local
+							? '这是后端实际在用的嵌入模型。换模型要改后端配置并重建索引，不在网页上改。'
+							: '更换嵌入模型后需要重建知识库向量，可通过下方「重建」按钮完成。'}
 					</div>
 				</div>
 
@@ -738,11 +974,13 @@
 					<div class="mb-2.5 flex w-full items-center justify-between gap-2">
 						<div class="self-center text-xs font-medium whitespace-nowrap">Top K</div>
 						<input
-							class="w-full flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
+							class="w-full flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400 disabled:opacity-60"
 							type="number"
 							min="0"
 							placeholder="输入 Top K"
 							bind:value={config.topK}
+							disabled={!!local}
+							title={local ? '后端实际值：答疑每问取几块' : undefined}
 						/>
 					</div>
 
@@ -910,7 +1148,12 @@
 			</div>
 			<div class="mb-2.5 flex w-full justify-between">
 				<div class="self-center text-xs font-medium">重建知识库向量</div>
-				<button class="text-xs" type="button" onclick={() => (showReindex = true)}>重建</button>
+				<button
+					class="text-xs disabled:opacity-40"
+					type="button"
+					disabled={!local || jobsRunning}
+					onclick={() => (showReindex = true)}>重建</button
+				>
 			</div>
 		</section>
 	</div>

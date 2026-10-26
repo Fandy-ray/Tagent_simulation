@@ -1,152 +1,68 @@
 <script lang="ts">
-	type Tag = { tag: string; count: number };
-	type Model = {
-		id: string;
-		name: string;
-		rating: number | null;
-		won: number | null;
-		lost: number | null;
-		topTags: Tag[];
-		activity: { date: string; won: number; lost: number }[];
-	};
-	const seedModels: Model[] = [
-		{
-			id: 'tagent-chat',
-			name: 'TAgent Chat',
-			rating: 1284,
-			won: 186,
-			lost: 91,
-			topTags: [
-				{ tag: '代码', count: 48 },
-				{ tag: '推理', count: 36 },
-				{ tag: '写作', count: 22 }
-			],
-			activity: []
-		},
-		{
-			id: 'qwen-2.5',
-			name: 'Qwen 2.5',
-			rating: 1258,
-			won: 164,
-			lost: 112,
-			topTags: [
-				{ tag: '中文', count: 53 },
-				{ tag: '知识问答', count: 31 }
-			],
-			activity: []
-		},
-		{
-			id: 'deepseek-v3',
-			name: 'DeepSeek V3',
-			rating: 1231,
-			won: 151,
-			lost: 127,
-			topTags: [
-				{ tag: '推理', count: 47 },
-				{ tag: '数学', count: 28 }
-			],
-			activity: []
-		},
-		{
-			id: 'gpt-4o',
-			name: 'GPT-4o',
-			rating: 1217,
-			won: 139,
-			lost: 132,
-			topTags: [
-				{ tag: '多模态', count: 29 },
-				{ tag: '写作', count: 26 }
-			],
-			activity: []
-		},
-		{
-			id: 'arena-model',
-			name: 'Arena Model',
-			rating: 1195,
-			won: 103,
-			lost: 118,
-			topTags: [{ tag: '对话', count: 21 }],
-			activity: []
-		},
-		{
-			id: 'local-qwen',
-			name: 'Local Qwen',
-			rating: null,
-			won: null,
-			lost: null,
-			topTags: [],
-			activity: []
-		}
-	];
-	const makeActivity = (modelIndex: number) =>
-		Array.from({ length: 42 }, (_, index) => {
-			const date = new Date(Date.now() - (41 - index) * 24 * 60 * 60 * 1000);
-			const won = Math.max(
-				0,
-				Math.round(2 + 2.5 * Math.sin(index * 0.73 + modelIndex) + ((index + modelIndex * 3) % 4))
-			);
-			const lost = Math.max(
-				0,
-				Math.round(
-					1.4 + 1.8 * Math.cos(index * 0.51 + modelIndex * 0.8) + ((index + modelIndex) % 3)
-				)
-			);
-			return { date: date.toISOString().slice(0, 10), won, lost };
-		});
-	const models = $state<Model[]>(
-		seedModels.map((model, index) => ({ ...model, activity: makeActivity(index) }))
+	import { onMount } from 'svelte';
+
+	import {
+		AdminError,
+		getModelActivity,
+		getModelStats,
+		MODE_LABELS,
+		percent,
+		type ModelActivity,
+		type ModelStat
+	} from '$lib/apis/admin';
+
+	type Range = '30d' | '90d' | '1y';
+	const RANGE_DAYS: Record<Range, number> = { '30d': 30, '90d': 90, '1y': 365 };
+
+	let models = $state<ModelStat[]>([]);
+	let loading = $state(true);
+	let loadError = $state('');
+	let query = $state('');
+	let sortKey = $state<'rank' | 'name' | 'rating' | 'won' | 'lost' | 'turns' | 'completion'>(
+		'rating'
+	);
+	let sortDirection = $state<'asc' | 'desc'>('desc');
+	let selectedModel = $state<ModelStat | null>(null);
+	let selectedRange = $state<Range>('30d');
+	let activity = $state<ModelActivity | null>(null);
+	let activityError = $state('');
+
+	const votes = (model: ModelStat) => model.thumbs_up + model.thumbs_down;
+	// 名次只看有人评价过的：好评率高的在前，一样时评价多的在前
+	const ranks = $derived(
+		new Map(
+			models
+				.filter((model) => votes(model) > 0)
+				.sort((a, b) => (b.thumbs_up_rate ?? 0) - (a.thumbs_up_rate ?? 0) || votes(b) - votes(a))
+				.map((model, index) => [model.model, index + 1])
+		)
 	);
 
-	let query = $state('');
-	let sortKey = $state<'rank' | 'name' | 'rating' | 'won' | 'lost'>('rating');
-	let sortDirection = $state<'asc' | 'desc'>('desc');
-	let selectedModel = $state<Model | null>(null);
-	let selectedRange = $state<'30d' | '1y' | 'all'>('30d');
-
 	const filteredModels = $derived(
-		models.filter((model) =>
-			`${model.name} ${model.id}`.toLowerCase().includes(query.trim().toLowerCase())
-		)
+		models.filter((model) => model.model.toLowerCase().includes(query.trim().toLowerCase()))
 	);
 	const sortedModels = $derived(
 		[...filteredModels].sort((a, b) => {
 			if (sortKey === 'name')
 				return sortDirection === 'asc'
-					? a.name.localeCompare(b.name)
-					: b.name.localeCompare(a.name);
-			const rankOf = (model: Model) =>
+					? a.model.localeCompare(b.model)
+					: b.model.localeCompare(a.model);
+			const valueOf = (model: ModelStat) =>
 				sortKey === 'won'
-					? (model.won ?? -1)
+					? model.thumbs_up
 					: sortKey === 'lost'
-						? (model.lost ?? -1)
-						: (model.rating ?? -1);
-			return sortDirection === 'asc' ? rankOf(a) - rankOf(b) : rankOf(b) - rankOf(a);
+						? model.thumbs_down
+						: sortKey === 'turns'
+							? model.chat_turns
+							: sortKey === 'completion'
+								? (model.completion_rate ?? -1)
+								: // 「排名」「好评率」都按名次：没名次的排最后
+									-(ranks.get(model.model) ?? Number.MAX_SAFE_INTEGER);
+			return sortDirection === 'asc' ? valueOf(a) - valueOf(b) : valueOf(b) - valueOf(a);
 		})
 	);
-	const visibleActivity = $derived(
-		selectedModel
-			? selectedModel.activity.filter(
-					(item) =>
-						selectedRange === '30d' ||
-						selectedRange === 'all' ||
-						item.date >= new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
-				)
-			: []
-	);
 	const chartScale = $derived(
-		Math.max(1, ...visibleActivity.flatMap((item) => [item.won, item.lost]))
-	);
-	const sortedActivity = $derived(
-		[...visibleActivity]
-			.map((item) => ({ ...item, total: item.won + item.lost }))
-			.sort((a, b) => a.date.localeCompare(b.date))
-	);
-	const aggregateActivity = $derived(
-		selectedRange === '30d'
-			? sortedActivity.slice(-30)
-			: selectedRange === '1y'
-				? sortedActivity
-				: sortedActivity
+		Math.max(1, ...(activity?.daily ?? []).flatMap((item) => [item.thumbs_up, item.thumbs_down]))
 	);
 
 	function sortBy(key: typeof sortKey) {
@@ -157,14 +73,52 @@
 		}
 	}
 
-	function openModel(model: Model) {
-		selectedRange = '30d';
-		selectedModel = model;
+	const failure = (error: unknown) =>
+		error instanceof AdminError ? error.message : '读取失败，再试一次。';
+
+	async function refresh() {
+		try {
+			models = await getModelStats();
+			loadError = '';
+		} catch (error) {
+			loadError = failure(error);
+		} finally {
+			loading = false;
+		}
 	}
 
-	function winRate(value: number | null, total: number) {
-		return value === null || total === 0 ? '-' : `${((value / total) * 100).toFixed(1)}%`;
+	// 快速来回切模型、切 30D / 90D 时，先发的请求可能后回来：只认最后发出的那一个
+	let activityRequest = 0;
+
+	async function loadActivity() {
+		if (!selectedModel) return;
+		const request = ++activityRequest;
+		activity = null;
+		activityError = '';
+		try {
+			const result = await getModelActivity(selectedModel.model, RANGE_DAYS[selectedRange]);
+			if (request === activityRequest) activity = result;
+		} catch (error) {
+			if (request === activityRequest) activityError = failure(error);
+		}
 	}
+
+	function openModel(model: ModelStat) {
+		selectedRange = '30d';
+		selectedModel = model;
+		void loadActivity();
+	}
+
+	function chooseRange(range: Range) {
+		selectedRange = range;
+		void loadActivity();
+	}
+
+	function winRate(value: number, total: number) {
+		return total === 0 ? '-' : `${((value / total) * 100).toFixed(1)}%`;
+	}
+
+	onMount(refresh);
 </script>
 
 <section class="min-h-full text-gray-900 dark:text-gray-100">
@@ -193,22 +147,34 @@
 		</label>
 	</header>
 
+	{#if loadError}<div
+			class="mb-2 border-l-2 border-red-500 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-200"
+			role="alert"
+		>
+			{loadError}
+		</div>{/if}
+
 	<div class="overflow-x-auto whitespace-nowrap">
 		{#if sortedModels.length === 0}
-			<div class="py-10 text-center text-sm text-gray-500">未找到模型</div>
+			<div class="py-10 text-center text-sm text-gray-500">
+				{loading
+					? '正在读取…'
+					: models.length
+						? '未找到模型'
+						: '还没有记录：学生用过之后，这里按模型统计好评率和答完率'}
+			</div>
 		{:else}
 			<table
 				class="w-full min-w-[660px] border-collapse text-left text-xs text-gray-500 dark:text-gray-400"
 			>
 				<thead class="text-[10px] text-gray-800 uppercase dark:text-gray-200">
 					<tr class="dark:border-gray-850/40 border-b border-gray-100">
-						{#each [{ key: 'rank', label: '排名' }, { key: 'name', label: '模型' }, { key: 'rating', label: '评分' }, { key: 'won', label: '胜场' }, { key: 'lost', label: '负场' }] as column (column.key)}
+						{#each [{ key: 'rank', label: '排名' }, { key: 'name', label: '模型' }, { key: 'rating', label: '好评率' }, { key: 'won', label: '有帮助' }, { key: 'lost', label: '没帮助' }, { key: 'turns', label: '答疑' }, { key: 'completion', label: '答完率' }] as column (column.key)}
 							<th
-								class="cursor-pointer px-2.5 py-2 select-none {column.key === 'rating' ||
-								column.key === 'won' ||
-								column.key === 'lost'
-									? 'text-right'
-									: ''}"
+								class="cursor-pointer px-2.5 py-2 select-none {column.key === 'rank' ||
+								column.key === 'name'
+									? ''
+									: 'text-right'}"
 							>
 								<button
 									class="inline-flex items-center gap-1"
@@ -222,8 +188,8 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each sortedModels as model, index (model.id)}
-						{@const total = (model.won ?? 0) + (model.lost ?? 0)}
+					{#each sortedModels as model (model.model)}
+						{@const total = votes(model)}
 						<tr
 							class="group dark:hover:bg-gray-850/50 cursor-pointer text-gray-700 transition hover:bg-gray-50 dark:text-gray-300"
 							onclick={() => openModel(model)}
@@ -232,34 +198,35 @@
 							}}
 							role="button"
 							tabindex="0"
-							aria-label={`查看 ${model.name} 评估详情`}
+							aria-label={`查看 ${model.model} 评估详情`}
 						>
 							<td class="px-3 py-2 font-medium text-gray-900 dark:text-white"
-								>{model.rating === null ? '-' : index + 1}</td
+								>{ranks.get(model.model) ?? '-'}</td
 							>
 							<td class="px-3 py-2"
 								><span class="inline-flex items-center gap-2"
 									><span
 										class="flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[9px] font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-										>{model.name.slice(0, 1)}</span
-									><span class="font-medium text-gray-800 dark:text-gray-200">{model.name}</span
+										>{model.model.slice(0, 1).toUpperCase()}</span
+									><span class="font-medium text-gray-800 dark:text-gray-200">{model.model}</span
 									></span
 								></td
 							>
 							<td class="px-3 py-2 text-right font-medium text-gray-900 dark:text-white"
-								>{model.rating ?? '-'}</td
+								>{percent(model.thumbs_up_rate)}</td
 							>
 							<td class="w-20 px-3 py-2 text-right font-medium text-emerald-600 dark:text-green-500"
-								>{#if model.won === null}-{:else}<span class="group-hover:hidden">{model.won}</span
-									><span class="hidden group-hover:inline">{winRate(model.won, total)}</span
+								>{#if total === 0}-{:else}<span class="group-hover:hidden">{model.thumbs_up}</span
+									><span class="hidden group-hover:inline">{winRate(model.thumbs_up, total)}</span
 									>{/if}</td
 							>
 							<td class="w-20 px-3 py-2 text-right font-medium text-red-600 dark:text-red-500"
-								>{#if model.lost === null}-{:else}<span class="group-hover:hidden"
-										>{model.lost}</span
-									><span class="hidden group-hover:inline">{winRate(model.lost, total)}</span
+								>{#if total === 0}-{:else}<span class="group-hover:hidden">{model.thumbs_down}</span
+									><span class="hidden group-hover:inline">{winRate(model.thumbs_down, total)}</span
 									>{/if}</td
 							>
+							<td class="w-20 px-3 py-2 text-right">{model.chat_turns.toLocaleString()}</td>
+							<td class="w-20 px-3 py-2 text-right">{percent(model.completion_rate)}</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -268,7 +235,8 @@
 	</div>
 
 	<div class="mt-2 text-right text-[10px] text-gray-500">
-		ⓘ 排行榜基于 Elo 评分系统，数据为 mock 模拟并非实时统计。排行榜处于测试阶段，评分算法可能调整。
+		ⓘ 好评率 = 学生点「有帮助」的次数 / 点过评价的次数，没人评价过的模型不排名；答完率 =
+		正常答完的次数 / 全部答疑次数（中途停止、出错都不算）。
 	</div>
 </section>
 
@@ -291,9 +259,9 @@
 				<h2
 					id="evaluation-model-title"
 					class="truncate text-lg font-medium"
-					title={`${selectedModel.name} (${selectedModel.id})`}
+					title={selectedModel.model}
 				>
-					{selectedModel.name}
+					{selectedModel.model}
 				</h2>
 				<button
 					class="rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -310,18 +278,23 @@
 				<div class="mb-2 flex items-center justify-between">
 					<h3 class="text-xs font-medium tracking-wide text-gray-500 uppercase">活动</h3>
 					<div class="inline-flex rounded-full bg-gray-100 p-0.5 dark:bg-gray-800">
-						{#each [{ key: '30d', label: '30D' }, { key: '1y', label: '1Y' }, { key: 'all', label: '全部' }] as range (range.key)}<button
+						{#each [{ key: '30d', label: '30D' }, { key: '90d', label: '90D' }, { key: '1y', label: '1Y' }] as range (range.key)}<button
 								class="rounded-full px-2.5 py-0.5 text-xs transition {selectedRange === range.key
 									? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
 									: 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}"
-								onclick={() => (selectedRange = range.key as typeof selectedRange)}
-								>{range.label}</button
+								onclick={() => chooseRange(range.key as Range)}>{range.label}</button
 							>{/each}
 					</div>
 				</div>
-				{#if aggregateActivity.every((item) => item.won === 0 && item.lost === 0)}
+				{#if activityError}
+					<div class="flex h-40 items-center justify-center text-sm text-red-600">
+						{activityError}
+					</div>
+				{:else if !activity}
+					<div class="flex h-40 items-center justify-center text-sm text-gray-500">正在读取…</div>
+				{:else if activity.daily.every((item) => item.thumbs_up === 0 && item.thumbs_down === 0)}
 					<div class="flex h-40 items-center justify-center text-sm text-gray-500">
-						暂无活动数据
+						这段时间没有人评价过
 					</div>
 				{:else}
 					<div class="relative mt-2 h-48 border-b border-gray-200 dark:border-gray-700">
@@ -331,33 +304,38 @@
 							<div class="border-t border-gray-100 dark:border-gray-800"></div>
 						</div>
 						<div class="absolute inset-0 flex items-end gap-px px-1 pb-4">
-							{#each aggregateActivity as item (item.date)}<div
+							{#each activity.daily as item (item.day)}<div
 									class="group relative flex h-full min-w-0 flex-1 items-end justify-center gap-px"
-									title={`${item.date} · 胜 ${item.won} / 负 ${item.lost}`}
+									title={`${item.day} · 有帮助 ${item.thumbs_up} / 没帮助 ${item.thumbs_down} · 答疑 ${item.chat_turns}`}
 								>
 									<div
 										class="w-1/2 rounded-t-sm bg-sky-500/80"
-										style={`height:${(item.won / chartScale) * 48}%`}
+										style={`height:${(item.thumbs_up / chartScale) * 48}%`}
 									></div>
-									<div class="flex w-1/2 flex-col justify-end">
+									<div class="flex h-full w-1/2 flex-col justify-end">
 										<div
-											class="rounded-b-sm bg-orange-500/80"
-											style={`height:${(item.lost / chartScale) * 48}%`}
+											class="rounded-t-sm bg-orange-500/80"
+											style={`height:${(item.thumbs_down / chartScale) * 48}%`}
 										></div>
 									</div>
 									<span
 										class="pointer-events-none absolute bottom-full z-10 hidden rounded bg-gray-900 px-2 py-1 text-[10px] whitespace-nowrap text-white group-hover:block"
-										>胜 {item.won} · 负 {item.lost}</span
+										>{item.day} · 👍 {item.thumbs_up} · 👎 {item.thumbs_down}</span
 									>
 								</div>{/each}
 						</div>
 					</div>
 				{/if}
-				<div class="mt-4 mb-2 text-xs font-medium tracking-wide text-gray-500 uppercase">标签</div>
-				{#if selectedModel.topTags.length}<div class="-mx-1 flex flex-wrap gap-1">
-						{#each selectedModel.topTags as tag (tag.tag)}<span
+				<div class="mt-4 mb-2 text-xs font-medium tracking-wide text-gray-500 uppercase">
+					用在哪里
+				</div>
+				{#if activity && Object.keys(activity.chat_modes).length}<div
+						class="-mx-1 flex flex-wrap gap-1"
+					>
+						{#each Object.entries(activity.chat_modes) as [mode, count] (mode)}<span
 								class="dark:bg-gray-850 rounded-full bg-gray-100 px-2 py-0.5 text-xs"
-								>{tag.tag} <span class="font-medium text-gray-500">{tag.count}</span></span
+								>{MODE_LABELS[mode] ?? mode}
+								<span class="font-medium text-gray-500">{count}</span></span
 							>{/each}
 					</div>{:else}<span class="text-sm text-gray-500">-</span>{/if}
 				<div class="mt-5 flex justify-end">

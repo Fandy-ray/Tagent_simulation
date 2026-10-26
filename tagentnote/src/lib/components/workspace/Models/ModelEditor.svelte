@@ -346,7 +346,7 @@
 								<div
 									class="flex size-20 shrink-0 items-center justify-center rounded-xl bg-white text-3xl font-black text-black md:size-48 md:text-6xl"
 								>
-									OI
+									T
 								</div>
 							{/if}
 

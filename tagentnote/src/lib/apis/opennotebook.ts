@@ -164,17 +164,21 @@ export async function listNotebooks(signal?: AbortSignal): Promise<NotebookSumma
 		signal
 	);
 
+	// 列表里带了 note_count 就直接用；只有没带（老版本镜像）才逐本去数——
+	// 以前每本都再请求一次笔记列表，十本笔记本就是 11 个请求，打开答疑页、笔记页都要等它
 	return Promise.all(
 		notebooks.map(async (notebook) => {
 			const reportedCount = notebook.note_count;
-			const count = await fetchJson<NoteListItem[]>(
-				`/api/notes?notebook_id=${encodeURIComponent(notebook.id)}`,
-				signal
-			)
-				.then((notes) => notes.length)
-				.catch(() =>
-					typeof reportedCount === 'number' && Number.isFinite(reportedCount) ? reportedCount : 0
-				);
+			const reported =
+				typeof reportedCount === 'number' && Number.isFinite(reportedCount) ? reportedCount : null;
+			const count =
+				reported ??
+				(await fetchJson<NoteListItem[]>(
+					`/api/notes?notebook_id=${encodeURIComponent(notebook.id)}`,
+					signal
+				)
+					.then((notes) => notes.length)
+					.catch(() => 0));
 
 			return {
 				...notebook,
@@ -297,6 +301,15 @@ export async function getSourceText(sourceId: string, signal?: AbortSignal) {
 	).catch(() => null);
 
 	return source?.full_text?.trim() || '';
+}
+
+/** 一条笔记的正文（答疑输入框里把笔记当附件引用时用）。取不到返回空串 */
+export async function getNoteText(noteId: string, signal?: AbortSignal) {
+	const note = await fetchJson<{ content?: string | null }>(
+		`/api/notes/${encodeURIComponent(noteId)}`,
+		signal
+	).catch(() => null);
+	return note?.content?.trim() || '';
 }
 
 /**

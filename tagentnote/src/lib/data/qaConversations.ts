@@ -12,6 +12,8 @@ export type QaMessage = {
 	content: string;
 	/** 卡片操作只展示简短标签，真正发送给 Agent 的请求保存在这里。 */
 	requestContent?: string;
+	/** 带了附件、技能时，检索知识库只用学生打的那句话（重新生成时也要用同一句） */
+	retrievalQuery?: string;
 	model?: string;
 	citations?: Citation[];
 	streaming?: boolean;
@@ -21,6 +23,8 @@ export type QaMessage = {
 	paperCard?: PaperCard;
 	/** 生成到一半被打断（刷新、关页、断网）：存下来的是半截，刷新后提示可以「重新生成」 */
 	interrupted?: boolean;
+	/** 学生点的「有帮助 / 没有帮助」；同时记到后端，老师在管理员面板「评估」里看 */
+	rating?: 'up' | 'down';
 };
 
 export type QaChat = {
@@ -57,12 +61,14 @@ const snapshotMessage = (message: QaMessage): QaMessage => ({
 	role: message.role,
 	content: message.content,
 	requestContent: message.requestContent,
+	retrievalQuery: message.retrievalQuery,
 	model: message.model,
 	citations: message.citations?.map((citation) => ({ ...citation })),
 	followUps: message.followUps?.slice(),
 	tags: message.tags?.slice(),
 	// 存盘时还在吐字的消息就是被打断的那条
 	interrupted: message.interrupted || message.streaming ? true : undefined,
+	rating: message.rating === 'up' || message.rating === 'down' ? message.rating : undefined,
 	// 页面里的消息是 $state 代理，structuredClone 会直接抛错；卡片本来就是纯 JSON，走一遍 JSON 最稳
 	paperCard: message.paperCard
 		? (JSON.parse(JSON.stringify(message.paperCard)) as PaperCard)

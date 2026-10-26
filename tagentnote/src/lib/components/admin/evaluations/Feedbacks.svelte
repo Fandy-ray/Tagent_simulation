@@ -1,140 +1,41 @@
 <script lang="ts">
-	type Feedback = {
-		id: number;
-		userName: string;
-		userEmail: string;
-		modelId: string;
-		siblingModels: string[];
-		rating: 1 | 0 | -1;
-		reason: string;
-		comment: string;
-		tags: string[];
-		updatedAt: number;
-		chatId: string;
-		prompt: string;
-		response: string;
-	};
-	let items = $state<Feedback[]>([
-		{
-			id: 1,
-			userName: '林知夏',
-			userEmail: 'lin.zx@example.com',
-			modelId: 'TAgent Chat',
-			siblingModels: ['Qwen 2.5', 'DeepSeek V3'],
-			rating: 1,
-			reason: '回答准确',
-			comment: '步骤清晰，结果符合预期。',
-			tags: ['准确', '代码'],
-			updatedAt: Date.now() - 1000 * 60 * 12,
-			chatId: 'chat-8f23a1',
-			prompt: '请解释快速排序的平均时间复杂度。',
-			response: '快速排序的平均时间复杂度为 O(n log n)，最坏情况下为 O(n²)。'
-		},
-		{
-			id: 2,
-			userName: '陈嘉木',
-			userEmail: 'chen.jm@example.com',
-			modelId: 'Qwen 2.5',
-			siblingModels: [],
-			rating: -1,
-			reason: '内容不准确',
-			comment: '回答中的版本号有误。',
-			tags: ['事实错误'],
-			updatedAt: Date.now() - 1000 * 60 * 60 * 3,
-			chatId: 'chat-4a118c',
-			prompt: 'TypeScript 5.7 于哪年发布？',
-			response: 'TypeScript 5.7 发布于 2023 年。'
-		},
-		{
-			id: 3,
-			userName: '周予安',
-			userEmail: 'zhou.ya@example.com',
-			modelId: 'DeepSeek V3',
-			siblingModels: ['TAgent Chat'],
-			rating: 0,
-			reason: '',
-			comment: '两个回答都可以。',
-			tags: ['对比'],
-			updatedAt: Date.now() - 1000 * 60 * 60 * 25,
-			chatId: 'chat-c17b03',
-			prompt: '给出一个归纳法证明的例子。',
-			response: '一个经典例子是证明前 n 个正整数之和等于 n(n+1)/2。'
-		},
-		{
-			id: 4,
-			userName: '许清禾',
-			userEmail: 'xu.qh@example.com',
-			modelId: 'GPT-4o',
-			siblingModels: [],
-			rating: 1,
-			reason: '表达更清晰',
-			comment: '整体解释容易理解。',
-			tags: ['解释', '写作'],
-			updatedAt: Date.now() - 1000 * 60 * 60 * 49,
-			chatId: 'chat-0bb903',
-			prompt: '什么是向量数据库？',
-			response: '向量数据库用于存储和检索向量嵌入，常用于语义搜索与 RAG。'
-		},
-		{
-			id: 5,
-			userName: '沈星野',
-			userEmail: 'shen.xy@example.com',
-			modelId: 'TAgent Chat',
-			siblingModels: [],
-			rating: -1,
-			reason: '没有遵循要求',
-			comment: '',
-			tags: ['格式'],
-			updatedAt: Date.now() - 1000 * 60 * 60 * 90,
-			chatId: 'chat-b76511',
-			prompt: '请只返回 JSON。',
-			response: '当然可以！下面是 JSON：...'
-		},
-		{
-			id: 6,
-			userName: '顾言之',
-			userEmail: 'gu.yz@example.com',
-			modelId: 'Qwen 2.5',
-			siblingModels: ['GPT-4o', 'TAgent Chat'],
-			rating: 1,
-			reason: '推理更完整',
-			comment: '分析过程有帮助。',
-			tags: ['推理'],
-			updatedAt: Date.now() - 1000 * 60 * 60 * 130,
-			chatId: 'chat-44ef88',
-			prompt: '解释贝叶斯定理的直觉。',
-			response: '贝叶斯定理描述了在获得新证据后如何更新一个假设的概率。'
-		},
-		{
-			id: 7,
-			userName: '林知夏',
-			userEmail: 'lin.zx@example.com',
-			modelId: 'DeepSeek V3',
-			siblingModels: [],
-			rating: 0,
-			reason: '',
-			comment: '',
-			tags: [],
-			updatedAt: Date.now() - 1000 * 60 * 60 * 180,
-			chatId: 'chat-1e10d2',
-			prompt: '什么是哈希表？',
-			response: '哈希表是一种通过哈希函数将键映射到数组索引的数据结构。'
-		}
-	]);
+	import { onMount } from 'svelte';
+
+	import {
+		AdminError,
+		deleteFeedback as removeFeedback,
+		FEEDBACK_LIMIT,
+		formatTime,
+		getFeedback,
+		MODE_LABELS,
+		timeAgo,
+		type FeedbackEntry
+	} from '$lib/apis/admin';
+	import { fileSaver } from '$lib/utils/fileSaver';
+
+	let items = $state<FeedbackEntry[]>([]);
+	let loading = $state(true);
+	let loadError = $state('');
 	let page = $state(1);
-	let pageSize = 5;
+	const pageSize = 20;
 	let sortKey = $state<'userName' | 'modelId' | 'rating' | 'updatedAt'>('updatedAt');
 	let sortDirection = $state<'asc' | 'desc'>('desc');
-	let selectedFeedback = $state<Feedback | null>(null);
+	let selectedFeedback = $state<FeedbackEntry | null>(null);
 	let menuFor = $state<number | null>(null);
 	let exportNotice = $state('');
+
+	const userName = (item: FeedbackEntry) => item.student_name?.trim() || '未填昵称';
 
 	const sortedItems = $derived(
 		[...items].sort((a, b) => {
 			const result =
-				sortKey === 'updatedAt' || sortKey === 'rating'
-					? a[sortKey] - b[sortKey]
-					: a[sortKey].localeCompare(b[sortKey]);
+				sortKey === 'updatedAt'
+					? a.updated_at - b.updated_at
+					: sortKey === 'rating'
+						? a.rating - b.rating
+						: sortKey === 'modelId'
+							? a.model.localeCompare(b.model)
+							: userName(a).localeCompare(userName(b));
 			return sortDirection === 'asc' ? result : -result;
 		})
 	);
@@ -150,39 +51,57 @@
 		page = 1;
 	}
 
-	function timeAgo(timestamp: number) {
-		const minutes = Math.max(1, Math.floor((Date.now() - timestamp) / 60000));
-		if (minutes < 60) return `${minutes} 分钟前`;
-		const hours = Math.floor(minutes / 60);
-		if (hours < 24) return `${hours} 小时前`;
-		const days = Math.floor(hours / 24);
-		return `${days} 天前`;
+	const failure = (error: unknown) =>
+		error instanceof AdminError ? error.message : '操作没有成功，再试一次。';
+
+	async function refresh() {
+		try {
+			items = await getFeedback();
+			loadError = '';
+		} catch (error) {
+			loadError = failure(error);
+		} finally {
+			loading = false;
+		}
 	}
 
 	function exportFeedback() {
-		const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
-		const url = URL.createObjectURL(blob);
-		const anchor = document.createElement('a');
-		anchor.href = url;
-		anchor.download = `feedback-history-mock-${Date.now()}.json`;
-		anchor.click();
-		URL.revokeObjectURL(url);
-		exportNotice = '已导出当前 mock 反馈记录';
+		// 现成的下载工具：链接先挂进页面、过一会儿再收回地址，Safari 上也能下下来
+		fileSaver.saveAs(
+			JSON.stringify(items, null, 2),
+			`feedback-${Date.now()}.json`,
+			'application/json'
+		);
+		exportNotice = `已导出 ${items.length} 条反馈`;
 		setTimeout(() => (exportNotice = ''), 2500);
 	}
 
-	function deleteFeedback(id: number) {
+	async function deleteFeedback(id: number) {
+		menuFor = null;
+		try {
+			await removeFeedback(id);
+		} catch (error) {
+			// 已经被删了（404）也当作删掉了，刷新列表即可
+			if (!(error instanceof AdminError && error.status === 404)) {
+				exportNotice = failure(error);
+				setTimeout(() => (exportNotice = ''), 4000);
+				return;
+			}
+		}
 		items = items.filter((item) => item.id !== id);
 		if (selectedFeedback?.id === id) selectedFeedback = null;
 		page = Math.min(page, totalPages);
-		menuFor = null;
 	}
+
+	onMount(refresh);
 </script>
 
 <section class="min-h-full text-gray-900 dark:text-gray-100">
 	<header class="mb-1 flex items-center justify-between gap-3">
 		<h1 class="flex shrink-0 items-center gap-2 px-0.5 text-lg font-medium">
-			反馈历史 <span class="text-sm text-gray-500">{items.length}</span>
+			反馈历史 <span class="text-sm text-gray-500"
+				>{items.length >= FEEDBACK_LIMIT ? `最近 ${FEEDBACK_LIMIT} 条` : items.length}</span
+			>
 		</h1>
 		{#if items.length}<button
 				class="dark:hover:bg-gray-850 rounded-lg p-2 text-gray-500 transition hover:bg-gray-100"
@@ -202,8 +121,17 @@
 			{exportNotice}
 		</p>{/if}
 
+	{#if loadError}<div
+			class="mb-2 border-l-2 border-red-500 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-200"
+			role="alert"
+		>
+			{loadError}
+		</div>{/if}
+
 	{#if items.length === 0}
-		<div class="py-12 text-center text-sm text-gray-500">没有找到反馈</div>
+		<div class="py-12 text-center text-sm text-gray-500">
+			{loading ? '正在读取…' : '还没有反馈：学生在答疑里点「有帮助 / 没有帮助」后会出现在这里'}
+		</div>
 	{:else}
 		<div class="overflow-x-auto whitespace-nowrap">
 			<table
@@ -248,40 +176,35 @@
 							}}
 							role="button"
 							tabindex="0"
-							aria-label={`查看 ${feedback.userName} 的反馈`}
+							aria-label={`查看 ${userName(feedback)} 的反馈`}
 						>
 							<td class="px-2.5 py-1.5 text-center"
 								><span
 									class="inline-flex size-6 items-center justify-center rounded-full bg-blue-100 text-[10px] font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-									title={feedback.userName}>{feedback.userName.slice(0, 1)}</span
+									title={userName(feedback)}>{userName(feedback).slice(0, 1)}</span
 								></td
 							>
 							<td class="min-w-0 px-2.5 py-1.5"
 								><span
 									class="block max-w-[320px] truncate font-medium text-gray-700 dark:text-gray-300"
-									title={feedback.siblingModels.length
-										? `${feedback.modelId} · ${feedback.siblingModels.join(', ')}`
-										: feedback.modelId}>{feedback.modelId}</span
-								>{#if feedback.siblingModels.length}<span
-										class="block max-w-[320px] truncate text-[10px] text-gray-500"
-										title={feedback.siblingModels.join(', ')}
-										>{feedback.siblingModels
-											.slice(0, 2)
-											.join(', ')}{#if feedback.siblingModels.length > 2}，以及另外 {feedback
-												.siblingModels.length - 2} 个{/if}</span
-									>{/if}</td
+									title={feedback.model}>{feedback.model}</span
+								><span
+									class="block max-w-[320px] truncate text-[10px] text-gray-500"
+									title={feedback.question}
+									>{MODE_LABELS[feedback.mode] ?? feedback.mode} · {feedback.question}</span
+								></td
 							>
 							<td class="px-2.5 py-1.5 text-right"
 								><span
 									class="rounded-full px-2 py-0.5 text-[10px] font-medium {feedback.rating === 1
 										? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
-										: feedback.rating === 0
-											? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
-											: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'}"
-									>{feedback.rating === 1 ? '胜出' : feedback.rating === 0 ? '平局' : '落败'}</span
+										: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'}"
+									>{feedback.rating === 1 ? '有帮助' : '没帮助'}</span
 								></td
 							>
-							<td class="px-2.5 py-1.5 text-right">{timeAgo(feedback.updatedAt)}</td>
+							<td class="px-2.5 py-1.5 text-right" title={formatTime(feedback.updated_at)}
+								>{timeAgo(feedback.updated_at)}</td
+							>
 							<td
 								class="relative px-2.5 py-1.5 text-right"
 								onclick={(event) => event.stopPropagation()}
@@ -354,53 +277,38 @@
 			</header>
 			<div class="space-y-3 px-5 pb-5">
 				<div>
-					<p class="mb-1 text-xs text-gray-500">对话 ID</p>
-					<p class="text-xs break-all">{selectedFeedback.chatId}</p>
-				</div>
-				<div>
-					<p class="mb-1 text-xs text-gray-500">模型</p>
+					<p class="mb-1 text-xs text-gray-500">学生</p>
 					<p class="text-xs">
-						{selectedFeedback.modelId}{#if selectedFeedback.siblingModels.length}<span
-								class="text-gray-500"
-							>
-								· {selectedFeedback.siblingModels.join(', ')}</span
-							>{/if}
+						{userName(selectedFeedback)}
+						<span class="font-mono text-gray-400">{selectedFeedback.student_id}</span>
 					</p>
 				</div>
 				<div>
-					<p class="mb-1 text-xs text-gray-500">提示</p>
-					<p class="text-xs break-words whitespace-pre-line">{selectedFeedback.prompt || '-'}</p>
+					<p class="mb-1 text-xs text-gray-500">模型 · 场景</p>
+					<p class="text-xs">
+						{selectedFeedback.model} · {MODE_LABELS[selectedFeedback.mode] ?? selectedFeedback.mode}
+					</p>
+				</div>
+				<div>
+					<p class="mb-1 text-xs text-gray-500">提问</p>
+					<p class="max-h-32 overflow-y-auto text-xs break-words whitespace-pre-line">
+						{selectedFeedback.question || '-'}
+					</p>
 				</div>
 				<div>
 					<p class="mb-1 text-xs text-gray-500">回答</p>
-					<p class="max-h-32 overflow-y-auto text-xs break-words whitespace-pre-line">
-						{selectedFeedback.response || '-'}
+					<p class="max-h-48 overflow-y-auto text-xs break-words whitespace-pre-line">
+						{selectedFeedback.answer || '-'}
 					</p>
 				</div>
 				<div>
-					<p class="mb-1 text-xs text-gray-500">结果</p>
+					<p class="mb-1 text-xs text-gray-500">评价</p>
 					<p class="text-xs">
-						{selectedFeedback.rating === 1
-							? '胜出'
-							: selectedFeedback.rating === 0
-								? '平局'
-								: '落败'}
+						{selectedFeedback.rating === 1 ? '有帮助' : '没帮助'} · {formatTime(
+							selectedFeedback.updated_at
+						)}
 					</p>
 				</div>
-				<div>
-					<p class="mb-1 text-xs text-gray-500">原因</p>
-					<p class="text-xs">{selectedFeedback.reason || '-'}</p>
-				</div>
-				<div>
-					<p class="mb-1 text-xs text-gray-500">评论</p>
-					<p class="text-xs">{selectedFeedback.comment || '-'}</p>
-				</div>
-				{#if selectedFeedback.tags.length}<div class="flex flex-wrap gap-1">
-						{#each selectedFeedback.tags as tag (tag)}<span
-								class="dark:bg-gray-850 rounded-full bg-gray-100 px-2 py-0.5 text-[10px]"
-								>{tag}</span
-							>{/each}
-					</div>{/if}
 				<div class="flex justify-end pt-1">
 					<button
 						class="rounded-full bg-gray-900 px-4 py-1.5 text-sm font-medium text-white dark:bg-white dark:text-gray-900"
