@@ -738,8 +738,16 @@ esac
 step '检查知识来源'
 # 这个接口已经改成不阻塞（探活挪到后台，见 app/infra/background_probe.py），
 # 不再需要为「OpenNotebook 连不上要等 15~20 秒」留 60 秒。
-# 代价是刚启动时头一次读到的 notebook_reachable 可能还是 null（后台还没探完）。
-KNOWLEDGE="$(curl -fsS -m 10 "http://127.0.0.1:$AGENT_PORT/knowledge" 2>/dev/null)"
+# 代价是刚启动时头一两次读到的 notebook_reachable 还是 null（后台还没探完）：
+# 以前把 null 也当成「连不上」报，笔记本明明在跑也提示连不上。现在是 null 就隔 1 秒再读，最多 10 秒。
+# 只用本地教材时这一项本来就一直是 null，不用等。
+KNOWLEDGE=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    KNOWLEDGE="$(curl -fsS -m 10 "http://127.0.0.1:$AGENT_PORT/knowledge" 2>/dev/null)"
+    printf '%s' "$KNOWLEDGE" | grep -q '"source"[[:space:]]*:[[:space:]]*"local"' && break
+    printf '%s' "$KNOWLEDGE" | grep -q '"notebook_reachable"[[:space:]]*:[[:space:]]*null' || break
+    sleep 1
+done
 if [ -n "$KNOWLEDGE" ]; then
     SOURCE="$(printf '%s' "$KNOWLEDGE" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     ok "source = ${SOURCE:-?}"
@@ -749,6 +757,8 @@ if [ -n "$KNOWLEDGE" ]; then
         warn '当前只用本地教材 book1.md。想接笔记本，请确认 OpenNotebook 已启动且 OPEN_NOTEBOOK_API_URL 指向 5055。'
     elif printf '%s' "$KNOWLEDGE" | grep -q '"notebook_reachable"[[:space:]]*:[[:space:]]*true'; then
         ok 'notebook_reachable = true'
+    elif printf '%s' "$KNOWLEDGE" | grep -q '"notebook_reachable"[[:space:]]*:[[:space:]]*null'; then
+        warn '笔记本服务还在探测，暂时没有结论。稍后打开 http://localhost:'"$AGENT_PORT"'/knowledge 看 notebook_reachable。'
     else
         warn 'notebook_reachable = false，笔记本连不上。'
         warn '答疑仍能作答，但内容只来自本地教材。8502 是页面端口，接口在 5055。'

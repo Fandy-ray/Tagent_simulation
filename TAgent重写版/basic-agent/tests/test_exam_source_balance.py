@@ -130,8 +130,8 @@ class FakeVectorStore:
     def __init__(self):
         self.calls: list[dict] = []
 
-    def max_marginal_relevance_search(self, query, k, fetch_k, lambda_mult=0.5):
-        self.calls.append({"k": k, "fetch_k": fetch_k, "lambda_mult": lambda_mult})
+    def max_marginal_relevance_search_by_vector(self, embedding, k, fetch_k, lambda_mult=0.5):
+        self.calls.append({"embedding": embedding, "k": k, "fetch_k": fetch_k, "lambda_mult": lambda_mult})
         pool = [
             Document(page_content=f"论文片段{i}", metadata={"source": "reference"})
             for i in range(k - 10)
@@ -146,8 +146,13 @@ class FakeVectorStore:
 def make_kb(store):
     from app.rag.knowledge_base import KnowledgeBase
 
+    class Embeddings:
+        def embed_query(self, text):
+            return [float(len(text))]
+
     kb = KnowledgeBase()
     kb.vectorstore = store
+    kb.embeddings = Embeddings()
     kb._knowledge_chunks = [Document(page_content="x", metadata={})]
     return kb
 

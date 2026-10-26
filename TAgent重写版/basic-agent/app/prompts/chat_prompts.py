@@ -23,6 +23,9 @@ SYSTEM_PROMPTS = {"qa": _QA_SYSTEM, "paper": _PAPER_SYSTEM}
 
 
 def build_prompt_messages(messages: list[dict[str, str]], context: str, mode: str = "qa"):
+    if mode == "chat":
+        # Playground：不检索、不加平台的身份和底线，学生自己写的系统提示就是全部——那一页就是用来试模型本身的
+        return list(messages)
     system = {
         "role": "system",
         "content": f"{SYSTEM_PROMPTS[mode]}\n\nReference:\n{context}",

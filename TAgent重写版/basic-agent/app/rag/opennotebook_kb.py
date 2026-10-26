@@ -74,6 +74,10 @@ class OpenNotebookKnowledgeBase:
     def describe(self) -> dict[str, Any]:
         return {"kind": "notebook", "url": self.base_url}
 
+    def admin_snapshot(self) -> dict[str, Any]:
+        # 只说配没配口令，口令本身不往外给
+        return {**self.describe(), "timeout_seconds": self.timeout, "auth": bool(self.token)}
+
     def warm_up(self) -> None:
         self.ping()
 

@@ -232,6 +232,9 @@ class StreamingShardLLM(ScriptedShardLLM):
         message = await self.ainvoke(prompt)  # 走子类改过的 ainvoke（例如 Leaky）
         kind = "choice" if "**选择题**" in prompt else "cloze"
         if self.fail_kind == kind:
+            # 坏 JSON 要整段写完才认得出来，真实情况下总比别的片的第一张卡晚到；
+            # 不等这一下，谁先到全看线程调度（2 核服务器上跑全量测试时偶尔是坏的这片先到）
+            await asyncio.sleep(0.2)
             yield AIMessageChunk(content="不是 JSON")
             return
         text = message.content

@@ -2,6 +2,7 @@
 
     START → understand → retrieve ─┬─（非流式）→ generate → END
                                    └─（流式）──→ END，调用方接着逐块生成
+    （Playground 的 mode = chat 不检索：START 直接到 generate，流式时直接到 END）
 
 三步各管一件事，原因都来自实测：
 
@@ -84,7 +85,7 @@ def answer_client(deps: AgentDeps):
 
 def prompt_messages(state: AnswerState) -> list[dict[str, str]]:
     return build_prompt_messages(
-        state["messages"], state["retrieved_context"], mode=state.get("mode", "qa")
+        state["messages"], state.get("retrieved_context", ""), mode=state.get("mode", "qa")
     )
 
 
@@ -130,12 +131,19 @@ def _after_retrieve(state: AnswerState) -> str:
     return END if state.get("stream") else "generate"
 
 
+def _from_start(state: AnswerState) -> str:
+    """Playground（mode = chat）直接和模型聊：不补检索词、不检索，流式时直接出图交给调用方生成。"""
+    if state.get("mode") == "chat":
+        return END if state.get("stream") else "generate"
+    return "understand"
+
+
 def build_answer_graph():
     graph = StateGraph(AnswerState, context_schema=AgentDeps)
     graph.add_node("understand", _understand)
     graph.add_node("retrieve", _retrieve)
     graph.add_node("generate", _generate)
-    graph.add_edge(START, "understand")
+    graph.add_conditional_edges(START, _from_start, ["understand", "generate", END])
     graph.add_edge("understand", "retrieve")
     graph.add_conditional_edges("retrieve", _after_retrieve, ["generate", END])
     graph.add_edge("generate", END)

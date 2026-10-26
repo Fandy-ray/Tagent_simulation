@@ -73,13 +73,13 @@ def validate_messages(value) -> list[dict[str, str]]:
     return normalized[-MAX_MESSAGES:]
 
 
-CHAT_MODES = ("qa", "paper")
+CHAT_MODES = ("qa", "paper", "chat")
 # 检索提示只用来找材料，题目加关键词足够；再长就又回到「拿长文当检索词」的老问题
 MAX_RETRIEVAL_QUERY_CHARS = 200
 
 
 def chat_mode(data: dict) -> str:
-    """答疑（qa）还是论文辅助（paper）。前端的论文模式一直在发这个字段，缺省按答疑。"""
+    """答疑（qa）、论文辅助（paper），还是 Playground 里不检索、直接和模型聊（chat）。缺省按答疑。"""
     value = data.get("mode")
     if value is None or value == "":
         return "qa"

@@ -89,6 +89,24 @@ class CompositeKnowledgeBase:
             ],
         }
 
+    def admin_snapshot(self) -> dict[str, Any]:
+        """管理后台「文档」页：每个来源实际在用的配置和状态，外加它现在是不是因为出错被暂时跳过。"""
+        with self._lock:
+            resting = {key: until - self._clock() for key, until in self._resting_until.items()}
+        sources = []
+        for source in self.sources:
+            snapshot = source.admin_snapshot() if hasattr(source, "admin_snapshot") else source.describe()
+            seconds = resting.get(id(source))
+            sources.append({**snapshot, "resting_seconds": round(seconds, 1) if seconds and seconds > 0 else 0})
+        return {"kind": "composite", "sources": sources}
+
+    def clear_retrieval_cache(self) -> int:
+        return sum(source.clear_retrieval_cache() for source in self.sources if hasattr(source, "clear_retrieval_cache"))
+
+    def reload(self) -> dict[str, Any]:
+        reloaded = [source.reload() for source in self.sources if hasattr(source, "reload")]
+        return reloaded[0] if len(reloaded) == 1 else {"sources": reloaded}
+
     def warm_up(self) -> None:
         errors: list[str] = []
         for source in self.sources:

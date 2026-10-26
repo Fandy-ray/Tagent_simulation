@@ -39,6 +39,9 @@ REFERENCE_CHUNK_FORMAT = "refs-800-50-windows-200-30-label-at-end"
 # 112 道按论文正文出的题：800 字一块第一条找对 81 道，200 字窗口 93 道（前三条 99 → 106）。
 WINDOW_SIZE = 200
 WINDOW_OVERLAP = 30
+# 论文按 800 字一块、重叠 50 字切（和教材一样大）；改了要同时改上面 REFERENCE_CHUNK_FORMAT 里的数字
+REFERENCE_CHUNK_SIZE = 800
+REFERENCE_CHUNK_OVERLAP = 50
 # 抽文字的规则一变就加一：.md 里记着版本，旧版本的下次启动时从本机的 PDF / 网页重新抽，不用重新下载
 EXTRACT_VERSION = 3
 _EXTRACT_MARK = re.compile(r"^<!--\s*抽取\s*v(\d+)")
@@ -403,8 +406,8 @@ def reference_documents(directory: Path | None) -> list[Document]:
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=50,
+        chunk_size=REFERENCE_CHUNK_SIZE,
+        chunk_overlap=REFERENCE_CHUNK_OVERLAP,
         separators=["\n\n", "\n", "。", "，", " ", ""],
     )
     documents: list[Document] = []

@@ -6,10 +6,12 @@ repository 层：只管落盘与读取，不认识 Flask、不发上游请求。
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,6 +31,9 @@ from app.util.timeutil import utc_now
 
 
 PROVIDER_SCHEMA_VERSION = 2
+# 多久看一次文件变没变：每次都 stat 的话，几十个请求同时来时每个都要为这次系统调用放开、再抢回 GIL，
+# 实测 50 路连发时 /v1/models 的 P95 有 60 多毫秒。手改了文件最多过这么久生效；自己写的立刻生效
+FILE_CHECK_INTERVAL_S = 1.0
 
 
 class ModelProviderRegistry:
@@ -36,24 +41,31 @@ class ModelProviderRegistry:
         self,
         path: str | Path | None = None,
         on_change: Callable[[str | None], None] | None = None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
     ):
         # 路径由 app/container.py 注入（AgentConfig 已解析 MODEL_PROVIDERS_PATH）；
         # 仓储层不自己读环境变量。
         self.path = Path(path or DEFAULT_CONFIG_PATH)
         self._lock = threading.RLock()
         self._on_change = on_change
+        # 解析、校验好的文件内容，按（inode, 修改时间, 大小）认：每个答疑请求都要查一次模型，
+        # 以前每次都重新打开、解析、逐条校验这个文件，还是在一把全局锁里，50 路并发时排成一队
+        self._cached: tuple[tuple[int, int, int], dict[str, Any]] | None = None
+        self._clock = clock
+        self._checked_at = 0.0
 
     def list_providers(self) -> list[dict[str, Any]]:
         with self._lock:
-            return [self._public_provider(item) for item in self._read_unlocked()["providers"]]
+            return [self._public_provider(item) for item in self._snapshot_unlocked()["providers"]]
 
     def public_registry(self) -> dict[str, Any]:
         with self._lock:
-            return self._public_registry(self._read_unlocked(), include_secrets=False)
+            return self._public_registry(self._snapshot_unlocked(), include_secrets=False)
 
     def enabled_providers(self) -> list[ModelProvider]:
         with self._lock:
-            data = self._read_unlocked()
+            data = self._snapshot_unlocked()
             providers = [item for item in data["providers"] if item["enabled"]]
             default_id = data["default_model_id"]
             providers.sort(key=lambda item: item["served_model_id"] != default_id)
@@ -61,7 +73,7 @@ class ModelProviderRegistry:
 
     def get_enabled_provider(self, served_model_id: str | None = None) -> ModelProvider:
         with self._lock:
-            data = self._read_unlocked()
+            data = self._snapshot_unlocked()
             provider_id = served_model_id or data["default_model_id"]
             for provider in data["providers"]:
                 if provider["served_model_id"] == provider_id and provider["enabled"]:
@@ -70,7 +82,7 @@ class ModelProviderRegistry:
 
     def get_default_model_id(self) -> str:
         with self._lock:
-            return self._read_unlocked()["default_model_id"]
+            return self._snapshot_unlocked()["default_model_id"]
 
     def create_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -126,6 +138,37 @@ class ModelProviderRegistry:
             return self._public_registry(data, include_secrets=False)
 
     def _read_unlocked(self) -> dict[str, Any]:
+        """给要改内容的（增删改、设默认）：一份可以随便改的拷贝。"""
+        return copy.deepcopy(self._snapshot_unlocked())
+
+    def _snapshot_unlocked(self) -> dict[str, Any]:
+        """当前内容，**只读**：文件没变就是上次解析好的那一份，调用方不许改它。
+
+        手改了文件、或者别的进程写了，修改时间或大小会变，最多 FILE_CHECK_INTERVAL_S 之后重新读；
+        自己写的在 _write_unlocked 里直接作废。签名取在读文件之前，读的过程中文件又变了，下一次签名对不上照样会重读。
+        """
+        now = self._clock()
+        if self._cached is not None and now - self._checked_at < FILE_CHECK_INTERVAL_S:
+            return self._cached[1]
+        self._checked_at = now
+        try:
+            stat = self.path.stat()
+        except FileNotFoundError:
+            self._cached = None
+            return {"version": PROVIDER_SCHEMA_VERSION, "default_model_id": "", "providers": []}
+        signature = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        if self._cached is not None and self._cached[0] == signature:
+            return self._cached[1]
+        try:
+            data = self._load_unlocked()
+        except Exception:
+            # 文件坏了：不拿上次的好内容顶着（那样一会儿报错一会儿不报），每次都照实报错，和以前一样
+            self._cached = None
+            raise
+        self._cached = (signature, data)
+        return data
+
+    def _load_unlocked(self) -> dict[str, Any]:
         if not self.path.exists():
             return {"version": PROVIDER_SCHEMA_VERSION, "default_model_id": "", "providers": []}
 
@@ -223,6 +266,7 @@ class ModelProviderRegistry:
                 os.fsync(handle.fileno())
             os.replace(temporary_path, self.path)
             temporary_path = None
+            self._cached = None
         finally:
             if temporary_path is not None:
                 try:
@@ -295,7 +339,8 @@ class ModelProviderRegistry:
 
     @staticmethod
     def _provider_from_dict(provider: dict[str, Any]) -> ModelProvider:
-        return ModelProvider(**provider)
+        # 附加参数是可变的字典，和缓存里的那份分开，用的人改了也不会带坏缓存
+        return ModelProvider(**{**provider, "extra_body": copy.deepcopy(provider.get("extra_body") or {})})
 
     @staticmethod
     def _public_provider(provider: dict[str, Any], include_secrets: bool = False) -> dict[str, Any]:

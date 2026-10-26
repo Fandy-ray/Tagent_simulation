@@ -43,7 +43,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Send
 
 from app.agent.nodes import json_call, sample_quiz_material
-from app.agent.runtime import AgentDeps
+from app.agent.runtime import FANOUT_MAX_CONCURRENCY, AgentDeps
 from app.config import EXAM_CONTEXT_SEPARATOR, EXAM_LLM_TIMEOUT, EXAM_MIN_ATTEMPT_TIMEOUT
 from app.errors.exam_errors import UpstreamLLMError
 from app.prompts.exam_prompts import (
@@ -238,4 +238,4 @@ def build_exam_graph():
     return graph.compile()
 
 
-EXAM_GRAPH = build_exam_graph()
+EXAM_GRAPH = build_exam_graph().with_config(max_concurrency=FANOUT_MAX_CONCURRENCY)

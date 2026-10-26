@@ -21,6 +21,9 @@ import os
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
+from datetime import datetime, timedelta
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +32,114 @@ log = logging.getLogger(__name__)
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+DAY_MS = 86_400_000
+# 统计结果最多用这么久：本进程的写入会立刻让它作废，这个上限只防别的进程（导入脚本之类）写了库
+STATS_MAX_AGE_S = 30.0
+# 最多记住多少项：键里带着日期和学生编号（每个学生的记录各算一项，里面有整段回答），
+# 不设上限的话后端连着跑一学期会越攒越多
+STATS_MAX_ENTRIES = 256
+
+
+class _StatsMemo:
+    """管理后台读的东西（看板、按模型统计、全班概览、学生记录、反馈、库信息）记住结果，直到库里的记录有变化。
+
+    统计一次要扫一段索引（一学期几万条记录时 5~40 毫秒），几个人同时开着看板、或者一个人来回切时间范围，
+    每次都重算就会排队。全班概览、反馈列表单次虽只要一两毫秒，并发时却慢得不成比例（实测 50 路连发时
+    概览从 1.8 毫秒涨到 500 毫秒）：SQLite 每取一行都放开一次 GIL 再抢回来，线程一多每次都要排队。
+    这里按「本进程写过几次」记：版本号没变就直接给上次的结果——和重算出来的一模一样，不是「差不多」；
+    同一项同时有几个请求，只算一次，其余的等它。
+    """
+
+    def __init__(
+        self, *, max_age_s: float = STATS_MAX_AGE_S, max_entries: int = STATS_MAX_ENTRIES, clock=time.monotonic
+    ):
+        self.max_age_s = max_age_s
+        self.max_entries = max_entries
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._key_locks: dict[tuple, threading.Lock] = {}
+        self._entries: OrderedDict[tuple, tuple[int, float, Any]] = OrderedDict()
+        self.version = 0
+
+    def bump(self) -> None:
+        with self._lock:
+            self.version += 1
+
+    def get(self, key: tuple, compute):
+        with self._lock:
+            key_lock = self._key_locks.setdefault(key, threading.Lock())
+        with key_lock:
+            with self._lock:
+                version = self.version
+                hit = self._entries.get(key)
+                if hit is not None and hit[0] == version and self._clock() - hit[1] < self.max_age_s:
+                    self._entries.move_to_end(key)
+                    return hit[2]
+            value = compute()
+            with self._lock:
+                # 算的过程中又有了写入，记下的是旧版本号，下一次自然重算
+                self._entries[key] = (version, self._clock(), value)
+                self._entries.move_to_end(key)
+                while len(self._entries) > self.max_entries:
+                    old, _ = self._entries.popitem(last=False)
+                    self._key_locks.pop(old, None)
+            return value
+
+
+def _writes_records(method):
+    """写学习记录的方法：写完（成不成都算）让记住的统计作废。"""
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._stats.bump()
+
+    return wrapper
+
+
+def _memoized_stats(method):
+    """按参数和今天的日期记住统计结果（过了午夜「最近 N 天」的窗口就挪了）。"""
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        key = (method.__name__, args, tuple(sorted(kwargs.items())), datetime.now().astimezone().date())
+        return self._stats.get(key, lambda: method(self, *args, **kwargs))
+
+    return wrapper
+
+
+class _DayWindow:
+    """最近 days 个自然日（本机时区）：起点、每天的标签，以及 SQL 里「这一行算哪一天」的写法。
+
+    每天都正好 24 小时（窗口没跨夏令时切换，中国大陆一直如此）时直接拿毫秒数整除，
+    不然才用 SQLite 的 'localtime' 换算——那个每一行都要调一次系统时区函数，3 万行要多花十几毫秒。
+    """
+
+    def __init__(self, days: int):
+        today = datetime.now().astimezone().date()
+        dates = [today - timedelta(days=offset) for offset in range(max(days, 1) - 1, -1, -1)]
+        starts = [
+            int(datetime(d.year, d.month, d.day).astimezone().timestamp() * 1000)
+            for d in [*dates, today + timedelta(days=1)]
+        ]
+        self.since = starts[0]
+        self.labels = [d.isoformat() for d in dates]
+        self.uniform = all(later - earlier == DAY_MS for earlier, later in zip(starts, starts[1:]))
+
+    def expr(self, column: str) -> str:
+        if self.uniform:
+            return f"(({column} - {self.since}) / {DAY_MS})"
+        return f"date({column} / 1000, 'unixepoch', 'localtime')"
+
+    def label(self, value) -> str | None:
+        """SQL 里算出来的那一天 → 日期标签。窗口外的（时钟往回拨过）返回 None"""
+        if not self.uniform:
+            return value
+        return self.labels[value] if isinstance(value, int) and 0 <= value < len(self.labels) else None
 
 
 # 每一项是把库从 N-1 版升到 N 版的语句；只能往后追加，不能改已经发布的。
@@ -98,6 +209,32 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_exam_cache_expiry ON exam_cache (expires_at);
     """,
+    # 第 3 版：学生对回答的赞 / 踩（以前只存在页面内存里，刷新就没了，老师也看不到），
+    # 外加按时间范围统计用的索引：管理后台的看板、按模型统计都是「最近 N 天」，
+    # 原来的索引都以学生编号打头，按时间筛只能整表扫。统计要用的列都放进索引（覆盖索引）：
+    # 不然每一行都要回表，答疑记录里带着整段回答，一学期 3 万条时看板一次要 50~130 毫秒，有了它 5~20 毫秒
+    """
+    CREATE TABLE feedback (
+        id          INTEGER PRIMARY KEY,
+        student_id  TEXT,
+        message_key TEXT NOT NULL,                -- 前端那条回答的编号：同一条改评价是覆盖，不是再加一条
+        model       TEXT NOT NULL,
+        mode        TEXT NOT NULL,                -- qa | paper | chat
+        rating      INTEGER NOT NULL,             -- 1 有帮助 / -1 没有帮助
+        question    TEXT NOT NULL,
+        answer      TEXT NOT NULL,
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX idx_feedback_message ON feedback (student_id, message_key);
+    CREATE INDEX idx_feedback_time ON feedback (updated_at, model, rating);
+    CREATE INDEX idx_chat_time ON chat_turns (created_at, mode, student_id, model, finish_reason, duration_ms);
+    CREATE INDEX idx_essay_time ON essay_reviews (created_at, student_id, model, score);
+    CREATE INDEX idx_exam_time ON exam_attempts (created_at, student_id, model, score, total_points);
+    CREATE INDEX idx_exam_reviewed ON exam_attempts (reviewed_at, student_id);
+    DROP INDEX idx_chat_student_time;
+    CREATE INDEX idx_chat_student_time ON chat_turns (student_id, created_at, mode);
+    """,
 ]
 
 
@@ -111,6 +248,7 @@ class LearningStore:
         self._backup_thread: threading.Thread | None = None
         self._backup_lock = threading.Lock()
         self._stop = threading.Event()
+        self._stats = _StatsMemo()
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._migrate(self._conn())
@@ -167,6 +305,7 @@ class LearningStore:
         return self._conn().execute("PRAGMA user_version").fetchone()[0]
 
     # ====================== 写 ======================
+    @_writes_records
     def touch_student(self, student_id: str, name: str = "") -> None:
         at = now_ms()
         self._conn().execute(
@@ -176,6 +315,7 @@ class LearningStore:
             (student_id, name, at, at),
         )
 
+    @_writes_records
     def record_chat(
         self,
         *,
@@ -196,6 +336,7 @@ class LearningStore:
         )
         return cur.lastrowid
 
+    @_writes_records
     def record_essay_review(
         self, *, student_id: str | None, model: str, topic: str | None, text: str, review: dict[str, Any]
     ) -> int:
@@ -207,6 +348,7 @@ class LearningStore:
         )
         return cur.lastrowid
 
+    @_writes_records
     def record_exam_generated(
         self,
         *,
@@ -225,6 +367,7 @@ class LearningStore:
              json.dumps(paper, ensure_ascii=False) if paper is not None else None, now_ms()),
         )
 
+    @_writes_records
     def record_exam_reviewed(
         self,
         *,
@@ -247,6 +390,7 @@ class LearningStore:
         )
 
     # ====================== 出好的私有卷（重启后还能交卷） ======================
+    @_writes_records
     def save_cached_exam(self, exam_id: str, served_model_id: str, exam_json: str, expires_at_ms: int) -> None:
         conn = self._conn()
         conn.execute(
@@ -266,6 +410,7 @@ class LearningStore:
         return (row["served_model_id"], row["exam"], row["expires_at"]) if row else None
 
     # ====================== 读（老师看学情） ======================
+    @_memoized_stats
     def summary(self, limit: int = 500) -> dict[str, Any]:
         conn = self._conn()
         totals = conn.execute(
@@ -288,6 +433,7 @@ class LearningStore:
         ).fetchall()
         return {"totals": dict(totals), "students": [dict(r) for r in rows]}
 
+    @_memoized_stats
     def student_timeline(self, student_id: str, limit: int = 50) -> dict[str, Any]:
         conn = self._conn()
         student = conn.execute("SELECT * FROM students WHERE id = ?", (student_id,)).fetchone()
@@ -315,7 +461,257 @@ class LearningStore:
             "exam_attempts": [decode(r, "paper", "answers", "review") for r in exams],
         }
 
+    # ====================== 赞 / 踩 ======================
+    @_writes_records
+    def record_feedback(
+        self,
+        *,
+        student_id: str,
+        message_key: str,
+        model: str,
+        mode: str,
+        rating: int,
+        question: str,
+        answer: str,
+    ) -> None:
+        """rating 为 0 表示撤销（再点一次同一个按钮），删掉那一条；同一条回答改评价是覆盖。"""
+        conn = self._conn()
+        if rating == 0:
+            conn.execute(
+                "DELETE FROM feedback WHERE student_id = ? AND message_key = ?", (student_id, message_key)
+            )
+            return
+        at = now_ms()
+        conn.execute(
+            "INSERT INTO feedback (student_id, message_key, model, mode, rating, question, answer, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(student_id, message_key) DO UPDATE SET rating = excluded.rating, model = excluded.model, "
+            "mode = excluded.mode, question = excluded.question, answer = excluded.answer, updated_at = excluded.updated_at",
+            (student_id, message_key, model, mode, rating, question, answer, at, at),
+        )
+
+    @_memoized_stats
+    def feedback_list(self, *, limit: int = 100, rating: int | None = None) -> list[dict[str, Any]]:
+        sql = (
+            "SELECT f.id, f.student_id, s.name AS student_name, f.model, f.mode, f.rating, f.question, f.answer, "
+            "f.created_at, f.updated_at FROM feedback f LEFT JOIN students s ON s.id = f.student_id"
+        )
+        params: list[Any] = []
+        if rating is not None:
+            sql += " WHERE f.rating = ?"
+            params.append(rating)
+        sql += " ORDER BY f.updated_at DESC LIMIT ?"
+        params.append(limit)
+        return [dict(row) for row in self._conn().execute(sql, params).fetchall()]
+
+    @_writes_records
+    def delete_feedback(self, feedback_id: int) -> bool:
+        """老师删掉一条（比如演示时自己点的）。返回有没有这一条。"""
+        return self._conn().execute("DELETE FROM feedback WHERE id = ?", (feedback_id,)).rowcount > 0
+
+    # ====================== 管理后台的统计 ======================
+    @_memoized_stats
+    def analytics(self, *, days: int = 14) -> dict[str, Any]:
+        """最近 days 天（按本机时区的自然日）：每天的答疑 / 批改 / 出卷 / 交卷量和活跃学生数。
+
+        「答疑量」只算课程答疑和论文助手；Playground 里直接和模型聊的（mode = chat）单独在 chat_modes 里。
+        「活跃」= 那天有过答疑、批改、出卷或交卷。
+        """
+        conn = self._conn()
+        window = _DayWindow(days)
+        since = window.since
+        created, reviewed = window.expr("created_at"), window.expr("reviewed_at")
+        series: dict[str, dict[str, int]] = {}
+
+        def add(rows, field):
+            for row in rows:
+                label = window.label(row["day"])
+                if label is not None:
+                    series.setdefault(label, {})[field] = row["n"]
+
+        # 每天的答疑量和各场景的总数一趟扫出来（同一段索引，分两句就要扫两遍）
+        modes: dict[str, int] = {}
+        for row in conn.execute(f"SELECT {created} AS day, mode, COUNT(*) AS n FROM chat_turns WHERE created_at >= ? "
+                                "GROUP BY day, mode", (since,)):
+            modes[row["mode"]] = modes.get(row["mode"], 0) + row["n"]
+            label = window.label(row["day"])
+            if row["mode"] != "chat" and label is not None:
+                bucket = series.setdefault(label, {})
+                bucket["chat_turns"] = bucket.get("chat_turns", 0) + row["n"]
+        add(conn.execute(f"SELECT {created} AS day, COUNT(*) AS n FROM essay_reviews WHERE created_at >= ? GROUP BY day",
+                         (since,)), "essay_reviews")
+        add(conn.execute(f"SELECT {created} AS day, COUNT(*) AS n FROM exam_attempts WHERE created_at >= ? GROUP BY day",
+                         (since,)), "exams_generated")
+        add(conn.execute(f"SELECT {reviewed} AS day, COUNT(*) AS n FROM exam_attempts WHERE reviewed_at >= ? GROUP BY day",
+                         (since,)), "exams_reviewed")
+        add(conn.execute(
+            f"SELECT day, COUNT(DISTINCT student_id) AS n FROM ("
+            f"SELECT {created} AS day, student_id FROM chat_turns WHERE created_at >= ? AND mode <> 'chat' "
+            f"AND student_id IS NOT NULL "
+            f"UNION ALL SELECT {created}, student_id FROM essay_reviews WHERE created_at >= ? AND student_id IS NOT NULL "
+            f"UNION ALL SELECT {created}, student_id FROM exam_attempts WHERE created_at >= ? AND student_id IS NOT NULL "
+            f"UNION ALL SELECT {reviewed}, student_id FROM exam_attempts WHERE reviewed_at >= ? AND student_id IS NOT NULL"
+            ") GROUP BY day", (since, since, since, since)), "active_students")
+
+        fields = ("chat_turns", "essay_reviews", "exams_generated", "exams_reviewed", "active_students")
+        daily = [
+            {"day": label, **{field: series.get(label, {}).get(field, 0) for field in fields}}
+            for label in window.labels
+        ]
+        active, students = self._active_students(since)
+        return {
+            "days": days,
+            "daily": daily,
+            "totals": {field: sum(item[field] for item in daily) for field in fields[:4]},
+            "chat_modes": modes,
+            "active_students": active,
+            "students": students,
+        }
+
+    def _active_students(self, since: int, limit: int = 50) -> tuple[int, list[dict[str, Any]]]:
+        """窗口里活跃的学生数（口径同 analytics），和其中最活跃的 limit 个：各自的答疑、批改、交卷次数，按总数从多到少。"""
+        conn = self._conn()
+        counts: dict[str, dict[str, int]] = {}
+        for field, sql in (
+            ("chat_turns", "SELECT student_id, COUNT(*) AS n FROM chat_turns WHERE created_at >= ? "
+                           "AND mode <> 'chat' AND student_id IS NOT NULL GROUP BY student_id"),
+            ("essay_reviews", "SELECT student_id, COUNT(*) AS n FROM essay_reviews WHERE created_at >= ? "
+                              "AND student_id IS NOT NULL GROUP BY student_id"),
+            ("exams_generated", "SELECT student_id, COUNT(*) AS n FROM exam_attempts WHERE created_at >= ? "
+                                "AND student_id IS NOT NULL GROUP BY student_id"),
+            ("exams_reviewed", "SELECT student_id, COUNT(*) AS n FROM exam_attempts WHERE reviewed_at >= ? "
+                               "AND student_id IS NOT NULL GROUP BY student_id"),
+        ):
+            for row in conn.execute(sql, (since,)):
+                counts.setdefault(row["student_id"], {})[field] = row["n"]
+        fields = ("chat_turns", "essay_reviews", "exams_reviewed")
+        ranked = sorted(
+            counts.items(), key=lambda item: sum(item[1].get(field, 0) for field in fields), reverse=True
+        )[:limit]
+        names = {
+            row["id"]: row["name"]
+            for row in conn.execute(
+                f"SELECT id, name FROM students WHERE id IN ({', '.join('?' * len(ranked))})",
+                [student_id for student_id, _ in ranked],
+            )
+        } if ranked else {}
+        return len(counts), [
+            {
+                "id": student_id,
+                "name": names.get(student_id, ""),
+                **{field: values.get(field, 0) for field in fields},
+            }
+            for student_id, values in ranked
+        ]
+
+    @_memoized_stats
+    def model_activity(self, model: str, *, days: int = 30) -> dict[str, Any]:
+        """一个模型最近 days 天每天的答疑量和赞 / 踩，以及它被用在哪些场景（答疑 / 论文 / Playground）。"""
+        conn = self._conn()
+        window = _DayWindow(days)
+        since = window.since
+        series: dict[str, dict[str, int]] = {}
+        for row in conn.execute(
+            f"SELECT {window.expr('created_at')} AS day, COUNT(*) AS n FROM chat_turns "
+            "WHERE created_at >= ? AND model = ? GROUP BY day", (since, model)):
+            if (label := window.label(row["day"])) is not None:
+                series.setdefault(label, {})["chat_turns"] = row["n"]
+        for row in conn.execute(
+            f"SELECT {window.expr('updated_at')} AS day, "
+            "SUM(CASE WHEN rating > 0 THEN 1 ELSE 0 END) AS up, SUM(CASE WHEN rating < 0 THEN 1 ELSE 0 END) AS down "
+            "FROM feedback WHERE updated_at >= ? AND model = ? GROUP BY day", (since, model)):
+            if (label := window.label(row["day"])) is not None:
+                series.setdefault(label, {}).update(thumbs_up=row["up"], thumbs_down=row["down"])
+        fields = ("chat_turns", "thumbs_up", "thumbs_down")
+        modes = conn.execute(
+            "SELECT mode, COUNT(*) AS n FROM chat_turns WHERE created_at >= ? AND model = ? GROUP BY mode",
+            (since, model),
+        ).fetchall()
+        return {
+            "model": model,
+            "days": days,
+            "daily": [
+                {"day": label, **{field: series.get(label, {}).get(field, 0) for field in fields}}
+                for label in window.labels
+            ],
+            "chat_modes": {row["mode"]: row["n"] for row in modes},
+        }
+
+    @_memoized_stats
+    def model_stats(self, *, days: int | None = None) -> list[dict[str, Any]]:
+        """按模型统计：答疑量、平均耗时、答完率、赞踩、批改与整卷平均分。days 为空时统计全部记录。"""
+        conn = self._conn()
+        since = _DayWindow(days).since if days else 0
+        models: dict[str, dict[str, Any]] = {}
+
+        def merge(rows):
+            for row in rows:
+                item = dict(row)
+                models.setdefault(item.pop("model"), {}).update(item)
+
+        merge(conn.execute(
+            "SELECT model, COUNT(*) AS chat_turns, ROUND(AVG(duration_ms)) AS avg_duration_ms, "
+            "SUM(CASE WHEN finish_reason = 'stop' THEN 1 ELSE 0 END) AS completed, "
+            "SUM(CASE WHEN finish_reason IN ('interrupted', 'error') THEN 1 ELSE 0 END) AS interrupted "
+            "FROM chat_turns WHERE created_at >= ? GROUP BY model", (since,)))
+        merge(conn.execute(
+            "SELECT model, COUNT(*) AS essay_reviews, ROUND(AVG(score), 1) AS essay_avg "
+            "FROM essay_reviews WHERE created_at >= ? GROUP BY model", (since,)))
+        merge(conn.execute(
+            "SELECT model, COUNT(*) AS exams_reviewed, ROUND(AVG(score * 100.0 / total_points), 1) AS exam_avg_percent "
+            "FROM exam_attempts WHERE score IS NOT NULL AND total_points > 0 AND created_at >= ? GROUP BY model",
+            (since,)))
+        merge(conn.execute(
+            "SELECT model, SUM(CASE WHEN rating > 0 THEN 1 ELSE 0 END) AS thumbs_up, "
+            "SUM(CASE WHEN rating < 0 THEN 1 ELSE 0 END) AS thumbs_down "
+            "FROM feedback WHERE updated_at >= ? GROUP BY model", (since,)))
+
+        zero = {"chat_turns": 0, "avg_duration_ms": None, "completed": 0, "interrupted": 0, "essay_reviews": 0,
+                "essay_avg": None, "exams_reviewed": 0, "exam_avg_percent": None, "thumbs_up": 0, "thumbs_down": 0}
+        rows = [{"model": model, **zero, **values} for model, values in models.items()]
+        for row in rows:
+            row["completion_rate"] = round(row["completed"] / row["chat_turns"], 3) if row["chat_turns"] else None
+            votes = row["thumbs_up"] + row["thumbs_down"]
+            row["thumbs_up_rate"] = round(row["thumbs_up"] / votes, 3) if votes else None
+        rows.sort(key=lambda row: (row["chat_turns"] + row["essay_reviews"] + row["exams_reviewed"]), reverse=True)
+        return rows
+
+    @_memoized_stats
+    def db_info(self) -> dict[str, Any]:
+        """库文件、大小、各表条数和现有备份，给管理后台的「数据库」页。"""
+        conn = self._conn()
+        tables = ("students", "chat_turns", "essay_reviews", "exam_attempts", "exam_cache", "feedback")
+        counts = {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}
+
+        def size(path: Path) -> int:
+            try:
+                return path.stat().st_size
+            except OSError:
+                return 0
+
+        def modified_ms(path: Path) -> int | None:
+            try:
+                return int(path.stat().st_mtime * 1000)
+            except OSError:  # 刚好被轮换删掉了
+                return None
+
+        wal = self.path.with_name(self.path.name + "-wal")
+        backups = [
+            {"file": item.name, "bytes": size(item), "modified_at": modified}
+            for item in sorted(self.backup_dir.glob("tagent-*.sqlite3"), reverse=True)
+            if (modified := modified_ms(item)) is not None
+        ] if self.backup_dir.exists() else []
+        return {
+            "path": str(self.path),
+            "bytes": size(self.path) + size(wal),
+            "schema_version": self.schema_version,
+            "tables": counts,
+            "backups": backups,
+            "backup_keep": self.backup_keep,
+        }
+
     # ====================== 备份 ======================
+    @_writes_records
     def backup(self) -> Path:
         """在线备份：不停服务、不挡写入（100 万条约 1.6 秒）。只保留最近 backup_keep 份。
 

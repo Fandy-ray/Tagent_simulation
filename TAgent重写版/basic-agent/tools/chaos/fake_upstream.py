@@ -136,12 +136,19 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         frame({"role": "assistant", "content": ""})
-        answer = MARKDOWN_ANSWER if STATE["answer"] == "markdown" else ANSWER
-        for index, char in enumerate(answer):
+        # 后端的结构化调用（批改、出卷）也走流式（为了认出上游卡住），要的是 JSON：和非流式一样按 prompt 认，
+        # 认出来就把 JSON 分块发出去；认不出的才是答疑，发那段固定回答
+        payload = answer_for(data["messages"][-1]["content"])
+        if payload is not None:
+            text = json.dumps(payload, ensure_ascii=False)
+            pieces = [text[i:i + 20] for i in range(0, len(text), 20)]
+        else:
+            pieces = list(MARKDOWN_ANSWER if STATE["answer"] == "markdown" else ANSWER)
+        for index, piece in enumerate(pieces):
             if drop and index == 20:
                 self.connection.shutdown(socket.SHUT_RDWR)
                 return
-            frame({"content": char})
+            frame({"content": piece})
             time.sleep(STATE["token_delay"])
         frame({}, "stop")
         self.wfile.write(b"data: [DONE]\n\n")

@@ -54,6 +54,60 @@ def student(student_id: str):
     return jsonify(timeline)
 
 
+MAX_DAYS = 365
+
+
+def _days(default: int | None) -> int | None:
+    raw = request.args.get("days", "")
+    if not raw:
+        return default
+    if not raw.isdigit() or not 1 <= int(raw) <= MAX_DAYS:
+        raise AgentAPIError(f"days 要在 1 到 {MAX_DAYS} 之间。", 400, "validation_error")
+    return int(raw)
+
+
+@blueprint.get("/analytics")
+def analytics():
+    """数据看板：最近 days 天（默认 14）每天的答疑、批改、出卷、交卷量和活跃学生数。"""
+    return jsonify(_store().analytics(days=_days(14)))
+
+
+@blueprint.get("/models")
+def model_stats():
+    """评测排行榜：按模型统计答疑量、平均耗时、答完率、赞踩、批改与整卷平均分。不带 days 时统计全部记录。"""
+    return jsonify({"models": _store().model_stats(days=_days(None))})
+
+
+@blueprint.get("/models/<string:model>/activity")
+def model_activity(model: str):
+    """排行榜点开一个模型：最近 days 天（默认 30）每天的答疑量、赞 / 踩，和它用在了哪些场景。"""
+    return jsonify(_store().model_activity(model, days=_days(30)))
+
+
+@blueprint.get("/feedback")
+def feedback():
+    """学生点的「有帮助 / 没有帮助」，最新的在前。rating=up|down 只看一种。"""
+    rating = request.args.get("rating", "")
+    if rating not in ("", "up", "down"):
+        raise AgentAPIError("rating 只能是 up 或 down。", 400, "validation_error")
+    value = {"up": 1, "down": -1}.get(rating)
+    return jsonify({"feedback": _store().feedback_list(limit=_limit(100), rating=value)})
+
+
+@blueprint.delete("/feedback/<int:feedback_id>")
+def delete_feedback(feedback_id: int):
+    """删掉一条反馈（演示、调试时自己点的那些）。"""
+    if not _store().delete_feedback(feedback_id):
+        raise AgentAPIError("没有这条反馈（可能已经删了）。", 404, "feedback_not_found")
+    return jsonify({"status": True})
+
+
+@blueprint.get("/db")
+def db_info():
+    """库文件、大小、各表条数和现有备份。"""
+    return jsonify(_store().db_info())
+
+
 @blueprint.post("/backup")
 def backup():
     """立刻备份一份（平时每天自动备一次，比赛、演示前可以手动再备一次）。"""

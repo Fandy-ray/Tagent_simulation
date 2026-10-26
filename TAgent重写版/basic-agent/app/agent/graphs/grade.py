@@ -29,7 +29,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Send
 
 from app.agent.nodes import json_call
-from app.agent.runtime import AgentDeps
+from app.agent.runtime import FANOUT_MAX_CONCURRENCY, AgentDeps
 from app.config import (
     GRADE_CLOZE_BATCH,
     GRADE_ESSAY_BATCH,
@@ -115,4 +115,4 @@ def build_grade_graph():
     return graph.compile()
 
 
-GRADE_GRAPH = build_grade_graph()
+GRADE_GRAPH = build_grade_graph().with_config(max_concurrency=FANOUT_MAX_CONCURRENCY)

@@ -23,7 +23,7 @@ from langgraph.types import Send
 
 from app.agent.graphs.annotate import annotate_sentences
 from app.agent.nodes import json_call, search_text
-from app.agent.runtime import AgentDeps
+from app.agent.runtime import FANOUT_MAX_CONCURRENCY, AgentDeps
 from app.config import (
     ESSAY_CONTEXT_CHAR_LIMIT,
     ESSAY_LLM_TIMEOUT,
@@ -188,7 +188,7 @@ def build_essay_graph():
     return graph.compile()
 
 
-ESSAY_GRAPH = build_essay_graph()
+ESSAY_GRAPH = build_essay_graph().with_config(max_concurrency=FANOUT_MAX_CONCURRENCY)
 
 
 # ====================== 出题 ======================

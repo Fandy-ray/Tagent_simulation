@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 import types
@@ -92,8 +93,14 @@ def generate(llm, kb=None):
 # ====================== 七路同时起步 ======================
 
 
-def test_every_call_starts_before_any_finishes():
-    # 谁也不等谁：没有「先定考点」挡在前面，七路同时发出去
+@pytest.mark.parametrize("cores", [None, 2])
+def test_every_call_starts_before_any_finishes(monkeypatch, cores):
+    # 谁也不等谁：没有「先定考点」挡在前面，七路同时发出去。
+    # 2 核：线程池不指定大小时是「核数 + 4」= 6 个，第 7 路要等前面写完才开始（部署到 2 核服务器时测出）
+    if cores:
+        monkeypatch.setattr(os, "cpu_count", lambda: cores)
+        if hasattr(os, "process_cpu_count"):
+            monkeypatch.setattr(os, "process_cpu_count", lambda: cores)
     llm = ExamLLM(slow={"cloze": 0.2, "choice": 0.2, "essay": 0.2})
     generate(llm)
     starts = [t for _, edge, t in llm.events if edge == "start"]

@@ -18,6 +18,11 @@ from app.schema.provider import ModelProvider
 # 所以单次超时必须比剩余预算再少一截。这条原来在 7 处各抄了一份。
 ATTEMPT_MARGIN_SECONDS = 15.0
 
+# 分路并发的图（整卷 7 路、闪卡各片、判卷各批、小论文三维）同时最多跑几路。各路几乎都在等上游回答，
+# 不占 CPU；不写的话 LangGraph 用 Python 线程池的默认大小「CPU 核数 + 4」，2 核的云服务器上只有 6 个，
+# 整卷的第 7 路要等前面写完才发出去，出一张卷的时间翻倍（2026-10-26 部署到 2 核服务器时测出）
+FANOUT_MAX_CONCURRENCY = 16
+
 
 def attempt_timeout(limit: float, floor: float, budget: float) -> float:
     """单次调用的超时：不超过 limit，不低于 floor，并给预算留出余量。"""

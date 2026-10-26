@@ -35,7 +35,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Send
 
 from app.agent.nodes import json_call_streaming, sample_quiz_material
-from app.agent.runtime import AgentDeps
+from app.agent.runtime import FANOUT_MAX_CONCURRENCY, AgentDeps
 from app.config import (
     EXAM_CONTEXT_SEPARATOR,
     FLASH_CHOICE_SHARDS,
@@ -194,4 +194,4 @@ def build_flash_graph():
     return graph.compile()
 
 
-FLASH_GRAPH = build_flash_graph()
+FLASH_GRAPH = build_flash_graph().with_config(max_concurrency=FANOUT_MAX_CONCURRENCY)

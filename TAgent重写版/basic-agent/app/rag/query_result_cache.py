@@ -22,6 +22,22 @@ class QueryResultCache:
         self._entries: OrderedDict[tuple, tuple[float, list[Document]]] = OrderedDict()
         self._inflight: dict[tuple, Future] = {}
 
+    def clear(self) -> int:
+        """丢掉已缓存的结果（管理后台「清检索缓存」）。正在检索的不动：等它的请求照常拿到结果。"""
+        with self._lock:
+            count = len(self._entries)
+            self._entries.clear()
+            return count
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "enabled": self.enabled,
+                "max_entries": self.max_entries,
+                "ttl_seconds": self.ttl_seconds,
+                "entries": len(self._entries),
+            }
+
     def get_or_load(self, query: str, *, identity: str, k: int, load: Callable[[], list[Document]]) -> list[Document]:
         if not self.enabled or not self.ttl_seconds:
             return load()

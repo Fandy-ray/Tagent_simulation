@@ -757,10 +757,15 @@ Write-Ok "已就绪 (PID $($agentProc.Id))"
 
 # 「怎么跑.txt」让人手动开 /knowledge 看这一项，这里直接替他看了。
 Write-Step '检查知识来源'
-# OpenNotebook 不可达时这个接口要 15~20 秒才返回（ping 会依次试 4 条路径），
-# 超时给足 60 秒，否则最需要这条诊断的时候恰好读不到。
+# 这个接口已经不阻塞（探活挪到后台），刚启动时头一两次读到的 notebook_reachable 还是 null（还没探完）：
+# 以前把 null 也当成「连不上」报。现在是 null 就隔 1 秒再读，最多 10 秒。
+# 只用本地教材时这一项本来就一直是 null，不用等。
 try {
-    $knowledge = Invoke-RestMethod -Uri "http://127.0.0.1:$AgentPort/knowledge" -TimeoutSec 60
+    for ($i = 0; $i -lt 10; $i++) {
+        $knowledge = Invoke-RestMethod -Uri "http://127.0.0.1:$AgentPort/knowledge" -TimeoutSec 10
+        if ($knowledge.source -eq 'local' -or $null -ne $knowledge.notebook_reachable) { break }
+        Start-Sleep -Seconds 1
+    }
     Write-Ok "source = $($knowledge.source)"
     # 本地知识库（教材 + 参考文献）：只用本地时在顶层，composite 时在 sources 里
     $localKb = @($knowledge.knowledge_base) + @($knowledge.knowledge_base.sources) |
@@ -772,6 +777,8 @@ try {
         Write-Warn2 '当前只用本地教材 book1.md。想接笔记本，请确认 OpenNotebook 已启动且 OPEN_NOTEBOOK_API_URL 指向 5055。'
     } elseif ($knowledge.notebook_reachable -eq $true) {
         Write-Ok "notebook_reachable = true（$($knowledge.notebook_url)）"
+    } elseif ($null -eq $knowledge.notebook_reachable) {
+        Write-Warn2 "笔记本服务还在探测，暂时没有结论。稍后打开 http://localhost:$AgentPort/knowledge 看 notebook_reachable。"
     } else {
         Write-Warn2 "notebook_reachable = $($knowledge.notebook_reachable)，笔记本连不上（$($knowledge.notebook_url)）。"
         Write-Warn2 '答疑仍能作答，但内容只来自本地教材。8502 是页面端口，接口在 5055。'

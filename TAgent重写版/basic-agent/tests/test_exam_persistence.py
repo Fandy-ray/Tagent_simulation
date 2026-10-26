@@ -77,7 +77,7 @@ def test_an_old_database_is_upgraded_and_keeps_its_records(db_path, monkeypatch)
     monkeypatch.setattr(learning_store_module, "MIGRATIONS", MIGRATIONS)
 
     upgraded = LearningStore(db_path)
-    assert upgraded.schema_version == len(MIGRATIONS) == 2
+    assert upgraded.schema_version == len(MIGRATIONS)
     assert upgraded._conn().execute("SELECT question FROM chat_turns").fetchone()[0] == "升级前的提问"
     exam = make_exam("exam-after-upgrade")
     ExamCache(persistence=ExamPersistence(upgraded)).put(exam.exam_id, StoredExam(exam=exam, served_model_id="m"))

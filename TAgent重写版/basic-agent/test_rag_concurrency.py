@@ -54,9 +54,16 @@ class FakeExamVectorStore:
         self.documents = documents
         self.calls = []
 
-    def max_marginal_relevance_search(self, query, *, k, fetch_k, lambda_mult=0.5):
-        self.calls.append((query, k, fetch_k, lambda_mult))
+    def max_marginal_relevance_search_by_vector(self, embedding, *, k, fetch_k, lambda_mult=0.5):
+        self.calls.append((embedding, k, fetch_k, lambda_mult))
         return self.documents
+
+
+class TextEmbeddings:
+    """检索词原样「嵌入」成 [文本]，好核对送去检索的是哪一句。"""
+
+    def embed_query(self, text):
+        return [text]
 
 
 class InMemoryKnowledgeBase:
@@ -162,6 +169,7 @@ class RAGConcurrencyTest(unittest.TestCase):
         ]
         vectorstore = FakeExamVectorStore(documents)
         self.knowledge_base.vectorstore = vectorstore
+        self.knowledge_base.embeddings = TextEmbeddings()
         self.knowledge_base._knowledge_chunks = [Document(page_content="fallback", metadata={"h1": "fallback"})]
 
         context = "\n".join(text for text, _ in self.knowledge_base.sample_exam_pieces("queueing theory"))
@@ -169,7 +177,7 @@ class RAGConcurrencyTest(unittest.TestCase):
         # 先捞候选池，再按来源配额挑回 EXAM_SAMPLE_K*2 个；lambda 偏相关
         self.assertEqual(
             vectorstore.calls,
-            [("queueing theory", config.EXAM_MMR_FETCH_K, config.EXAM_MMR_FETCH_K, config.EXAM_MMR_LAMBDA)],
+            [(["queueing theory"], config.EXAM_MMR_FETCH_K, config.EXAM_MMR_FETCH_K, config.EXAM_MMR_LAMBDA)],
         )
         # 候选池必须比要挑的多，配额才有挑的余地（第一版接线就栽在这里）
         self.assertGreater(config.EXAM_MMR_FETCH_K, config.EXAM_SAMPLE_K * 2)

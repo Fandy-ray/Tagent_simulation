@@ -16,6 +16,7 @@ import math
 import random
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -33,13 +34,27 @@ from app.config import (
 )
 from app.rag.citations import annotate_book_locations
 from app.rag.index_cache import IndexCache, atomic_write, cache_lock, json_bytes, loaded_embedding_revision
+from app.rag.query_embedder import QueryEmbedder
 from app.rag.query_result_cache import QueryResultCache
-from app.rag.references import REFERENCE_CHUNK_FORMAT, reference_documents, reference_files, retrieval_windows
+from app.rag.references import (
+    REFERENCE_CHUNK_FORMAT,
+    WINDOW_OVERLAP,
+    WINDOW_SIZE,
+    reference_documents,
+    reference_files,
+    retrieval_windows,
+)
 from app.util.markdown_sanitizer import clean_reference_for_display, truncate_markdown_fragment
 
 
 log = logging.getLogger(__name__)
 EMBEDDING_MODEL = "shibing624/text2vec-base-chinese"
+# 教材按标题切节后再按 800 字一块、相邻两块重叠 50 字切（论文同样大小，另见 references.py 的检索窗口）。
+# 管理后台「文档」页直接展示这几个常量，别在别处再抄一遍数字
+TEXTBOOK_CHUNK_SIZE = 800
+TEXTBOOK_CHUNK_OVERLAP = 50
+# 答疑每次取几块不重复的材料给模型
+QA_RETRIEVE_K = 4
 # 切块参数或缓存格式一变就要改这个值：缓存按「教材内容 + 嵌入模型 + 这个值」认，
 # 改了才会重建，不然会拿旧切法的索引配新切法的片段
 INDEX_CACHE_FORMAT = "faiss-v1-md-headers-800-50-locations"
@@ -61,10 +76,104 @@ def _load_default_embeddings():
             model_name=EMBEDDING_MODEL, model_kwargs={"local_files_only": True}
         )
         log.info("嵌入模型走本地缓存：%s", EMBEDDING_MODEL)
-        return embeddings
+        return _half_precision_on_gpu(embeddings)
     except Exception as exc:
         log.warning("本地缓存里没有可用的嵌入模型（%s），改为联网下载 %s", exc, EMBEDDING_MODEL)
-    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    return _half_precision_on_gpu(HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL))
+
+
+def _half_precision_on_gpu(embeddings):
+    """在显卡上（Apple 的 MPS、NVIDIA 的 CUDA）用半精度算：成批快 25% 左右，结果不变——
+    实测 50 个问题的前 4 块和全精度一块不差、顺序也一样，同一句的向量余弦相似度 0.999999。
+    CPU 上半精度反而慢（有的算子还不支持），不动。"""
+    client = getattr(embeddings, "_client", None)
+    device = getattr(getattr(client, "device", None), "type", "")
+    if device in ("mps", "cuda"):
+        client.half()
+        log.info("嵌入模型在 %s 上用半精度", device)
+    return embeddings
+
+
+# 最近这么久里有人检索，就让嵌入模型保持醒着（见 app/rag/query_embedder.py）。只在显卡上做：
+# 空算的间隔：实测隔 0.05~1 秒再算一句约 30 毫秒，隔 2 秒以上就到 56 毫秒，1 秒偶尔也会到 74。
+# CPU 上（没有独显的 Windows 笔记本等）隔 0.4 秒、2 秒、5 秒再算都是 43~44 毫秒，空算毫无用处，
+# 反而上课时一直占着约 7% 的 CPU（4 线程），还和真的检索排一个队
+QUERY_KEEP_WARM_SECONDS = 120.0
+QUERY_WARM_INTERVAL_SECONDS = 0.4
+
+
+def _query_embedder_for(embeddings) -> QueryEmbedder:
+    """一批检索词怎么一起算。HuggingFace 的嵌入没给查询专用参数时，embed_query 就是单条的 embed_documents，
+    可以直接成批，也值得让它保持醒着；在显卡上再补成固定形状（见 _FixedShapeQueries）。
+    别的实现（单测里的假嵌入等）不知道两者是否等价，就一条条调 embed_query。"""
+    if type(embeddings).__name__ == "HuggingFaceEmbeddings" and not getattr(embeddings, "query_encode_kwargs", None):
+        batch = embeddings.embed_documents
+        on_gpu = bool(_gpu_device(embeddings))
+        if not getattr(embeddings, "encode_kwargs", None) and on_gpu:
+            batch = _FixedShapeQueries(embeddings._client)
+        return QueryEmbedder(
+            batch,
+            keep_warm_s=QUERY_KEEP_WARM_SECONDS if on_gpu else 0.0,
+            warm_interval_s=QUERY_WARM_INTERVAL_SECONDS,
+        )
+    return QueryEmbedder(lambda texts: [embeddings.embed_query(text) for text in texts])
+
+
+def _gpu_device(embeddings) -> str:
+    device = getattr(getattr(getattr(embeddings, "_client", None), "device", None), "type", "")
+    return device if device in ("mps", "cuda") else ""
+
+
+class _FixedShapeQueries:
+    """在显卡上算检索词：每一批先补成固定的几种形状再算。
+
+    显卡上 PyTorch 每遇到一种新的输入形状（几句 × 多长）都要现编一遍算子，第一次算比之后慢好几倍。
+    实测（几句到十几句、长短不一的检索词每 0.3 秒来一批）：P95 212 毫秒；同一组形状再来一遍只要 78 毫秒。
+    条数补到 2 的幂、长度补到 16 的倍数之后，形状只剩几十种，启动时先各算一遍（prewarm），之后就都是熟的。
+    补的是空句和填充位，均值池化只看真实的字，算出的向量和不补时一模一样（实测最大差 0.0）。
+    """
+
+    LENGTH_STEP = 16
+
+    def __init__(self, model):
+        import torch
+
+        self._torch = torch
+        self._model = model
+        self._tokenize = getattr(model, "preprocess", None) or model.tokenize
+        self._pad_id = model.tokenizer.pad_token_id or 0
+        self._max_length = model.max_seq_length
+
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        count = len(texts)
+        size = 1 << (count - 1).bit_length()
+        features = self._tokenize(list(texts) + [""] * (size - count))
+        length = features["input_ids"].shape[1]
+        target = max(length, min(-(-length // self.LENGTH_STEP) * self.LENGTH_STEP, self._max_length))
+        prepared = {}
+        for key, value in features.items():
+            if isinstance(value, self._torch.Tensor):
+                if value.dim() == 2 and target > length:
+                    fill = self._pad_id if key == "input_ids" else 0
+                    value = self._torch.nn.functional.pad(value, (0, target - length), value=fill)
+                value = value.to(self._model.device)
+            prepared[key] = value
+        with self._torch.inference_mode():
+            vectors = self._model.forward(prepared)["sentence_embedding"]
+        return vectors[:count].float().cpu().tolist()
+
+    def prewarm(self, *, max_batch: int = 16, max_length: int = 64, run=None) -> None:
+        """把形状先各算一遍（条数 1、2、4…max_batch × 长度 16、32…max_length）。
+        run 给了就每种形状交给它去跑（QueryEmbedder.run_exclusive：不和真的检索同时算）。"""
+        size = 1
+        while size <= max_batch:
+            for length in range(self.LENGTH_STEP, max_length + 1, self.LENGTH_STEP):
+                texts = ["排" * (length - 2)] * size  # 加上首尾两个特殊符号正好 length
+                if run is None:
+                    self(texts)
+                else:
+                    run(lambda texts=texts: self(texts))
+            size *= 2
 
 
 class KnowledgeBase:
@@ -104,6 +213,12 @@ class KnowledgeBase:
             enabled=retrieval_cache_enabled, max_entries=retrieval_cache_max_entries,
             ttl_seconds=retrieval_cache_ttl_seconds,
         )
+        # 检索词的嵌入（同时到的合成一批、算过的记住），跟着嵌入模型走：模型换了就换一个。
+        # 建它要加锁：几个线程同时做第一次检索时各建一个的话，「同一时刻只算一批」就管不住了
+        self._query_embedder: QueryEmbedder | None = None
+        self._query_embedder_model = None
+        self._query_embedder_lock = threading.Lock()
+        self._query_shapes_prewarmed = False
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -113,9 +228,109 @@ class KnowledgeBase:
             "indexed": self.vectorstore is not None,
         }
 
+    def admin_snapshot(self) -> dict[str, Any]:
+        """管理后台「文档」页：这个知识库实际在用的配置和状态。只读，不会触发加载模型或建索引。"""
+        chunks = self._knowledge_chunks or []
+        paper_chunks = sum(1 for chunk in chunks if chunk.metadata.get("source") == "reference")
+        identity = self._model_identity() if self.embeddings is not None else None
+        index = getattr(self.vectorstore, "index", None)
+        return {
+            "kind": "local",
+            "textbook": {"file": self.knowledge_file.name, "chunks": len(chunks) - paper_chunks},
+            "references": {
+                "enabled": self.references_dir is not None,
+                "papers": self._reference_count,
+                "chunks": paper_chunks,
+            },
+            "embedding": {
+                "model": EMBEDDING_MODEL,
+                "loaded": self.embeddings is not None,
+                "revision": identity["revision"] if identity else None,
+            },
+            "chunking": {
+                "chunk_size": TEXTBOOK_CHUNK_SIZE,
+                "chunk_overlap": TEXTBOOK_CHUNK_OVERLAP,
+                "reference_window": WINDOW_SIZE,
+                "reference_window_overlap": WINDOW_OVERLAP,
+            },
+            "retrieval": {
+                "qa_top_k": QA_RETRIEVE_K,
+                "cache": self._retrieval_cache.stats(),
+                "query_embeddings": self._query_embedder.stats() if self._query_embedder else None,
+            },
+            "exam": {
+                "sample_k": EXAM_SAMPLE_K,
+                "textbook_min_share": EXAM_TEXTBOOK_MIN_SHARE,
+                "mmr_lambda": EXAM_MMR_LAMBDA,
+                "mmr_fetch_k": EXAM_MMR_FETCH_K,
+                "context_char_limit": EXAM_CONTEXT_CHAR_LIMIT,
+            },
+            "index": {
+                "ready": self.vectorstore is not None,
+                "vectors": int(index.ntotal) if index is not None else None,
+                "disk_cache": self.index_cache_dir is not None,
+            },
+        }
+
+    def clear_retrieval_cache(self) -> int:
+        return self._retrieval_cache.clear()
+
+    def reload(self) -> dict[str, Any]:
+        """重新读教材和参考文献，建好（或从缓存读回）索引后整体换上。补下载了论文不用重启后端。
+
+        在旁边用同样的配置另建一份，建好之前现在这份照常服务；换的时候切块、索引、来源指纹、
+        检索缓存一起换，正在进行的检索拿着旧对象做完，不会读到建了一半的状态。
+        块向量有缓存，只嵌入新出现的块（加一篇论文几秒）。嵌入模型共用，不重新加载。
+        """
+        shadow = KnowledgeBase(
+            text_db_dir=self.text_db_dir,
+            knowledge_file=self.knowledge_file,
+            embeddings=self.embeddings,
+            index_cache_dir=self.index_cache_dir,
+            references_dir=self.references_dir,
+            embedding_revision=self.embedding_revision,
+            retrieval_cache_enabled=self._retrieval_cache.enabled,
+            retrieval_cache_max_entries=self._retrieval_cache.max_entries,
+            retrieval_cache_ttl_seconds=self._retrieval_cache.ttl_seconds,
+        )
+        # 嵌入模型是共用的：这边已经做过第一次推理，那边就不必再做（见 ensure_index）
+        shadow._query_ready = self._query_ready
+        shadow.ensure_index()
+        with self._vector_lock:
+            self._knowledge_chunks = shadow._knowledge_chunks
+            self._reference_count = shadow._reference_count
+            self._source_sha256 = shadow._source_sha256
+            self._retrieval_identity = None
+            self._retrieval_cache = shadow._retrieval_cache
+            self.embeddings = shadow.embeddings
+            self.vectorstore = shadow.vectorstore
+            self._query_ready = True
+        return {"chunks": len(self._knowledge_chunks or []), "papers": self._reference_count}
+
     def warm_up(self) -> None:
-        """启动时预热：加载嵌入模型并建好索引，避免首个请求扛这份开销。"""
+        """启动时预热：加载嵌入模型并建好索引，避免首个请求扛这份开销。
+
+        在显卡上再把检索词的形状各算一遍（见 _FixedShapeQueries）：最常见的（≤16 句、≤64 字）当场算，
+        约 1 秒；大一些的（≤32 句、≤96 字）放到后台一种一种地算，约 2 秒，不拖慢启动，也不和真的检索抢。
+        只做一次：组合知识库在这个来源出错恢复时会再调 warm_up（那时已经在答疑了），不必也不该再算一遍；
+        每种形状都走嵌入器的队列（run_exclusive），不会和真的检索同时上显卡。
+        """
         self.ensure_index()
+        embedder = self._current_query_embedder()
+        prewarm = getattr(embedder.batch_function, "prewarm", None)
+        with self._query_embedder_lock:
+            if prewarm is None or self._query_shapes_prewarmed:
+                return
+            self._query_shapes_prewarmed = True
+        started = time.perf_counter()
+        prewarm(run=embedder.run_exclusive)
+        log.info("检索词嵌入的常见形状预热完：%.1f 秒", time.perf_counter() - started)
+        threading.Thread(
+            target=prewarm,
+            kwargs={"max_batch": 32, "max_length": 96, "run": embedder.run_exclusive},
+            name="query-shape-prewarm",
+            daemon=True,
+        ).start()
 
     def search(self, query: str, *, k: int = 3, notebook_ids: list[str] | None = None) -> list[Document]:
         """相似度检索。判卷时给解答题补充知识片段用。"""
@@ -127,7 +342,7 @@ class KnowledgeBase:
 
     def retrieve(self, query: str, notebook_ids: list[str] | None = None):
         self.ensure_index()
-        documents = self._distinct_search(query, 4)
+        documents = self._distinct_search(query, QA_RETRIEVE_K)
         context = "\n\n---\n\n".join(document.page_content for document in documents)
         return context, documents
     def _distinct_search(self, query: str, k: int) -> list[Document]:
@@ -142,10 +357,24 @@ class KnowledgeBase:
             query, identity=self._retrieval_identity, k=k, load=lambda: self._uncached_distinct_search(query, k),
         )
 
+    def _current_query_embedder(self) -> QueryEmbedder:
+        with self._query_embedder_lock:
+            embeddings = self.embeddings
+            embedder = self._query_embedder
+            if embedder is None or self._query_embedder_model is not embeddings:
+                embedder = _query_embedder_for(embeddings)
+                self._query_embedder, self._query_embedder_model = embedder, embeddings
+                self._query_shapes_prewarmed = False
+            return embedder
+
+    def _embed_query(self, text: str) -> list[float]:
+        return self._current_query_embedder().embed(text)
+
     def _uncached_distinct_search(self, query: str, k: int) -> list[Document]:
         fetch = k * _FETCH_FACTOR
+        vector = self._embed_query(query)
         while True:
-            documents = self.vectorstore.similarity_search(query, k=fetch)
+            documents = self.vectorstore.similarity_search_by_vector(vector, k=fetch)
             picked = _distinct(documents, k)
             if len(picked) >= k or len(documents) < fetch:
                 return picked
@@ -339,7 +568,7 @@ class KnowledgeBase:
             headers_to_split_on=[("#", "h1"), ("##", "h2"), ("###", "h3")]
         )
         sections = header_splitter.split_text(content)
-        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
+        splitter = RecursiveCharacterTextSplitter(chunk_size=TEXTBOOK_CHUNK_SIZE, chunk_overlap=TEXTBOOK_CHUNK_OVERLAP)
         chunks = splitter.split_documents(sections)
         if not chunks:
             raise RuntimeError("The local knowledge document produced no searchable chunks.")
@@ -362,8 +591,8 @@ class KnowledgeBase:
             # 多挑一倍备用的理由不变：论文的几个检索窗口会指向同一块，
             # 下面按内容去重时会少，才往后补。
             # lambda_mult 偏相关（默认 0.5 对短主题太散）。
-            candidates = self.vectorstore.max_marginal_relevance_search(
-                topic,
+            candidates = self.vectorstore.max_marginal_relevance_search_by_vector(
+                self._embed_query(topic),
                 k=EXAM_MMR_FETCH_K,
                 fetch_k=EXAM_MMR_FETCH_K,
                 lambda_mult=EXAM_MMR_LAMBDA,
