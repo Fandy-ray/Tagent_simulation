@@ -3,10 +3,18 @@ import adapter from '@sveltejs/adapter-auto';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
+import { NOTEBOOK_PROXY_PREFIX, notebookRouteAllowed } from './notebook-proxy';
+
+// 笔记本服务的口令：和 basic-agent 读的是同几个名字（启动脚本把 .env.runtime 导进了进程环境）
+const notebookPassword =
+	process.env.OPEN_NOTEBOOK_PASSWORD ||
+	process.env.OPEN_NOTEBOOK_TOKEN ||
+	process.env.NOTEBOOK_TOKEN ||
+	'';
+
 export default defineConfig({
 	server: {
 		proxy: {
-			// OpenNoteBook 的 5055 由 $lib/apis/opennotebook.ts 直连，不走代理。
 			'/agent-api': {
 				// 默认连本机 5001；压测或连别的后端时用 AGENT_API_TARGET 指过去（正式的 basic-agent 照样占着 5001）
 				target: process.env.AGENT_API_TARGET || 'http://127.0.0.1:5001',
@@ -16,6 +24,19 @@ export default defineConfig({
 				// basic-agent 凭它认出「这是从前端端口进来的」：开了 --lan 时那可能是局域网里的任何人，
 				// 所以原样转发给模型的 /v1/raw 不对这类请求开放（见 basic-agent 的 app/api/security.py）。
 				headers: { 'x-tagent-via-frontend': '1' }
+			},
+			[NOTEBOOK_PROXY_PREFIX]: {
+				// 只对外开了 5173 的服务器上用：tagentnote/.env 里写 PUBLIC_OPENNOTEBOOK_API_URL=/opennotebook-api，
+				// 浏览器就经这里连本机的笔记本服务，不用另开 5055；笔记本服务设了口令时由这里代为带上，口令不进浏览器。
+				// 本机开发不写那一项时用不到这条，照旧由 $lib/apis/opennotebook.ts 直连 5055
+				target: process.env.OPENNOTEBOOK_API_TARGET || 'http://127.0.0.1:5055',
+				changeOrigin: true,
+				rewrite: (path) => path.slice(NOTEBOOK_PROXY_PREFIX.length),
+				headers: notebookPassword
+					? { authorization: `Bearer ${notebookPassword}`, 'x-password': notebookPassword }
+					: {},
+				// 返回 false 时 Vite 直接回 404、不转发
+				bypass: (req) => (notebookRouteAllowed(req.method, req.url) ? undefined : false)
 			}
 		}
 	},
