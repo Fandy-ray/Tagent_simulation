@@ -34,28 +34,14 @@
 	<title>智能测评 | TAgent</title>
 </svelte:head>
 
-<div class="min-h-[100dvh] w-full bg-gray-900 text-gray-100">
-	<div class="mx-auto flex h-[100dvh] max-w-6xl flex-col">
-		<div class="flex shrink-0 items-center justify-between px-4 pt-3">
-			<button
-				type="button"
-				class="text-sm text-gray-400 transition hover:text-gray-200"
-				onclick={() => goto(resolve(returnPath))}
-			>
-				‹ 返回
-			</button>
-
-			<div class="font-mono text-xs text-gray-400">测评智能体</div>
-		</div>
-
-		<div class="m-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-gray-800">
-			<ExamShell
-				fullPage={true}
-				{modelId}
-				{initialTopic}
-				{initialMode}
-				onModeChange={rememberMode}
-			/>
-		</div>
-	</div>
+<!-- 和答疑页一样整页铺满、不套外框；离开这一页的 ‹ 在 ExamShell 顶栏里（停在首屏时） -->
+<div class="h-[100dvh] w-full bg-gray-900 text-gray-100">
+	<ExamShell
+		fullPage={true}
+		{modelId}
+		{initialTopic}
+		{initialMode}
+		onModeChange={rememberMode}
+		onLeave={() => goto(resolve(returnPath))}
+	/>
 </div>

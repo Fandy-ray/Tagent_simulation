@@ -2,7 +2,7 @@
  * 模型登记（basic-agent 的 /admin/model-providers）。
  *
  * 要管理口令（TAgent重写版/.env.runtime 里的 AGENT_ADMIN_TOKEN，启动脚本会自动生成）。
- * 口令只由调用方传进来、随请求头发出去，这里不存。
+ * 口令由调用方传进来、随请求头发出去，这里不存（记住口令见 $lib/apis/admin）。
  */
 import { agentBase } from '$lib/apis/agent';
 
@@ -17,6 +17,8 @@ export type ModelProvider = {
 	created_at: string;
 	updated_at: string;
 	extra_body: Record<string, unknown>;
+	/** 只有出题、批改带的厂商参数，答疑不带 */
+	structured_extra_body: Record<string, unknown>;
 	api_key_masked: string;
 	has_api_key: boolean;
 };
@@ -38,6 +40,7 @@ export type ModelProviderInput = {
 	temperature: number;
 	enabled: boolean;
 	extra_body: Record<string, unknown>;
+	structured_extra_body: Record<string, unknown>;
 };
 
 /** 后端校验的英文报错 → 中文。没对上的原样附在后面，免得把真正的原因藏起来。 */

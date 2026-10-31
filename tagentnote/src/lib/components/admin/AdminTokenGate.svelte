@@ -1,7 +1,13 @@
 <script lang="ts">
-	import { AdminError, adminLockReason, verifyAdminToken } from '$lib/apis/admin';
+	import {
+		AdminError,
+		adminLockReason,
+		rememberAdminToken,
+		verifyAdminToken
+	} from '$lib/apis/admin';
 
 	let token = $state('');
+	let remember = $state(false);
 	let busy = $state(false);
 	let error = $state('');
 
@@ -12,6 +18,7 @@
 		error = '';
 		try {
 			await verifyAdminToken(token);
+			rememberAdminToken(remember ? token : '');
 		} catch (cause) {
 			error = cause instanceof AdminError ? cause.message : '验证口令时出错了，再试一次。';
 		} finally {
@@ -46,10 +53,19 @@
 				disabled={busy || !token.trim()}>{busy ? '验证中…' : '进入'}</button
 			>
 		</div>
+		<label class="mt-3 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+			<input type="checkbox" bind:checked={remember} />
+			在这台电脑上记住（公用电脑别勾，点「锁定」会清掉）
+		</label>
 		<p class="mt-2 text-xs leading-5 text-gray-500">
 			在 <code class="text-gray-700 dark:text-gray-300">TAgent重写版/.env.runtime</code> 里，<code
 				class="text-gray-700 dark:text-gray-300">AGENT_ADMIN_TOKEN=</code
-			> 后面那一串（启动脚本会自动生成）。只留在这个标签页的内存里，刷新或关掉页面后要重新输入。
+			>
+			后面那一串（启动脚本会自动生成）。部署在服务器上时，在服务器的部署目录运行
+			<code class="text-gray-700 dark:text-gray-300"
+				>bash TAgent重写版/scripts/show-admin-token.sh</code
+			>
+			就能看到。不勾记住时，刷新或关掉页面后要重新输入。
 		</p>
 		{#if !error && $adminLockReason}<p
 				class="mt-3 border-l-2 border-amber-500 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200"

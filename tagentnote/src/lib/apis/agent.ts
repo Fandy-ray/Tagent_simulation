@@ -45,13 +45,13 @@ const errorMessage = (payload: unknown, fallback: string) => {
 
 	const code = record.error?.code;
 	if (code === 'model_not_found') {
-		return '没有这个模型。请回到选择页，选已登记的 DeepSeek 后再进入答疑。';
+		return '当前选的模型不可用（还没登记，或者已经停用）。请先到「登记 / 管理模型」登记一个，或回到选择页换一个模型。';
 	}
 	if (code === 'upstream_unavailable') {
-		return '已经检索了知识库，但连不上 DeepSeek。请检查网络，或确认模型名和 Key 能访问 https://api.deepseek.com。';
+		return '已经检索了知识库，但连不上模型服务。请检查网络，或确认登记的接口地址、模型名和 Key 能用。';
 	}
 	if (code === 'upstream_authentication_error') {
-		return 'DeepSeek 拒绝了当前 Key，请重新登记模型。';
+		return '模型服务拒绝了当前 Key，请重新登记模型。';
 	}
 	if (code === 'message_too_long' || code === 'messages_too_long') {
 		return '这次要发送的内容太长了（单条上限 2 万字）。删掉部分附件内容或任务卡里的长字段再试。';

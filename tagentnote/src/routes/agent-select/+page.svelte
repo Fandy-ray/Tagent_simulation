@@ -62,12 +62,9 @@
 			return;
 		}
 
-		if (type === 'quiz') {
-			void goto(resolve(`/exam?model=${encodeURIComponent(selectedModelId)}`));
-			return;
-		}
-
-		void goto(resolve(`/qa?model=${encodeURIComponent(selectedModelId)}`));
+		// 模型列表还没回来时点进去：不带 model，到了那边按列表选默认的（别带一个空的 model=）
+		const query = selectedModelId ? `?model=${encodeURIComponent(selectedModelId)}` : '';
+		void goto(resolve(`${type === 'quiz' ? '/exam' : '/qa'}${query}`));
 	};
 
 	const getIconBackground = (accent: AgentCard['accent']) => {

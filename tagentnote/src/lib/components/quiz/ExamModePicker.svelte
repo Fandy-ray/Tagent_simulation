@@ -22,8 +22,10 @@
 	}: Props = $props();
 
 	const cardClass = (value: ExamMode) =>
-		`rounded-2xl border p-4 text-left transition ${
-			mode === value ? 'border-blue-500 bg-blue-950/40' : 'border-gray-700 hover:bg-gray-800/60'
+		`rounded-3xl border p-5 text-left transition ${
+			mode === value
+				? 'border-white/50 bg-white/[0.06]'
+				: 'border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05]'
 		}`;
 
 	const pick = (value: ExamMode) => {
@@ -32,8 +34,33 @@
 	};
 </script>
 
+<!-- 选中标记：以前靠蓝框一眼看出选的是哪张，换成白灰配色后光靠边框太淡，补一个勾。
+     状态本身由按钮的 aria-pressed 报给读屏，这里只是给眼睛看的 -->
+{#snippet checkmark(on: boolean)}
+	<span
+		class={`flex size-5 shrink-0 items-center justify-center rounded-full border transition ${
+			on ? 'border-white bg-white text-black' : 'border-white/25'
+		}`}
+		aria-hidden="true"
+	>
+		{#if on}
+			<svg
+				class="size-3"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="3"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+			>
+				<path d="M20 6 9 17l-5-5"></path>
+			</svg>
+		{/if}
+	</span>
+{/snippet}
+
 <div class="flex h-full flex-col items-center justify-center overflow-y-auto px-4 py-4 text-center">
-	<div class="text-xl font-semibold tracking-tight">今天想怎么练？</div>
+	<div class="text-xl font-semibold tracking-tight text-white">今天想怎么练？</div>
 
 	<p class="mt-2 max-w-md text-sm leading-relaxed text-gray-400">
 		两种模式用同一套课程知识库，区别在题型、判定方式和一次要花多久。
@@ -64,10 +91,12 @@
 				<div class="text-[15px] font-semibold">闪卡模式</div>
 
 				<span
-					class="ml-auto rounded-md border border-blue-900 bg-blue-950/60 px-1.5 py-0.5 text-[11px] font-semibold text-blue-300"
+					class="ml-auto rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-300"
 				>
 					推荐
 				</span>
+
+				{@render checkmark(mode === 'flash')}
 			</div>
 
 			<p class="mt-2.5 text-[13px] leading-relaxed text-gray-400">
@@ -80,15 +109,13 @@
 					6~12：分片各出 3~4 张、共 9~12 张，去重后会掉几张，低于 6 张
 					（FLASH_DECK_MIN_CARDS）才算失败。写 9~12 是拿去重前的上限当承诺。
 				-->
-				<span class="rounded-md bg-white/[0.08] px-2 py-1 font-mono text-[11px] text-gray-300">
+				<span class="rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] text-gray-300">
 					6~12 张
 				</span>
-				<span class="rounded-md bg-white/[0.08] px-2 py-1 font-mono text-[11px] text-gray-300">
+				<span class="rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] text-gray-300">
 					填空 + 选择
 				</span>
-				<span
-					class="rounded-md border border-emerald-900 bg-emerald-950/40 px-2 py-1 font-mono text-[11px] text-emerald-300"
-				>
+				<span class="rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-300">
 					判定即时 · 不调模型
 				</span>
 			</div>
@@ -117,6 +144,8 @@
 				</svg>
 
 				<div class="text-[15px] font-semibold">整卷模式</div>
+
+				<span class="ml-auto">{@render checkmark(mode === 'full')}</span>
 			</div>
 
 			<p class="mt-2.5 text-[13px] leading-relaxed text-gray-400">
@@ -125,15 +154,13 @@
 			</p>
 
 			<div class="mt-3 flex flex-wrap gap-1.5">
-				<span class="rounded-md bg-white/[0.08] px-2 py-1 font-mono text-[11px] text-gray-300">
+				<span class="rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] text-gray-300">
 					16~21 题 · 100 分
 				</span>
-				<span class="rounded-md bg-white/[0.08] px-2 py-1 font-mono text-[11px] text-gray-300">
+				<span class="rounded-full bg-white/[0.06] px-2.5 py-1 text-[11px] text-gray-300">
 					含大题
 				</span>
-				<span
-					class="rounded-md border border-amber-900 bg-amber-950/40 px-2 py-1 font-mono text-[11px] text-amber-300"
-				>
+				<span class="rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] text-amber-300">
 					提交后还要等模型批改
 				</span>
 			</div>
@@ -156,7 +183,7 @@
 
 	<button
 		type="button"
-		class="mt-5 rounded-xl bg-white px-6 py-2.5 text-sm font-medium text-gray-900 transition hover:bg-gray-200"
+		class="mt-5 min-h-10 rounded-full bg-white px-6 text-sm font-medium text-black transition hover:bg-gray-200"
 		onclick={onStart}
 	>
 		{mode === 'flash' ? '开始刷闪卡' : '生成整卷'}

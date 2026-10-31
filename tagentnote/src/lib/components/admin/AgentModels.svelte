@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
-	import { adminLockReason, adminToken } from '$lib/apis/admin';
+	import { adminLockReason, adminToken, clearAdminToken } from '$lib/apis/admin';
 	import {
 		createModelProvider,
 		deleteModelProvider,
@@ -27,6 +27,7 @@
 		enabled: boolean;
 		/** 附加参数的 JSON 原文，保存时才解析 */
 		extra_body: string;
+		structured_extra_body: string;
 	};
 
 	let registry = $state<ModelRegistry>({ version: 1, default_model_id: '', providers: [] });
@@ -66,7 +67,8 @@
 			api_key: '',
 			temperature: 0.1,
 			enabled: true,
-			extra_body: ''
+			extra_body: '',
+			structured_extra_body: ''
 		};
 	}
 
@@ -80,7 +82,7 @@
 		// 口令被后端拒了（后端换过口令）：和别的管理页一样回到输入口令那一页
 		if (error.status === 403) {
 			adminLockReason.set(error.message);
-			adminToken.set('');
+			clearAdminToken();
 		}
 		return error.message;
 	}
@@ -116,12 +118,15 @@
 			enabled: provider.enabled,
 			extra_body: Object.keys(provider.extra_body ?? {}).length
 				? JSON.stringify(provider.extra_body, null, 2)
+				: '',
+			structured_extra_body: Object.keys(provider.structured_extra_body ?? {}).length
+				? JSON.stringify(provider.structured_extra_body, null, 2)
 				: ''
 		};
 	}
 
-	function parseExtraBody(): Record<string, unknown> | string {
-		const text = form.extra_body.trim();
+	function parseExtraBody(raw: string): Record<string, unknown> | string {
+		const text = raw.trim();
 		if (!text) return {};
 		try {
 			const value = JSON.parse(text) as unknown;
@@ -159,8 +164,11 @@
 			)
 		)
 			return '该模型 ID 已存在';
-		const extra = parseExtraBody();
-		return typeof extra === 'string' ? extra : '';
+		for (const raw of [form.extra_body, form.structured_extra_body]) {
+			const extra = parseExtraBody(raw);
+			if (typeof extra === 'string') return extra;
+		}
+		return '';
 	}
 
 	async function saveProvider() {
@@ -179,7 +187,8 @@
 			api_key: form.auth_mode === 'none' ? '' : form.api_key,
 			temperature: Number(form.temperature),
 			enabled: form.enabled,
-			extra_body: parseExtraBody() as Record<string, unknown>
+			extra_body: parseExtraBody(form.extra_body) as Record<string, unknown>,
+			structured_extra_body: parseExtraBody(form.structured_extra_body) as Record<string, unknown>
 		};
 		try {
 			if (editingId) await updateModelProvider($adminToken, editingId, input);
@@ -205,6 +214,7 @@
 		temperature: provider.temperature,
 		enabled: provider.enabled,
 		extra_body: provider.extra_body ?? {},
+		structured_extra_body: provider.structured_extra_body ?? {},
 		...patch
 	});
 
@@ -534,9 +544,22 @@
 					id="agent-provider-extra"
 					class="field-input min-h-16 font-mono text-xs"
 					bind:value={form.extra_body}
+					placeholder={'{"top_k": 5}'}></textarea>
+				<p class="mt-1 text-[11px] text-gray-500">
+					每次请求都带，答疑也带。原样并进发给上游的请求体。
+				</p>
+			</div>
+			<div>
+				<label class="field-label" for="agent-provider-structured"
+					>出题、批改时的附加参数（JSON，可留空）</label
+				><textarea
+					id="agent-provider-structured"
+					class="field-input min-h-16 font-mono text-xs"
+					bind:value={form.structured_extra_body}
 					placeholder={'{"thinking": {"type": "disabled"}}'}></textarea>
 				<p class="mt-1 text-[11px] text-gray-500">
-					原样并进发给上游的请求体。DeepSeek 等会思考的模型建议关掉思考，不然短回答可能被思考占满。
+					只有出题、闪卡、批改带，答疑不带。会先思考的模型建议在这里关思考：出题批改只要一段
+					JSON，思考只是白等；答疑还能留着。
 				</p>
 			</div>
 			<div class="flex items-center justify-between py-1">

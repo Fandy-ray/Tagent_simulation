@@ -25,6 +25,8 @@
 
 	let iframeKey = $state(0);
 	let status = $state<'checking' | 'ready' | 'offline'>('checking');
+	// 接口走前端转发，页面走自己的端口。接口通、页面不通＝服务好好的，只是端口没放行，别叫人去「启动服务」
+	let serviceUp = $state(false);
 
 	// 深链里只带 id，名字要回 OpenNoteBook 取，本地不存任何副本。
 	let collections = $state<KnowledgeCollection[]>([]);
@@ -108,6 +110,7 @@
 		void listNotebookKnowledge()
 			.then((items) => {
 				collections = items;
+				serviceUp = true;
 			})
 			.catch(() => {
 				collections = [];
@@ -151,22 +154,32 @@
 		<div class="absolute inset-0 z-40 flex items-center justify-center bg-gray-950/92 px-6">
 			<div class="w-full max-w-lg rounded-2xl border border-white/10 bg-gray-950 p-6 text-gray-200">
 				<p class="text-xs font-medium tracking-[0.18em] text-cyan-400 uppercase">笔记本</p>
-				<h1 class="mt-2 text-xl font-semibold text-white">
-					{status === 'checking' ? '正在连接 OpenNoteBook…' : '未检测到 OpenNoteBook'}
-				</h1>
-				<p class="mt-3 text-sm leading-6 text-gray-400">
-					笔记本页通过 iframe 嵌入外部服务，默认地址为
-					<code class="text-cyan-200">{openNotebookUrl}</code>。 请先启动 OpenNoteBook，再刷新本页。
-				</p>
-				<p class="mt-2 text-sm leading-6 text-gray-500">
-					本地部署见
-					<a
-						class="text-cyan-300 underline underline-offset-2"
-						href="https://gitee.com/kevin-zhengscuter/fixed_open_notebook"
-						target="_blank"
-						rel="noreferrer">fixed_open_notebook</a
-					>。
-				</p>
+				{#if status === 'offline' && serviceUp}
+					<h1 class="mt-2 text-xl font-semibold text-white">笔记本管理页暂时打不开</h1>
+					<p class="mt-3 text-sm leading-6 text-gray-400">
+						笔记本服务在正常运行，答疑、测评里选笔记本和检索都不受影响。只是管理页面的地址
+						<code class="text-cyan-200">{openNotebookUrl}</code>
+						从这台电脑连不上，多半是服务器还没有放行这个端口。放行后点「重新检测」就好。
+					</p>
+				{:else}
+					<h1 class="mt-2 text-xl font-semibold text-white">
+						{status === 'checking' ? '正在连接 OpenNoteBook…' : '未检测到 OpenNoteBook'}
+					</h1>
+					<p class="mt-3 text-sm leading-6 text-gray-400">
+						笔记本页通过 iframe 嵌入外部服务，默认地址为
+						<code class="text-cyan-200">{openNotebookUrl}</code>。 请先启动
+						OpenNoteBook，再刷新本页。
+					</p>
+					<p class="mt-2 text-sm leading-6 text-gray-500">
+						本地部署见
+						<a
+							class="text-cyan-300 underline underline-offset-2"
+							href="https://gitee.com/kevin-zhengscuter/fixed_open_notebook"
+							target="_blank"
+							rel="noreferrer">fixed_open_notebook</a
+						>。
+					</p>
+				{/if}
 				<div class="mt-5 flex flex-wrap gap-3">
 					<button
 						type="button"

@@ -99,6 +99,21 @@
 	];
 
 	const actions = $derived(floatingActionButtons?.length ? floatingActionButtons : defaultActions);
+
+	// 平时第一个字几秒就到。等过这么久还没动静，多半是人多在门口排队（后端的答疑闸门）：
+	// 说一声，别让人以为卡死了去重发——重发只会排到队尾
+	const SLOW_FIRST_WORD_MS = 12_000;
+	const waitingFirstWord = $derived(generating && !messages.some((message) => message.streaming));
+	let slowFirstWord = $state(false);
+
+	$effect(() => {
+		if (!waitingFirstWord) {
+			slowFirstWord = false;
+			return;
+		}
+		const timer = setTimeout(() => (slowFirstWord = true), SLOW_FIRST_WORD_MS);
+		return () => clearTimeout(timer);
+	});
 	const lastAssistantId = $derived(
 		[...messages].reverse().find((m) => m.role === 'assistant' && !m.streaming)?.id
 	);
@@ -695,7 +710,7 @@
 			{/if}
 		{/each}
 
-		{#if generating && !messages.some((message) => message.streaming)}
+		{#if waitingFirstWord}
 			<article class="flex w-full">
 				<div class="mt-1 mr-3 hidden shrink-0 sm:flex">
 					<div
@@ -719,6 +734,12 @@
 						<span class="thinking-dot size-1.5 rounded-full bg-gray-400 [animation-delay:300ms]"
 						></span>
 					</div>
+
+					{#if slowFirstWord}
+						<p class="text-xs text-gray-500" role="status">
+							比平时慢一点，可能是用的人多在排队。回答会接着出来，不用重发。
+						</p>
+					{/if}
 				</div>
 			</article>
 		{/if}

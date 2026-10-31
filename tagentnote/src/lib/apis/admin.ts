@@ -2,14 +2,24 @@
  * 管理员面板用到的 basic-agent 接口：学习记录统计、反馈、知识库、数据库。模型登记在 model-providers.ts。
  *
  * 全都要管理口令（TAgent重写版/.env.runtime 里的 AGENT_ADMIN_TOKEN，启动脚本会自动生成），随
- * X-Agent-Admin-Token 头发出去。口令只放在内存里（adminToken）：在管理员面板里来回切页不用重输，
- * 刷新或关掉页面就没了——它能读到全班学生的原文和成绩，不该落进浏览器存储。
+ * X-Agent-Admin-Token 头发出去。口令默认只放在内存里（adminToken）：在管理员面板里来回切页不用重输，
+ * 刷新或关掉页面就没了——它能读到全班学生的原文和成绩，不该随便留在浏览器里。
+ * 只有勾了「在这台电脑上记住」才写进 localStorage（部署到服务器后每次都上去查太麻烦），
+ * 「锁定」和后端拒了这份口令时一起清掉。
  */
 import { get, writable } from 'svelte/store';
 
 import { agentBase } from '$lib/apis/agent';
+import { adminToken, clearAdminToken } from '$lib/data/adminToken';
 
-export const adminToken = writable('');
+export {
+	adminToken,
+	clearAdminToken,
+	rememberAdminToken,
+	rememberedAdminToken,
+	restoreAdminToken
+} from '$lib/data/adminToken';
+
 /** 口令被后端拒了（后端换了口令、重新生成过）时回到输入口令那一页，并在那里说明原因 */
 export const adminLockReason = writable('');
 
@@ -79,7 +89,7 @@ async function adminRequest<T>(path: string, method = 'GET', token?: string): Pr
 		// 用的是记着的口令却被拒了：别停在一页报错上，回到输入口令那一页
 		if (token === undefined && response.status === 403) {
 			adminLockReason.set(error.message);
-			adminToken.set('');
+			clearAdminToken();
 		}
 		throw error;
 	}

@@ -1,6 +1,16 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+
 	import { resolve } from '$app/paths';
 	import {
+		adminToken,
+		clearAdminToken,
+		rememberAdminToken,
+		rememberedAdminToken,
+		restoreAdminToken
+	} from '$lib/apis/admin';
+	import {
+		ModelAdminError,
 		createModelProvider,
 		deleteModelProvider,
 		listModelProviders,
@@ -49,7 +59,7 @@
 		}
 	];
 
-	// 关闭思考：各家写法不一样，填进附加参数，每次请求原样带上
+	// 关闭思考：各家写法不一样，填进「出题、批改时的附加参数」，答疑不受影响
 	const THINKING_OFF: { label: string; body: Record<string, unknown> }[] = [
 		{ label: 'DeepSeek / 智谱 / 豆包', body: { thinking: { type: 'disabled' } } },
 		{ label: '通义千问', body: { enable_thinking: false } }
@@ -65,6 +75,7 @@
 		temperature: string;
 		enabled: boolean;
 		extra_body: string;
+		structured_extra_body: string;
 	};
 
 	const blankForm = (): Form => ({
@@ -76,11 +87,13 @@
 		api_key: '',
 		temperature: '0.1',
 		enabled: true,
-		extra_body: ''
+		extra_body: '',
+		structured_extra_body: ''
 	});
 
-	// 口令只在这个页面的内存里，刷新就没了；不写进浏览器存储
+	// 和管理员面板共用一份口令：那边输过、或者这台电脑记住了，这里就不用再填
 	let token = $state('');
+	let remember = $state(false);
 	let connected = $state(false);
 	let providers = $state<ModelProvider[]>([]);
 	let defaultId = $state('');
@@ -111,7 +124,16 @@
 	};
 
 	const refresh = async () => {
-		const registry = await listModelProviders(token);
+		let registry;
+		try {
+			registry = await listModelProviders(token);
+		} catch (failure) {
+			// 后端换过口令：记着的那份作废了，别下次进来还拿它试
+			if (failure instanceof ModelAdminError && failure.status === 403) {
+				clearAdminToken();
+			}
+			throw failure;
+		}
 		providers = registry.providers;
 		defaultId = registry.default_model_id;
 		connected = true;
@@ -125,8 +147,21 @@
 			error = '先填管理口令。';
 			return;
 		}
-		void run(refresh);
+		void run(async () => {
+			await refresh();
+			adminToken.set(token.trim());
+			rememberAdminToken(remember ? token : '');
+		});
 	};
+
+	onMount(() => {
+		restoreAdminToken();
+		token = $adminToken;
+		remember = rememberedAdminToken() !== '';
+		if (token) {
+			void run(refresh);
+		}
+	});
 
 	const startCreate = () => {
 		editing = '';
@@ -148,6 +183,9 @@
 			enabled: provider.enabled,
 			extra_body: Object.keys(provider.extra_body ?? {}).length
 				? JSON.stringify(provider.extra_body, null, 2)
+				: '',
+			structured_extra_body: Object.keys(provider.structured_extra_body ?? {}).length
+				? JSON.stringify(provider.structured_extra_body, null, 2)
 				: ''
 		};
 	};
@@ -159,7 +197,9 @@
 	const setThinkingOff = (body: Record<string, unknown>) => {
 		let current: Record<string, unknown> = {};
 		try {
-			const parsed = form.extra_body.trim() ? JSON.parse(form.extra_body) : {};
+			const parsed = form.structured_extra_body.trim()
+				? JSON.parse(form.structured_extra_body)
+				: {};
 			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
 				current = parsed;
 			}
@@ -169,7 +209,18 @@
 		// 两种写法只留一种
 		delete current.thinking;
 		delete current.enable_thinking;
-		form.extra_body = JSON.stringify({ ...current, ...body }, null, 2);
+		form.structured_extra_body = JSON.stringify({ ...current, ...body }, null, 2);
+	};
+
+	const parseJsonObject = (text: string): unknown => {
+		if (!text.trim()) {
+			return {};
+		}
+		const parsed: unknown = JSON.parse(text);
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+			throw new TypeError();
+		}
+		return parsed;
 	};
 
 	const readForm = (): ModelProviderInput | string => {
@@ -177,16 +228,13 @@
 		if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
 			return '温度要在 0 到 2 之间。';
 		}
-		let extra: unknown = {};
-		if (form.extra_body.trim()) {
-			try {
-				extra = JSON.parse(form.extra_body);
-			} catch {
-				return '附加参数不是合法的 JSON。';
-			}
-			if (!extra || typeof extra !== 'object' || Array.isArray(extra)) {
-				return '附加参数要写成一个 JSON 对象，例如 {"thinking": {"type": "disabled"}}。';
-			}
+		let extra: unknown;
+		let structured: unknown;
+		try {
+			extra = parseJsonObject(form.extra_body);
+			structured = parseJsonObject(form.structured_extra_body);
+		} catch {
+			return '附加参数要写成一个 JSON 对象，例如 {"thinking": {"type": "disabled"}}。';
 		}
 		if (editing === '' && form.auth_mode === 'bearer' && !form.api_key.trim()) {
 			return '要填 API Key。';
@@ -200,7 +248,8 @@
 			api_key: form.api_key,
 			temperature,
 			enabled: form.enabled,
-			extra_body: extra as Record<string, unknown>
+			extra_body: extra as Record<string, unknown>,
+			structured_extra_body: structured as Record<string, unknown>
 		};
 	};
 
@@ -243,7 +292,8 @@
 				api_key: '',
 				temperature: provider.temperature,
 				enabled: !provider.enabled,
-				extra_body: provider.extra_body ?? {}
+				extra_body: provider.extra_body ?? {},
+				structured_extra_body: provider.structured_extra_body ?? {}
 			});
 			await refresh();
 		});
@@ -284,6 +334,8 @@
 
 	const inputClass =
 		'h-10 w-full rounded-lg border border-white/15 bg-white/[0.04] px-3 text-sm text-gray-100 outline-none transition placeholder:text-gray-600 hover:border-white/25 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20';
+	const textareaClass =
+		'mt-1 w-full rounded-lg border border-white/15 bg-white/[0.04] px-3 py-2 font-mono text-xs text-gray-100 transition outline-none hover:border-white/25 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20';
 	const buttonClass =
 		'rounded-lg border border-white/15 px-3 py-1.5 text-xs text-gray-200 transition hover:border-white/30 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50';
 </script>
@@ -311,7 +363,9 @@
 			<p class="mt-1 text-xs leading-5 text-gray-500">
 				在 <code class="text-gray-300">TAgent重写版/.env.runtime</code> 里，<code
 					class="text-gray-300">AGENT_ADMIN_TOKEN=</code
-				> 后面那一串（启动脚本会自动生成）。只留在这个页面里，不保存，刷新后要重新填。
+				>
+				后面那一串（启动脚本会自动生成）。部署在服务器上时，在服务器的部署目录运行
+				<code class="text-gray-300">bash TAgent重写版/scripts/show-admin-token.sh</code> 就能看到。
 			</p>
 			<div class="mt-3 flex gap-2">
 				<input
@@ -330,6 +384,10 @@
 					{connected ? '刷新' : '连接'}
 				</button>
 			</div>
+			<label class="mt-3 flex items-center gap-2 text-xs text-gray-300">
+				<input type="checkbox" bind:checked={remember} />
+				在这台电脑上记住（公用电脑别勾；取消勾选后点「{connected ? '刷新' : '连接'}」就清掉了）
+			</label>
 		</form>
 
 		{#if error}
@@ -401,6 +459,12 @@
 									<dt class="text-gray-500">附加参数</dt>
 									<dd class="font-mono break-all text-gray-300">
 										{extraSummary(provider.extra_body)}
+									</dd>
+								{/if}
+								{#if extraSummary(provider.structured_extra_body)}
+									<dt class="text-gray-500">出题批改时</dt>
+									<dd class="font-mono break-all text-gray-300">
+										{extraSummary(provider.structured_extra_body)}
 									</dd>
 								{/if}
 							</dl>
@@ -556,6 +620,26 @@
 					<div>
 						<div class="flex flex-wrap items-center justify-between gap-2">
 							<label for="extra-body" class="text-xs text-gray-400">附加参数（JSON，可不填）</label>
+							<button type="button" class={buttonClass} onclick={() => (form.extra_body = '')}
+								>清空</button
+							>
+						</div>
+						<textarea
+							id="extra-body"
+							rows="3"
+							class={textareaClass}
+							bind:value={form.extra_body}
+							placeholder={'{"top_k": 5}'}></textarea>
+						<p class="mt-1 text-xs leading-5 text-gray-500">
+							每次请求都原样带给模型，答疑也带。各家写法不同，以厂商文档为准。
+						</p>
+					</div>
+
+					<div>
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<label for="structured-extra-body" class="text-xs text-gray-400"
+								>出题、批改时的附加参数（JSON，可不填）</label
+							>
 							<div class="flex flex-wrap gap-1.5">
 								{#each THINKING_OFF as option (option.label)}
 									<button
@@ -566,19 +650,22 @@
 										关闭思考：{option.label}
 									</button>
 								{/each}
-								<button type="button" class={buttonClass} onclick={() => (form.extra_body = '')}
-									>清空</button
+								<button
+									type="button"
+									class={buttonClass}
+									onclick={() => (form.structured_extra_body = '')}>清空</button
 								>
 							</div>
 						</div>
 						<textarea
-							id="extra-body"
+							id="structured-extra-body"
 							rows="3"
-							class="mt-1 w-full rounded-lg border border-white/15 bg-white/[0.04] px-3 py-2 font-mono text-xs text-gray-100 transition outline-none hover:border-white/25 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
-							bind:value={form.extra_body}
+							class={textareaClass}
+							bind:value={form.structured_extra_body}
 							placeholder={'{"thinking": {"type": "disabled"}}'}></textarea>
 						<p class="mt-1 text-xs leading-5 text-gray-500">
-							每次请求原样带给模型。常用来关闭「先思考再回答」：思考也算进输出额度，思考太长会把正文挤没。各家写法不同，以厂商文档为准。
+							只有出题、闪卡、批改带，答疑不带。会先思考的模型建议在这里关思考：出题批改只要一段
+							JSON，思考只是白等，第一张闪卡和整卷都会慢很多；答疑还能留着思考。「试一下」也会带上它。
 						</p>
 					</div>
 

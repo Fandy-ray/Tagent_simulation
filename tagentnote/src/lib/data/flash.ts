@@ -61,6 +61,61 @@ export type FlashSession = {
 	endedAt: number | null;
 };
 
+// ====================== 闪卡进度：退出再进来不丢 ======================
+
+/**
+ * 出一组卡要等十几秒，还花模型的额度，以前点一下「返回」就没了。和整卷一样存进 sessionStorage：
+ * 同一个标签页里退出再进来、刷新都能接着刷，关掉标签页就没了。明确选了放弃、或者开始新一轮才清。
+ * 闪卡的判定本来就在前端、答案就在卡里，存下来不多暴露什么。
+ */
+export type SavedFlashDeck = {
+	v: 1;
+	modelId: string;
+	topic: string;
+	notebookIds: string[];
+	session: FlashSession;
+};
+
+const FLASH_DECK_KEY = 'tagent:flash-deck';
+const FLASH_DECK_TTL_MS = 2 * 60 * 60 * 1000;
+
+export const loadFlashDeck = (now = Date.now()): SavedFlashDeck | null => {
+	try {
+		const raw = sessionStorage.getItem(FLASH_DECK_KEY);
+		if (!raw) {
+			return null;
+		}
+		const saved = JSON.parse(raw) as SavedFlashDeck;
+		if (
+			saved?.v !== 1 ||
+			!saved.session?.deck?.cards?.length ||
+			now - saved.session.startedAt > FLASH_DECK_TTL_MS
+		) {
+			sessionStorage.removeItem(FLASH_DECK_KEY);
+			return null;
+		}
+		return saved;
+	} catch {
+		return null;
+	}
+};
+
+export const saveFlashDeck = (saved: Omit<SavedFlashDeck, 'v'>) => {
+	try {
+		sessionStorage.setItem(FLASH_DECK_KEY, JSON.stringify({ ...saved, v: 1 }));
+	} catch {
+		// 隐私模式或存储满：照常刷，只是退出后接不上
+	}
+};
+
+export const clearFlashDeck = () => {
+	try {
+		sessionStorage.removeItem(FLASH_DECK_KEY);
+	} catch {
+		// 同上
+	}
+};
+
 const byId = (deck: FlashDeck) => new Map(deck.cards.map((card) => [card.id, card]));
 
 export const createSession = (deck: FlashDeck, now = Date.now()): FlashSession => ({

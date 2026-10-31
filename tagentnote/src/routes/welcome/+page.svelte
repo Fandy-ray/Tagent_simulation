@@ -101,16 +101,11 @@
 </div>
 
 <style>
-	:global(body) {
-		margin: 0;
-		padding: 0;
-		overflow: hidden;
-	}
-
+	/* 不要写 :global(body) { overflow: hidden }：页面间跳转不刷新，全局样式会留着，
+	   从这里点进去的页面（比如模型登记）就都滚不动了。铺满窗口、不滚动由这个容器自己管 */
 	.wrap {
-		position: relative;
-		width: 100vw;
-		height: 100vh;
+		position: fixed;
+		inset: 0;
 		background-color: #050d1a;
 		display: flex;
 		align-items: center;

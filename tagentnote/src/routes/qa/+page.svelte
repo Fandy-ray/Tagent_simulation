@@ -2176,22 +2176,19 @@
 		const sample = samples[sampleIndex % samples.length];
 		sampleIndex += 1;
 		prompt = sample.body;
-		// 范例是照着它自己的题目写的，换成它的题目，「切题与内容」才判得公平。
-		// 但这会把刚刚「设为本次题目」的那道题顶掉——演示主线正好是
-		// 出题 → 设为本次题目 → 填入范例，一声不响地换掉等于白出了一道题。
-		// 所以把原题目一并说出来，方便放回去。
-		const previous = paperTitle.trim();
-		if (sample.topic && sample.topic !== previous) {
+		// 已经有题目（比如刚「设为本次题目」）就留着，范例只填正文：演示主线正好是
+		// 出题 → 设为本次题目 → 填入范例，顶掉就白出了一道题。还没有题目时才用范例自带的
+		const current = paperTitle.trim();
+		if (!current && sample.topic) {
 			handlePaperTaskChange({ ...paperTask, title: sample.topic });
-			toast(
-				previous
-					? `已填入范例：${sample.title}。题目改成了范例自带的「${sample.topic}」，原题目是「${previous}」`
-					: `已填入范例：${sample.title}（题目一并设为「${sample.topic}」）`,
-				5200
-			);
+			toast(`已填入范例：${sample.title}（题目一并设为「${sample.topic}」）`, 5200);
 			return;
 		}
-		toast(`已填入范例：${sample.title}`);
+		toast(
+			current
+				? `已填入范例：${sample.title}，题目还是「${current}」`
+				: `已填入范例：${sample.title}`
+		);
 	};
 
 	const stopResponse = () => {

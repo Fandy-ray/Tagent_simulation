@@ -152,7 +152,9 @@
 </script>
 
 <div class="relative w-full max-w-md text-left">
-	<div class="rounded-lg border border-white/[0.22] bg-transparent focus-within:border-blue-400">
+	<div
+		class="rounded-2xl border border-white/[0.08] bg-white/[0.035] transition focus-within:border-white/20 hover:border-white/[0.12]"
+	>
 		{#if selectedSources.length > 0}
 			<div class="flex flex-wrap gap-1 px-2 pt-2">
 				{#each selectedSources as item (sourceKey(item.collection.id, item.file.id))}
@@ -259,7 +261,7 @@
 								<span
 									class={`flex size-4 items-center justify-center rounded-sm border text-[10px] leading-none ${
 										notebook.all || notebook.some
-											? 'border-blue-400 bg-blue-500 text-white'
+											? 'border-white bg-white text-black'
 											: 'border-white/30'
 									}`}
 								>
@@ -316,7 +318,7 @@
 									>
 										<span
 											class={`flex size-4 shrink-0 items-center justify-center rounded-sm border text-[10px] leading-none ${
-												checked ? 'border-blue-400 bg-blue-500 text-white' : 'border-white/30'
+												checked ? 'border-white bg-white text-black' : 'border-white/30'
 											}`}
 										>
 											{checked ? '✓' : ''}

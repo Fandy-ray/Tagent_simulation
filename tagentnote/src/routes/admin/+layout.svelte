@@ -16,7 +16,7 @@
 		type QaFolder
 	} from '$lib/data/qaFolders';
 	import { loadUserSettings } from '$lib/data/userSettings';
-	import { adminToken } from '$lib/apis/admin';
+	import { adminToken, clearAdminToken, restoreAdminToken } from '$lib/apis/admin';
 	import AdminTokenGate from '$lib/components/admin/AdminTokenGate.svelte';
 
 	let sidebarOpen = $state(true);
@@ -31,6 +31,7 @@
 	const userSettings = $state(loadUserSettings());
 
 	onMount(() => {
+		restoreAdminToken();
 		const stored = loadQaChats();
 		searchChats = stored.chats;
 		sidebarChats = stored.chats
@@ -247,8 +248,8 @@
 					<button
 						type="button"
 						class="dark:hover:bg-gray-850 shrink-0 rounded-lg px-2 py-1 text-xs text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:text-white"
-						onclick={() => adminToken.set('')}
-						title="清掉这个标签页里的管理口令">锁定</button
+						onclick={clearAdminToken}
+						title="清掉管理口令，这台电脑记住的也一起清掉">锁定</button
 					>
 				{/if}
 			</div>

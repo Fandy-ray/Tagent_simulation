@@ -124,41 +124,41 @@ export const answerNavClass = (
 	answerMap: ExamAnswers
 ) =>
 	index === currentIndex
-		? 'bg-blue-500 text-white border-blue-500'
+		? 'bg-white text-black border-white'
 		: hasAnswer(question, answerMap)
-			? 'bg-emerald-950/40 text-emerald-300 border-emerald-900'
-			: 'bg-gray-800 text-gray-400 border-gray-700';
+			? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+			: 'bg-white/[0.04] text-gray-400 border-white/[0.08]';
 
 export const resultNavClass = (item: ReviewResult) => {
 	if (item.verdict === 'correct') {
-		return 'bg-emerald-950/40 text-emerald-300 border-emerald-900';
+		return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
 	}
 
 	if (item.verdict === 'partial') {
-		return 'bg-amber-950/40 text-amber-300 border-amber-900';
+		return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
 	}
 
 	if (item.verdict === 'unanswered') {
-		return 'bg-gray-800 text-gray-400 border-gray-700';
+		return 'bg-white/[0.04] text-gray-400 border-white/[0.08]';
 	}
 
-	return 'bg-red-950/40 text-red-300 border-red-900';
+	return 'bg-red-500/15 text-red-300 border-red-500/30';
 };
 
 export const verdictClass = (verdict: Verdict) => {
 	if (verdict === 'correct') {
-		return 'text-emerald-400';
+		return 'text-emerald-300';
 	}
 
 	if (verdict === 'partial') {
-		return 'text-amber-400';
+		return 'text-amber-300';
 	}
 
 	if (verdict === 'unanswered') {
 		return 'text-gray-500';
 	}
 
-	return 'text-red-400';
+	return 'text-red-300';
 };
 
 export const verdictLabel = (verdict: Verdict) => {

@@ -10,6 +10,7 @@
 		advance,
 		answerLabel,
 		cardHeadline,
+		clearFlashDeck,
 		createSession,
 		currentCard,
 		focusCard,
@@ -17,8 +18,10 @@
 		recordAnswer,
 		replayStruggled,
 		rotateQueue,
+		saveFlashDeck,
 		stats,
-		type FlashSession
+		type FlashSession,
+		type SavedFlashDeck
 	} from '$lib/data/flash';
 	import { appendCards } from '$lib/data/flashStream';
 
@@ -29,33 +32,45 @@
 	 * 再也不会回话了"的兜底（实测第一张 1 秒左右到、整组 3 秒左右写完，这条基本不该触发）。
 	 */
 	const CLIENT_TIMEOUT_MS = 240_000;
+	/**
+	 * 第一张卡平时一秒左右就到，等过这么久还没有就换成「比平时慢」的说法。
+	 * 只拿来切换文案，秒数本身不上屏：用户不需要看我们内部的计时。
+	 */
+	const SLOW_AFTER_S = 12;
+	/** 一组最多 12 张（后端分片上限），进度条上还在写的占位格不会超过它 */
+	const DECK_MAX_CARDS = 12;
 
 	type Props = {
 		modelId: string;
 		topic: string;
 		notebookIds: string[];
+		/** flip = 翻卡自评；type = 输入作答。开关在外壳顶栏 */
+		inputMode?: 'flip' | 'type';
 		onTitle: (title: string) => void;
 		onError: (message: string) => void;
 		onExit: () => void;
 		onSwitchToFull: () => void;
-		/** 报给外壳：现在离开会丢掉什么。空字符串＝没有进度，可以直接走。 */
+		/** 报给外壳：现在结束这一轮会丢掉什么。空字符串＝没有进度，可以直接走。 */
 		onLeavingCost?: (cost: string) => void;
+		/** 上次退出时存下的卡组：有它就接着刷，不重新出卡 */
+		resume?: SavedFlashDeck | null;
 	};
 
 	let {
 		modelId,
 		topic,
 		notebookIds,
+		inputMode = 'flip',
 		onTitle,
 		onError,
 		onExit,
 		onSwitchToFull,
-		onLeavingCost
+		onLeavingCost,
+		resume = null
 	}: Props = $props();
 
 	let phase = $state<Phase>('generating');
 	let session = $state<FlashSession | null>(null);
-	let inputMode = $state<'flip' | 'type'>('flip');
 
 	let flipped = $state(false);
 	let typed = $state('');
@@ -68,13 +83,21 @@
 	let failure = $state('');
 	/** 后面还有卡在路上（边写边给，第一张到了就开始刷） */
 	let incoming = $state(false);
-	/** 已经在刷了、后面的卡却没出来时的说明；不打断刷卡，只在进度旁边提一句 */
-	let cutNote = $state('');
+	/** 已经在刷了、后面的卡却没出来：不打断刷卡，刷完到的这几张再停下来说明 */
+	let cut = $state(false);
 
 	let card = $derived(session ? currentCard(session) : null);
 	let summary = $derived(session ? stats(session) : null);
+	let slow = $derived(phase === 'generating' && elapsed >= SLOW_AFTER_S);
 
-	// 卡组只在内存里，退出即丢。刷了一半时让外壳问一句再走。
+	// 到手的卡和进度随时存下来：点顶栏的「离开测评」、刷新都不丢（见 $lib/data/flash 的 SavedFlashDeck）
+	$effect(() => {
+		if (session && session.deck.cards.length > 0 && (phase === 'studying' || phase === 'summary')) {
+			saveFlashDeck({ modelId, topic, notebookIds, session });
+		}
+	});
+
+	// 「结束这一轮」是真的放弃这组卡：刷了一半时让外壳问一句再走。
 	$effect(() => {
 		if (!onLeavingCost) {
 			return;
@@ -82,12 +105,22 @@
 		const done = summary && phase === 'studying' ? summary.total - summary.remaining : 0;
 		onLeavingCost(
 			phase === 'studying' && summary && done > 0
-				? `这组闪卡刷了 ${done} / ${summary.total} 张，进度不会保存`
+				? `这组闪卡刷了 ${done} / ${summary.total} 张，结束后进度就清掉了`
 				: ''
 		);
 		// 卸载时自己把话收回去。外壳那边切模式时也会清一次，但不该靠它记得——
 		// 留着的话，切到整卷后按返回，弹出来的还是「这组闪卡刷了 N 张」。
 		return () => onLeavingCost('');
+	});
+
+	// 顶栏切了作答方式：把这张卡已经做的清掉，免得翻卡时的状态带进输入框
+	let lastInputMode: 'flip' | 'type' | null = null;
+	$effect(() => {
+		const next = inputMode;
+		if (lastInputMode !== null && lastInputMode !== next) {
+			resetCardState();
+		}
+		lastInputMode = next;
 	});
 
 	// 还在出卡时总数后面带个 +：后面还有
@@ -96,7 +129,9 @@
 		session && card ? `${session.known.length + 1}/${session.deck.cards.length}${more}` : ''
 	);
 
-	let dots = $derived.by(() => {
+	// 顶上那条进度：一张卡一格。已过绿、重练后才过的带一截琥珀、正在看的白、
+	// 进了重练还没过的琥珀、到了还没刷的灰。还在写的卡另画几格淡色占位——总数要等写完才知道
+	let segments = $derived.by(() => {
 		const current = session;
 
 		if (!current) {
@@ -108,22 +143,37 @@
 		return current.deck.cards.map((item) => {
 			const done = current.known.includes(item.id);
 			const struggled = (current.attempts[item.id]?.again ?? 0) > 0;
+			const isCurrent = item.id === currentId;
 
 			return {
 				id: item.id,
-				current: item.id === currentId,
-				clickable: !done && item.id !== currentId,
-				className:
-					item.id === currentId
-						? 'size-2.5 bg-blue-500'
-						: done
-							? 'size-2 bg-emerald-400'
-							: struggled
-								? 'size-2 bg-amber-400'
-								: 'size-2 bg-gray-700'
+				current: isCurrent,
+				clickable: !done && !isCurrent,
+				className: isCurrent
+					? 'bg-white'
+					: done
+						? struggled
+							? 'bg-[linear-gradient(90deg,#5ee9b5_70%,#ffd230_70%)]'
+							: 'bg-emerald-300'
+						: struggled
+							? 'bg-amber-300/70'
+							: 'bg-white/20',
+				label: isCurrent
+					? '正在看'
+					: done
+						? struggled
+							? '重练后过'
+							: '已过'
+						: struggled
+							? '待重练'
+							: '还没刷'
 			};
 		});
 	});
+
+	let ghostCount = $derived(
+		incoming && session ? Math.max(1, Math.min(3, DECK_MAX_CARDS - session.deck.cards.length)) : 0
+	);
 
 	const stopTicker = () => {
 		if (ticker !== null) {
@@ -160,9 +210,10 @@
 		}, CLIENT_TIMEOUT_MS);
 
 		failure = '';
-		cutNote = '';
+		cut = false;
 		phase = 'generating';
 		session = null;
+		clearFlashDeck();
 		incoming = true;
 		resetCardState();
 		elapsed = 0;
@@ -223,17 +274,11 @@
 					return;
 				}
 
-				const message = timedOut
-					? '等了 4 分钟还没出完卡，basic-agent 可能没在正常回话。'
-					: error instanceof Error
-						? error.message
-						: '出卡失败，请重试。';
 				incoming = false;
 
 				if (phase !== 'generating') {
-					// 已经在刷了：不打断，先刷已经到的这几张
-					cutNote = `后面的卡没出来（${message.replace(/[。.]$/, '')}），先刷已经到的这几张。`;
-					finishIfDrained();
+					// 已经在刷了：不打断，先刷已经到的这几张；刷完了停在「后面的卡没出来」那一屏
+					cut = true;
 					return;
 				}
 
@@ -242,17 +287,47 @@
 				// 最常见的触发是 429（并发闸门满）——而"取消"只能掐断浏览器这边，
 				// 服务端那次还在跑、名额还占着，于是取消后立刻重试必然 429、
 				// 必然被弹回去，看起来就像点一下自己退回去了。
-				failure = message;
+				failure = timedOut
+					? '等了 4 分钟还没出完卡，basic-agent 可能没在正常回话。'
+					: error instanceof Error
+						? error.message
+						: '出卡失败，请重试。';
 				phase = 'failed';
 			});
 	};
 
-	/** 卡都到齐了、已经到的又都刷完了：这一轮才算结束 */
-	const finishIfDrained = () => {
-		if (phase === 'studying' && session && session.queue.length === 0 && !incoming) {
-			session = { ...session, endedAt: session.endedAt ?? Date.now() };
-			phase = 'summary';
+	/** 接着刷上次退出时的那组卡：不调模型。退出时还在路上的卡就没有了，已经到的都在 */
+	const restoreFrom = (saved: SavedFlashDeck) => {
+		session = saved.session;
+		incoming = false;
+		onTitle(saved.session.deck.title);
+		phase = saved.session.queue.length === 0 ? 'summary' : 'studying';
+	};
+
+	const showSummary = () => {
+		if (!session) {
+			return;
 		}
+		session = { ...session, endedAt: session.endedAt ?? Date.now() };
+		phase = 'summary';
+	};
+
+	/**
+	 * 卡都到齐了、已经到的又都刷完了：这一轮才算结束。
+	 * 后面的卡没出来（cut）时不自动跳小结，停在说明那一屏，让人知道这组为什么比平时少。
+	 */
+	const finishIfDrained = () => {
+		if (phase === 'studying' && session && session.queue.length === 0 && !incoming && !cut) {
+			showSummary();
+		}
+	};
+
+	/** 到的都刷完了、后面的还没写好，不想等：掐掉这一轮，用已经到的几张出小结 */
+	const stopWaiting = () => {
+		controller?.abort();
+		controller = null;
+		incoming = false;
+		showSummary();
 	};
 
 	const cancel = () => {
@@ -329,17 +404,10 @@
 		}
 
 		session = replayStruggled(session);
+		// 重刷的是已经到手的卡，和「后面的卡没出来」无关：不清掉的话，刷完又会停在那句说明上
+		cut = false;
 		resetCardState();
 		phase = 'studying';
-	};
-
-	const switchInputMode = (next: 'flip' | 'type') => {
-		if (inputMode === next) {
-			return;
-		}
-
-		inputMode = next;
-		resetCardState();
 	};
 
 	const onKeydown = (event: KeyboardEvent) => {
@@ -393,7 +461,11 @@
 
 	onMount(() => {
 		window.addEventListener('keydown', onKeydown);
-		start();
+		if (resume) {
+			restoreFrom(resume);
+		} else {
+			start();
+		}
 	});
 
 	onDestroy(() => {
@@ -406,41 +478,29 @@
 	});
 </script>
 
-{#if phase === 'generating'}
-	<div class="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+{#snippet keycap(label: string, onLight = false)}
+	<kbd
+		class={`rounded-md px-1.5 py-px font-sans text-[11px] font-normal ${
+			onLight
+				? 'bg-black/[0.06] text-gray-700'
+				: 'border border-white/10 bg-white/[0.04] text-gray-300'
+		}`}>{label}</kbd
+	>
+{/snippet}
+
+{#snippet arrow(direction: 1 | -1, disabled: boolean)}
+	<!-- 窄屏藏起左右键：一张卡在 375px 下只剩 ~215px 可读宽度，句子被切得七零八落。
+	     跳卡在窄屏用顶上的进度格，够用了。 -->
+	<button
+		type="button"
+		class="hover:bg-gray-850 hidden size-11 shrink-0 items-center justify-center rounded-xl text-gray-400 transition hover:text-white disabled:pointer-events-none disabled:text-gray-600 sm:flex"
+		{disabled}
+		onclick={() => rotate(direction)}
+		aria-label={direction === 1 ? '这张先跳过，看下一张' : '看待过队列里的上一张'}
+		title={direction === 1 ? '下一张（→）' : '上一张（←）'}
+	>
 		<svg
-			class="size-8 animate-spin text-blue-500"
-			viewBox="0 0 24 24"
-			fill="none"
-			aria-hidden="true"
-		>
-			<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
-			></circle>
-			<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
-			></path>
-		</svg>
-
-		<div class="font-mono text-3xl font-bold">{formatDuration(elapsed)}</div>
-
-		<div class="text-sm text-gray-400">正在生成闪卡</div>
-
-		<p class="max-w-sm text-xs leading-relaxed text-gray-500">
-			三片同时向模型发问，每片只拿三分之一的材料 —— 既是提速的办法，也让三片不容易撞到同一个考点。
-			第一张写好就先给你，其余的边刷边到。
-		</p>
-
-		<button
-			type="button"
-			class="mt-1 rounded-xl border border-gray-700 px-5 py-2 text-sm text-gray-400 transition hover:bg-gray-800 hover:text-gray-200"
-			onclick={cancel}
-		>
-			取消
-		</button>
-	</div>
-{:else if phase === 'failed'}
-	<div class="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-		<svg
-			class="size-8 text-amber-400"
+			class="size-5"
 			viewBox="0 0 24 24"
 			fill="none"
 			stroke="currentColor"
@@ -449,28 +509,409 @@
 			stroke-linejoin="round"
 			aria-hidden="true"
 		>
-			<path d="M12 9v4"></path>
-			<path d="M12 17h.01"></path>
-			<path
-				d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
-			></path>
+			<path d={direction === 1 ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'}></path>
 		</svg>
+	</button>
+{/snippet}
 
-		<div class="text-sm font-medium">这一轮没能出卡</div>
+{#if phase === 'generating' || phase === 'studying'}
+	<!-- 出卡中、刷卡、等下一张、出卡中断共用一个骨架：卡片永远在同一个位置，内容到了只是原地填进来 -->
+	<div class="mx-auto flex h-full min-h-0 w-full max-w-[880px] flex-col px-4 py-5 sm:px-5 sm:py-7">
+		<div class="shrink-0 sm:px-[60px]">
+			<!-- 每格的线只有 4px，上下各留 10px 白：看着细，手指也点得中（约 24px 高） -->
+			<div class="flex gap-1">
+				{#if phase === 'generating' || !session}
+					{#each [0, 1, 2, 3, 4, 5] as index (index)}
+						<span class="flex-1 py-2.5" aria-hidden="true">
+							<span
+								class="block h-1 animate-pulse rounded-full bg-white/[0.08]"
+								style={`animation-delay: ${index * 150}ms`}
+							></span>
+						</span>
+					{/each}
+				{:else}
+					{#each segments as segment (segment.id)}
+						<button
+							type="button"
+							class={`group flex-1 py-2.5 ${segment.clickable && !flipped ? 'cursor-pointer' : 'cursor-default'}`}
+							disabled={!segment.clickable || flipped}
+							onclick={() => jumpTo(segment.id)}
+							aria-label={`${segment.id}，${segment.label}`}
+							aria-current={segment.current ? 'true' : undefined}
+							title={`${segment.id} · ${segment.label}`}
+						>
+							<span
+								class={`block h-1 rounded-full transition ${segment.className} ${
+									segment.clickable && !flipped ? 'group-hover:brightness-150' : ''
+								}`}
+							></span>
+						</button>
+					{/each}
+					{#each Array.from({ length: ghostCount }, (_, index) => index) as index (index)}
+						<span class="flex-1 py-2.5" aria-hidden="true">
+							<span
+								class="block h-1 animate-pulse rounded-full bg-white/[0.08]"
+								style={`animation-delay: ${index * 200}ms`}
+							></span>
+						</span>
+					{/each}
+				{/if}
+			</div>
+
+			<div
+				class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 tabular-nums"
+			>
+				<span>
+					{#if phase === 'generating' || !summary}
+						这组 6~12 张 · 第一张到了就开刷，其余边刷边到
+					{:else if card}
+						第 {summary.known + 1} 张 · 已过 <span class="text-gray-200">{summary.known}</span>
+						张{summary.pendingAgain > 0 ? ` · 待重练 ${summary.pendingAgain}` : ''}
+					{:else}
+						已过 <span class="text-gray-200">{summary.known}</span> 张{summary.struggled > 0
+							? ` · 其中 ${summary.struggled} 张重练后过`
+							: ''}
+					{/if}
+				</span>
+
+				<span aria-live="polite">
+					{#if phase === 'generating'}
+						{#if slow}
+							<span
+								class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] text-amber-300"
+							>
+								<span class="size-1.5 animate-pulse rounded-full bg-amber-300"></span>
+								比平时慢一些
+							</span>
+						{:else}
+							<span
+								class="inline-flex items-center gap-1.5 rounded-full bg-sky-500/15 px-2.5 py-0.5 text-[11px] text-sky-300"
+							>
+								<span class="size-1.5 animate-pulse rounded-full bg-sky-300"></span>
+								正在出卡
+							</span>
+						{/if}
+					{:else if incoming}
+						<span
+							class="inline-flex items-center gap-1.5 rounded-full bg-sky-500/15 px-2.5 py-0.5 text-[11px] text-sky-300"
+						>
+							<span class="size-1.5 animate-pulse rounded-full bg-sky-300"></span>
+							还在出卡 · 已到 {summary?.total ?? 0} 张
+						</span>
+					{:else if cut}
+						<span
+							class="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] text-amber-300"
+						>
+							出卡中断 · 这组共 {summary?.total ?? 0} 张
+						</span>
+					{:else}
+						共 {summary?.total ?? 0} 张
+					{/if}
+				</span>
+			</div>
+		</div>
+
+		<div class="flex min-h-0 flex-1 items-center gap-4 py-5">
+			{@render arrow(
+				-1,
+				phase !== 'studying' || !card || flipped || (session?.queue.length ?? 0) < 2
+			)}
+
+			<div class="relative flex h-full max-h-[400px] min-h-[300px] min-w-0 flex-1">
+				<!-- 卡后面露出的一道边：一叠卡的意思 -->
+				<div
+					class="pointer-events-none absolute inset-x-5 top-2.5 -bottom-2.5 rounded-3xl border border-white/[0.05] bg-[#191919]"
+					aria-hidden="true"
+				></div>
+
+				{#if phase === 'generating'}
+					<div
+						class="relative flex w-full flex-col rounded-3xl border border-white/[0.08] bg-[#1d1d1d] p-6 shadow-[0_24px_48px_-24px_rgba(0,0,0,0.6)] sm:px-8 sm:py-7"
+					>
+						<div class="flex items-center justify-between">
+							<div class="exam-shim h-5 w-11 rounded-full"></div>
+							<span class="text-[11px] text-gray-500">第 1 张</span>
+						</div>
+
+						<div class="flex flex-1 flex-col justify-center gap-4" aria-hidden="true">
+							<div class="exam-shim h-2.5 w-[30%] rounded-full"></div>
+							<div class="flex items-center gap-2.5">
+								<div class="exam-shim h-4 w-[34%] rounded-full"></div>
+								<div class="h-4 w-[88px] border-b-2 border-sky-300/40"></div>
+								<div class="exam-shim h-4 flex-1 rounded-full"></div>
+							</div>
+							<div class="exam-shim h-4 w-[56%] rounded-full"></div>
+						</div>
+
+						{#if slow}
+							<div
+								class="flex items-start gap-2.5 rounded-2xl bg-amber-500/10 px-3.5 py-3 text-left"
+							>
+								<svg
+									class="mt-0.5 size-4 shrink-0 text-amber-300"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="1.7"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<circle cx="12" cy="12" r="9"></circle>
+									<path d="M12 7v5l3 2"></path>
+								</svg>
+								<p class="text-[13px] leading-relaxed text-amber-100">
+									可能在排队，再稍等一下。真出不来的话会直接告诉你原因，不会一直卡在这里。
+								</p>
+							</div>
+						{:else}
+							<div class="flex items-center justify-center gap-1 text-[13px] text-gray-400">
+								{#each [0, 1, 2] as index (index)}
+									<span
+										class="size-1 animate-pulse rounded-full bg-gray-400"
+										style={`animation-delay: ${index * 150}ms`}
+									></span>
+								{/each}
+								<span class="ml-1.5">正在写第一张，马上就好</span>
+							</div>
+						{/if}
+					</div>
+				{:else if card}
+					{#key `${card.id}-${inputMode}`}
+						<FlashCard
+							{card}
+							{inputMode}
+							{flipped}
+							{typed}
+							{picked}
+							{graded}
+							{position}
+							onReveal={reveal}
+							onTyped={(value) => (typed = value)}
+							onSubmit={submitAnswer}
+							onPick={pickOption}
+						/>
+					{/key}
+				{:else if cut}
+					<div
+						class="relative flex w-full flex-col items-center justify-center gap-2.5 rounded-3xl border border-white/[0.08] bg-[#1d1d1d] p-8 text-center"
+					>
+						<div class="mb-2 flex size-11 items-center justify-center rounded-2xl bg-amber-500/15">
+							<svg
+								class="size-5 text-amber-300"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.7"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								aria-hidden="true"
+							>
+								<path d="M12 9v4"></path>
+								<path d="M12 17h.01"></path>
+								<path
+									d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+								></path>
+							</svg>
+						</div>
+						<div class="text-[17px] font-medium text-white">后面的卡没出来</div>
+						<p class="max-w-sm text-[13px] leading-relaxed text-gray-500">
+							这组只出了 {summary?.total ?? 0} 张，到的都刷完了，进度没丢。
+						</p>
+						<div class="mt-3 flex flex-wrap justify-center gap-2">
+							<button
+								type="button"
+								class="min-h-10 rounded-full bg-white px-5 text-sm font-medium text-black transition hover:bg-gray-200"
+								onclick={showSummary}
+							>
+								看这 {summary?.total ?? 0} 张的小结
+							</button>
+							<button
+								type="button"
+								class="min-h-10 rounded-full border border-white/10 bg-white/[0.03] px-5 text-sm text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
+								onclick={start}
+							>
+								再来一组
+							</button>
+						</div>
+					</div>
+				{:else}
+					<div
+						class="relative flex w-full flex-col items-center justify-center gap-2.5 rounded-3xl border border-dashed border-white/[0.12] bg-gray-900 p-8 text-center"
+					>
+						<div class="exam-bob relative mb-3 h-[46px] w-16" aria-hidden="true">
+							<div
+								class="absolute inset-0 translate-x-[7px] translate-y-[5px] rotate-[8deg] rounded-[10px] border border-white/[0.06] bg-[#1b1b1b]"
+							></div>
+							<div
+								class="absolute inset-0 flex items-center justify-center gap-1 rounded-[10px] border border-white/10 bg-[#222]"
+							>
+								{#each [0, 1, 2] as index (index)}
+									<span
+										class="size-1 animate-pulse rounded-full bg-sky-300"
+										style={`animation-delay: ${index * 200}ms`}
+									></span>
+								{/each}
+							</div>
+						</div>
+						<div class="text-[17px] font-medium text-white">下一张还在写</div>
+						<p class="max-w-sm text-[13px] leading-relaxed text-gray-500">
+							到的 {summary?.total ?? 0} 张都刷完了。新卡一到就自动翻出来，不用点。
+						</p>
+						<button
+							type="button"
+							class="mt-3 min-h-9 rounded-full border border-white/10 bg-white/[0.03] px-4 text-[13px] text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
+							onclick={stopWaiting}
+						>
+							不等了，先看这 {summary?.total ?? 0} 张的小结
+						</button>
+					</div>
+				{/if}
+			</div>
+
+			{@render arrow(
+				1,
+				phase !== 'studying' || !card || flipped || (session?.queue.length ?? 0) < 2
+			)}
+		</div>
+
+		<div class="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-3 sm:px-[60px]">
+			{#if phase === 'generating'}
+				<!-- 快捷键提示只给有键盘的宽屏；手机上只留「取消」 -->
+				<div class="hidden flex-wrap items-center gap-x-4 gap-y-2 text-xs text-gray-500 sm:flex">
+					<span class="inline-flex items-center gap-1.5">{@render keycap('空格')}翻面</span>
+					<span class="inline-flex items-center gap-1.5">{@render keycap('A–D')}选项</span>
+					<span class="inline-flex items-center gap-1.5">{@render keycap('1')}会了</span>
+					<span class="inline-flex items-center gap-1.5">{@render keycap('2')}再练</span>
+					<span class="inline-flex items-center gap-1.5">{@render keycap('← →')}跳过</span>
+				</div>
+				<button
+					type="button"
+					class="ml-auto min-h-9 rounded-full border border-white/10 bg-white/[0.03] px-4 text-[13px] text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
+					onclick={cancel}
+				>
+					取消
+				</button>
+			{:else if card}
+				<div class="text-xs text-gray-500">
+					{#if flipped}
+						{graded === 'wrong'
+							? '答错了：进重练的卡过一会儿会再考你'
+							: '会了就过，没把握就再练一次'}
+					{:else if incoming}
+						新到的卡排在队尾，不会打断你
+					{:else}
+						<span class="hidden items-center gap-1.5 sm:inline-flex"
+							>{@render keycap('← →')}先跳过这张</span
+						>
+					{/if}
+				</div>
+
+				{#if flipped}
+					<!--
+						本地已经判过对错时，默认动作要跟着判定走：答错了主按钮就是「进重练」，
+						「其实我答对了」降成弱按钮留作纠正（比对判错时仍然需要）。
+						原来两个按钮一样重，答错也能顺手点「会了」，错题就悄悄漏出了重练队列。
+					-->
+					<div class="flex shrink-0 gap-2">
+						{#if graded === 'wrong'}
+							<button
+								type="button"
+								class="inline-flex min-h-10 items-center gap-2 rounded-full px-4 text-[13px] text-gray-400 transition hover:bg-white/[0.06] hover:text-white"
+								onclick={() => judge('known')}
+							>
+								其实我答对了{@render keycap('1')}
+							</button>
+							<button
+								type="button"
+								class="inline-flex min-h-10 items-center gap-2 rounded-full bg-amber-500/15 pr-3 pl-5 text-sm font-medium text-amber-200 transition hover:bg-amber-500/25"
+								onclick={() => judge('again')}
+							>
+								进重练{@render keycap('2')}
+							</button>
+						{:else}
+							<button
+								type="button"
+								class="inline-flex min-h-10 items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] pr-3 pl-5 text-sm text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
+								onclick={() => judge('again')}
+							>
+								再练一次{@render keycap('2')}
+							</button>
+							<button
+								type="button"
+								class="inline-flex min-h-10 items-center gap-2 rounded-full bg-white pr-3 pl-5 text-sm font-medium text-black transition hover:bg-gray-200"
+								onclick={() => judge('known')}
+							>
+								会了{@render keycap('1', true)}
+							</button>
+						{/if}
+					</div>
+				{:else if inputMode === 'flip'}
+					<button
+						type="button"
+						class={`inline-flex min-h-10 shrink-0 items-center gap-2.5 rounded-full bg-white text-sm font-medium text-black transition hover:bg-gray-200 ${
+							card.type === 'cloze' ? 'pr-3.5 pl-5' : 'px-5'
+						}`}
+						onclick={reveal}
+					>
+						看答案
+						<!-- 空格只翻填空卡：选择卡要先选一个才翻面（见 onKeydown），这里就别提示空格了 -->
+						{#if card.type === 'cloze'}{@render keycap('空格', true)}{/if}
+					</button>
+				{/if}
+			{:else}
+				<div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-gray-500">
+					<span class="inline-flex items-center gap-1.5">
+						<span class="h-1 w-3 rounded-full bg-emerald-300"></span>已过
+					</span>
+					<span class="inline-flex items-center gap-1.5">
+						<span class="h-1 w-3 rounded-full bg-[linear-gradient(90deg,#5ee9b5_70%,#ffd230_70%)]"
+						></span>重练后过
+					</span>
+					{#if incoming}
+						<span class="inline-flex items-center gap-1.5">
+							<span class="h-1 w-3 rounded-full bg-white/[0.16]"></span>还在写
+						</span>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	</div>
+{:else if phase === 'failed'}
+	<div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+		<div class="mb-2 flex size-11 items-center justify-center rounded-2xl bg-amber-500/15">
+			<svg
+				class="size-5 text-amber-300"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.7"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<path d="M12 9v4"></path>
+				<path d="M12 17h.01"></path>
+				<path
+					d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+				></path>
+			</svg>
+		</div>
+
+		<div class="text-[17px] font-medium text-white">这一轮没能出卡</div>
 
 		<p class="max-w-sm text-sm leading-relaxed text-gray-400">{failure}</p>
 
 		{#if failure.includes('过多')}
 			<p class="max-w-sm text-xs leading-relaxed text-gray-500">
-				服务端同时只接两个出题/判分请求。刚才如果点过「取消」，那一次在服务端其实还在跑、名额还占着
-				—— 等十几秒再重试就好。
+				同时在出题的人有点多。刚才如果点过「取消」，上一轮其实还在收尾，等十几秒再重试就好。
 			</p>
 		{/if}
 
-		<div class="mt-1 flex gap-2">
+		<div class="mt-3 flex flex-wrap justify-center gap-2">
 			<button
 				type="button"
-				class="rounded-xl bg-white px-5 py-2.5 text-sm font-medium text-gray-900 transition hover:bg-gray-200"
+				class="min-h-10 rounded-full bg-white px-5 text-sm font-medium text-black transition hover:bg-gray-200"
 				onclick={retry}
 			>
 				重试
@@ -478,196 +919,11 @@
 
 			<button
 				type="button"
-				class="rounded-xl border border-gray-700 px-5 py-2.5 text-sm text-gray-400 transition hover:bg-gray-800 hover:text-gray-200"
+				class="min-h-10 rounded-full border border-white/10 bg-white/[0.03] px-5 text-sm text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
 				onclick={onExit}
 			>
 				返回模式选择
 			</button>
-		</div>
-	</div>
-{:else if phase === 'studying' && session && !card}
-	<div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-		<svg
-			class="size-6 animate-spin text-blue-500"
-			viewBox="0 0 24 24"
-			fill="none"
-			aria-hidden="true"
-		>
-			<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
-			></circle>
-			<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
-			></path>
-		</svg>
-		<div class="text-sm text-gray-300">已经到的 {session.known.length} 张刷完了</div>
-		<div class="text-xs text-gray-500">后面的卡还在写，下一张马上到</div>
-	</div>
-{:else if phase === 'studying' && session && card}
-	<div class="flex h-full min-h-0 flex-col">
-		<!-- 窄屏（<640px）竖排：模式切换在上、进度在下。并排时进度那一栏会被挤扁，
-		     实测 375px 下「已过 x / y」和百分比直接撞成两行。 -->
-		<div class="flex shrink-0 flex-col-reverse gap-2 pb-2 sm:flex-row sm:items-center sm:gap-3">
-			<div class="min-w-0 flex-1">
-				<div class="h-1.5 overflow-hidden rounded-full bg-gray-800">
-					<div
-						class="h-full rounded-full bg-gradient-to-r from-blue-500 to-sky-400 transition-all duration-300"
-						style={`width: ${summary?.pct ?? 0}%`}
-					></div>
-				</div>
-
-				<div class="mt-1 flex justify-between font-mono text-[11px] text-gray-500">
-					<span>
-						已过 {summary?.known ?? 0} / {summary?.total ?? 0}{more} · 待重练 {summary?.pendingAgain ??
-							0}
-					</span>
-					<span>{incoming ? '还在出卡' : `${summary?.pct ?? 0}%`}</span>
-				</div>
-				{#if cutNote}
-					<p class="mt-1 text-[11px] leading-relaxed text-amber-300">{cutNote}</p>
-				{/if}
-			</div>
-
-			<div
-				class="flex shrink-0 items-center gap-0.5 self-end rounded-xl border border-white/[0.18] p-0.5 sm:self-auto"
-			>
-				<button
-					type="button"
-					class={`rounded-lg px-2.5 py-1.5 text-xs transition ${
-						inputMode === 'flip'
-							? 'bg-blue-500 font-semibold text-white'
-							: 'text-gray-400 hover:text-gray-200'
-					}`}
-					title="只影响填空卡；选择卡一律点选作答"
-					onclick={() => switchInputMode('flip')}
-				>
-					翻卡自评
-				</button>
-
-				<button
-					type="button"
-					class={`rounded-lg px-2.5 py-1.5 text-xs transition ${
-						inputMode === 'type'
-							? 'bg-blue-500 font-semibold text-white'
-							: 'text-gray-400 hover:text-gray-200'
-					}`}
-					onclick={() => switchInputMode('type')}
-				>
-					输入作答
-				</button>
-			</div>
-		</div>
-
-		<div class="flex min-h-0 flex-1 items-stretch gap-2">
-			<!-- 窄屏藏起左右键：一张卡在 375px 下只剩 ~215px 可读宽度，
-			     句子被切得七零八落。跳卡在窄屏用底部的圆点，够用了。 -->
-			<button
-				type="button"
-				class="hidden min-h-11 min-w-11 self-center rounded-xl border border-gray-700 text-2xl leading-none transition hover:bg-gray-800 disabled:opacity-40 disabled:hover:bg-transparent sm:block"
-				disabled={flipped || session.queue.length < 2}
-				onclick={() => rotate(-1)}
-				aria-label="看待过队列里的上一张"
-				title="上一张（←）"
-			>
-				‹
-			</button>
-
-			<div class="flex min-h-0 min-w-0 flex-1 items-center justify-center">
-				{#key `${card.id}-${inputMode}`}
-					<FlashCard
-						{card}
-						{inputMode}
-						{flipped}
-						{typed}
-						{picked}
-						{graded}
-						{position}
-						onReveal={reveal}
-						onTyped={(value) => (typed = value)}
-						onSubmit={submitAnswer}
-						onPick={pickOption}
-					/>
-				{/key}
-			</div>
-
-			<button
-				type="button"
-				class="hidden min-h-11 min-w-11 self-center rounded-xl border border-gray-700 text-2xl leading-none transition hover:bg-gray-800 disabled:opacity-40 disabled:hover:bg-transparent sm:block"
-				disabled={flipped || session.queue.length < 2}
-				onclick={() => rotate(1)}
-				aria-label="这张先跳过，看下一张"
-				title="下一张（→）"
-			>
-				›
-			</button>
-		</div>
-
-		<div class="mt-3 flex shrink-0 items-center gap-3 border-t border-gray-800 pt-3">
-			<div class="min-w-0 flex-1 overflow-x-auto">
-				<div class="flex min-w-max items-center gap-1.5">
-					{#each dots as dot (dot.id)}
-						<button
-							type="button"
-							class={`shrink-0 rounded-full transition ${dot.className} ${
-								dot.clickable ? 'cursor-pointer hover:opacity-80' : 'cursor-default'
-							}`}
-							disabled={!dot.clickable || flipped}
-							onclick={() => jumpTo(dot.id)}
-							aria-label={`跳到 ${dot.id}`}
-							title={dot.id}
-						></button>
-					{/each}
-				</div>
-			</div>
-
-			{#if flipped}
-				<!--
-					本地已经判过对错时，默认动作要跟着判定走：答错了主按钮就是「进重练」，
-					「其实我答对了」降成弱按钮留作纠正（比对判错时仍然需要）。
-					原来两个按钮一样重，答错也能顺手点「会了」，错题就悄悄漏出了重练队列。
-				-->
-				<div class="flex shrink-0 gap-2">
-					{#if graded === 'wrong'}
-						<button
-							type="button"
-							class="rounded-xl border border-gray-700 px-3 py-2.5 text-xs text-gray-400 transition hover:bg-white/5 hover:text-gray-200"
-							onclick={() => judge('known')}
-						>
-							其实我答对了
-						</button>
-
-						<button
-							type="button"
-							class="rounded-xl border border-amber-900 bg-amber-950/60 px-4 py-2.5 text-sm font-medium text-amber-200 transition hover:bg-amber-950/80"
-							onclick={() => judge('again')}
-						>
-							进重练
-						</button>
-					{:else}
-						<button
-							type="button"
-							class="rounded-xl border border-amber-900 bg-amber-950/40 px-4 py-2.5 text-sm font-medium text-amber-300 transition hover:bg-amber-950/70"
-							onclick={() => judge('again')}
-						>
-							再练一次
-						</button>
-
-						<button
-							type="button"
-							class="rounded-xl border border-emerald-900 bg-emerald-950/50 px-4 py-2.5 text-sm font-medium text-emerald-300 transition hover:bg-emerald-950/80"
-							onclick={() => judge('known')}
-						>
-							会了
-						</button>
-					{/if}
-				</div>
-			{:else if inputMode === 'flip'}
-				<button
-					type="button"
-					class="shrink-0 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-gray-900 transition hover:bg-gray-200"
-					onclick={reveal}
-				>
-					看答案
-				</button>
-			{/if}
 		</div>
 	</div>
 {:else if phase === 'summary' && session && summary}
@@ -675,20 +931,26 @@
 		(item) => (session?.attempts[item.id]?.again ?? 0) > 0
 	)}
 
-	<div class="flex h-full min-h-0 flex-col items-center overflow-y-auto px-4 py-2 text-center">
-		<div class="mt-2 font-mono text-xs tracking-[0.2em] text-gray-500">这组刷完了</div>
+	<!-- safe center：卡少时小结居中，待重练的一多照样从顶上开始滚 -->
+	<div
+		class="flex h-full min-h-0 flex-col items-center [justify-content:safe_center] overflow-y-auto px-4 py-8 text-center"
+	>
+		<div class="mt-2 text-xs tracking-[0.2em] text-gray-500">这组刷完了</div>
 
 		<!-- 主数字用「一次过」而不是「会了」：队列空了才算刷完，
 		     所以「会了」的张数永远等于卡组大小，拿它当成绩没有意义。 -->
-		<div class="mt-2.5 font-mono text-6xl leading-none font-bold text-blue-500">
-			{summary.firstTry}<span class="text-lg text-gray-400"> / {summary.total}</span>
+		<div class="mt-4 text-6xl leading-none font-semibold text-white tabular-nums">
+			{summary.firstTry}<span class="text-lg font-normal text-gray-500"> / {summary.total}</span>
 		</div>
+		<div class="mt-2 text-xs text-gray-500">一次就过</div>
 
-		{#if cutNote}
-			<p class="mt-2 max-w-md text-xs leading-relaxed text-amber-300">{cutNote}</p>
+		{#if cut}
+			<p class="mt-3 max-w-md text-xs leading-relaxed text-amber-300">
+				这组只出了 {summary.total} 张，后面的没出来。
+			</p>
 		{/if}
 
-		<p class="mt-2 text-sm text-gray-400">
+		<p class="mt-3 text-sm text-gray-400">
 			{#if summary.struggled === 0}
 				这一轮全部一次过，没有需要重练的卡。
 			{:else}
@@ -696,42 +958,42 @@
 			{/if}
 		</p>
 
-		<div class="mt-4 flex flex-wrap justify-center gap-2 font-mono text-xs">
-			<div
-				class="rounded-xl border border-emerald-900 bg-emerald-950/40 px-3.5 py-2 text-emerald-300"
-			>
-				一次过 <b class="text-sm">{summary.firstTry}</b>
+		<div class="mt-5 flex flex-wrap justify-center gap-2 text-xs tabular-nums">
+			<div class="rounded-full bg-emerald-500/15 px-3.5 py-1.5 text-emerald-300">
+				一次过 <b class="ml-0.5 font-semibold">{summary.firstTry}</b>
 			</div>
-			<div class="rounded-xl border border-amber-900 bg-amber-950/40 px-3.5 py-2 text-amber-300">
-				重练过 <b class="text-sm">{summary.struggled}</b>
+			<div class="rounded-full bg-amber-500/15 px-3.5 py-1.5 text-amber-300">
+				重练过 <b class="ml-0.5 font-semibold">{summary.struggled}</b>
 			</div>
-			<div class="rounded-xl border border-gray-700 bg-gray-800 px-3.5 py-2 text-gray-300">
-				用时 <b class="text-sm">{formatDuration(summary.elapsed)}</b>
+			<div class="rounded-full bg-white/[0.05] px-3.5 py-1.5 text-gray-300">
+				用时 <b class="ml-0.5 font-semibold">{formatDuration(summary.elapsed)}</b>
 			</div>
 		</div>
 
 		{#if struggledCards.length > 0}
-			<div class="mt-6 w-full max-w-2xl border-t border-gray-800 pt-4 text-left">
-				<div class="text-xs font-semibold text-amber-300">
+			<div class="mt-7 w-full max-w-2xl text-left">
+				<div class="px-1 text-xs font-medium text-amber-300">
 					待重练的 {struggledCards.length} 张
 				</div>
 
 				<div class="mt-2.5 flex flex-col gap-2">
 					{#each struggledCards as item (item.id)}
 						{@const attempt = session?.attempts[item.id]}
-						<div class="flex items-center gap-2.5 rounded-xl border border-gray-700 px-3.5 py-2.5">
-							<span class="shrink-0 font-mono text-[11px] text-gray-500">{item.id}</span>
+						<div
+							class="flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
+						>
+							<span class="shrink-0 text-[11px] text-gray-500 tabular-nums">{item.id}</span>
 
 							<span class="min-w-0 flex-1 truncate text-[13px] text-gray-300">
 								<MathText value={cardHeadline(item)} />
 							</span>
 
 							{#if attempt?.graded === 'wrong'}
-								<span class="shrink-0 font-mono text-[11px] text-red-300">
+								<span class="shrink-0 text-[11px] text-red-300">
 									答错：{attempt.answer.trim() || '未作答'}
 								</span>
 							{:else}
-								<span class="shrink-0 font-mono text-[11px] text-amber-300">自评：再练</span>
+								<span class="shrink-0 text-[11px] text-amber-300">自评：再练</span>
 							{/if}
 						</div>
 					{/each}
@@ -739,11 +1001,11 @@
 			</div>
 		{/if}
 
-		<div class="mt-5 flex w-full max-w-2xl flex-wrap justify-center gap-2">
+		<div class="mt-7 flex w-full max-w-2xl flex-wrap justify-center gap-2">
 			{#if struggledCards.length > 0}
 				<button
 					type="button"
-					class="rounded-xl bg-white px-5 py-2.5 text-sm font-medium text-gray-900 transition hover:bg-gray-200"
+					class="min-h-10 rounded-full bg-white px-5 text-sm font-medium text-black transition hover:bg-gray-200"
 					onclick={replayAgainOnly}
 				>
 					只重刷这 {struggledCards.length} 张
@@ -752,7 +1014,7 @@
 
 			<button
 				type="button"
-				class="rounded-xl border border-gray-700 px-5 py-2.5 text-sm transition hover:bg-gray-800"
+				class="min-h-10 rounded-full border border-white/10 bg-white/[0.03] px-5 text-sm text-gray-200 transition hover:bg-white/[0.08] hover:text-white"
 				onclick={start}
 			>
 				再来一组闪卡
@@ -760,13 +1022,57 @@
 
 			<button
 				type="button"
-				class="rounded-xl border border-gray-700 px-5 py-2.5 text-sm text-gray-400 transition hover:bg-gray-800 hover:text-gray-200"
+				class="min-h-10 rounded-full px-5 text-sm text-gray-400 transition hover:bg-white/[0.06] hover:text-white"
 				onclick={onSwitchToFull}
 			>
 				换整卷练大题
 			</button>
 		</div>
 
-		<p class="mt-4 mb-2 font-mono text-[11px] text-gray-600">全程未调用判卷模型 · 本地判定</p>
+		<p class="mt-5 mb-2 text-[11px] text-gray-500">全程未调用判卷模型 · 本地判定</p>
 	</div>
 {/if}
+
+<style>
+	/* 骨架条的流光：只表达「在写」，不假装知道写到哪了 */
+	.exam-shim {
+		background: linear-gradient(
+			90deg,
+			rgb(255 255 255 / 0.05) 0%,
+			rgb(255 255 255 / 0.11) 50%,
+			rgb(255 255 255 / 0.05) 100%
+		);
+		background-size: 800px 100%;
+		animation: exam-shimmer 1.8s linear infinite;
+	}
+
+	.exam-bob {
+		animation: exam-bob 2.6s ease-in-out infinite;
+	}
+
+	@keyframes exam-shimmer {
+		0% {
+			background-position: -400px 0;
+		}
+		100% {
+			background-position: 400px 0;
+		}
+	}
+
+	@keyframes exam-bob {
+		0%,
+		100% {
+			transform: translateY(0);
+		}
+		50% {
+			transform: translateY(-4px);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.exam-shim,
+		.exam-bob {
+			animation: none;
+		}
+	}
+</style>
