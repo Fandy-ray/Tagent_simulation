@@ -86,12 +86,15 @@ class RecordingFactory:
         return self.client
 
 
-def deps_with(client, budget=120.0):
+TEST_PROVIDER = types.SimpleNamespace(extra_body={}, structured_extra_body={})
+
+
+def deps_with(client, budget=120.0, provider=TEST_PROVIDER):
     factory = RecordingFactory(client)
     deps = AgentDeps(
         knowledge_base=None,
         client_factory=factory,
-        provider="test-provider",
+        provider=provider,
         deadline=time.monotonic() + budget,
     )
     return deps, factory
@@ -110,8 +113,22 @@ def test_json_call_binds_the_output_cap_and_uses_the_run_provider():
     json_call(deps, "出题", Answer, max_tokens=1234, limit=90, floor=25)
     assert client.bound == {"max_tokens": 1234}
     (call,) = factory.calls
-    assert call["provider"] == "test-provider"
+    assert call["provider"] is TEST_PROVIDER
     assert call["max_retries"] == 0
+
+
+def test_json_call_adds_the_structured_params_without_dropping_the_registered_ones():
+    client = RecordingClient([{"value": 1}])
+    provider = types.SimpleNamespace(
+        extra_body={"top_k": 5, "thinking": {"type": "enabled"}},
+        structured_extra_body={"thinking": {"type": "disabled"}},
+    )
+    deps, _ = deps_with(client, provider=provider)
+    json_call(deps, "出题", Answer, max_tokens=500, limit=90, floor=25)
+    assert client.bound == {
+        "max_tokens": 500,
+        "extra_body": {"top_k": 5, "thinking": {"type": "disabled"}},
+    }
 
 
 @pytest.fixture

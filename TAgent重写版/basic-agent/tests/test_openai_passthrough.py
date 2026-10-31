@@ -320,6 +320,12 @@ class TestAdminProbe:
         assert set(upstream["data"]) == {"model", "messages", "max_tokens"}
         assert upstream["kwargs"]["timeout"] < 60, "前端 60 秒就放弃了，后端不该等得更久"
 
+    def test_also_tries_the_params_used_for_exams_and_grading(self, admin_client, upstream, registered_provider):
+        # 这份参数写错了上游会拒，要在「试一下」时看出来，不是等到学生出卷失败
+        registered_provider.structured_extra_body["thinking"] = {"type": "disabled"}
+        assert admin_client.post("/admin/model-providers/deepseek/probe", headers=self.TOKEN).status_code == 200
+        assert upstream["data"]["thinking"] == {"type": "disabled"}
+
     def test_works_through_the_frontend_proxy(self, admin_client, upstream, registered_provider):
         # 登记页就是从前端端口来的；有管理口令就行
         response = admin_client.post(

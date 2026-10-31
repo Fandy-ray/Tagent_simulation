@@ -105,6 +105,37 @@ def test_changing_what_a_read_returns_does_not_change_the_registry(registry):
     assert second.extra_body == {"thinking": {"type": "disabled"}} and second.name == "m"
 
 
+def test_structured_params_are_stored_and_shown_and_a_partial_update_keeps_the_key(tmp_path, clock):
+    registry = ModelProviderRegistry(tmp_path / "providers.json", clock=clock)
+    registry.create_provider({**provider("k"), "auth_mode": "bearer", "api_key": "sk-secret"})
+    public = registry.update_provider(
+        "k", {"structured_extra_body": {"thinking": {"type": "disabled"}}}
+    )
+    assert public["structured_extra_body"] == {"thinking": {"type": "disabled"}}
+    # 整条换掉重新读：登记表里写下去的就是它，Key 没动
+    fresh = ModelProviderRegistry(tmp_path / "providers.json", clock=clock)
+    stored = fresh.get_enabled_provider("k")
+    assert stored.structured_extra_body == {"thinking": {"type": "disabled"}}
+    assert stored.api_key == "sk-secret"
+    assert stored.extra_body == {}
+
+
+def test_structured_params_follow_the_same_rules_as_extra_body(tmp_path, clock):
+    registry = ModelProviderRegistry(tmp_path / "providers.json", clock=clock)
+    with pytest.raises(ValueError, match="structured_extra_body must not set max_tokens"):
+        registry.create_provider(provider("r", structured_extra_body={"max_tokens": 1}))
+
+
+def test_a_registry_written_before_structured_params_existed_still_loads(tmp_path, clock):
+    path = tmp_path / "providers.json"
+    registry = ModelProviderRegistry(path, clock=clock)
+    registry.create_provider(provider("old"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["providers"][0]["structured_extra_body"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert ModelProviderRegistry(path, clock=clock).get_enabled_provider("old").structured_extra_body == {}
+
+
 def test_a_rejected_write_leaves_the_cached_registry_alone(registry):
     registry.get_enabled_provider("m")
     with pytest.raises(ValueError):

@@ -84,7 +84,7 @@ class EssayService:
 
         # 截止时间从进门算起，排队等闸门的时间也算在预算里
         deps = self._deps(provider, budget_seconds=ESSAY_LLM_BUDGET)
-        with self.llm_gate.acquire():
+        with self.llm_gate.acquire(deadline=deps.deadline):
             result = ESSAY_GRAPH.invoke(
                 {
                     "source": source,
@@ -119,7 +119,7 @@ class EssayService:
         这一步失败会让学生连题都拿不到，比题目泛一点更糟。
         """
         deps = self._deps(provider, budget_seconds=ESSAY_TOPIC_LLM_BUDGET)
-        with self.llm_gate.acquire():
+        with self.llm_gate.acquire(deadline=deps.deadline):
             result, context = write_topic(deps, hint, _TOPIC_FALLBACK_QUERY, notebook_ids)
 
         return EssayTopic(
@@ -167,7 +167,7 @@ class EssayService:
         )
         # 长度检查在上面、拿闸门之前：短答案根本不用排队，闸门满时也不该被拒成 429
         deps = self._deps(provider, budget_seconds=ANNOTATE_LLM_BUDGET)
-        with self.llm_gate.acquire():
+        with self.llm_gate.acquire(deadline=deps.deadline):
             result = ANNOTATE_GRAPH.invoke(
                 {
                     "prompt": prompt,

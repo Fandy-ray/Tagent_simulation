@@ -8,6 +8,7 @@ basic-agent 重启后内存没了，交卷时去盘上找回来，学生不用�
 from __future__ import annotations
 
 import copy
+import math
 import threading
 import time
 from contextlib import contextmanager
@@ -88,37 +89,60 @@ class LLMGate:
 
     满了先排一会儿队：最多 wait_seconds 秒、最多 max_waiting 个人排着，排不上才 429。
     以前满了立刻 429 —— 一个班同时交稿，6 个人里 4 个直接报「请求过多」（压测 S2），只能自己再点一次。
-    排队的人占着一个 waitress 线程干等，所以队长有上限（线程默认 100 个，流式答疑也要用）；
-    等多久要比前端的超时余量短（前端超时减后端预算，最少还剩 40 秒，见 app/config.py 的 LLM_GATE_*）。
+    排队的人占着一个 waitress 线程干等，所以队长有上限（见 app/config.py 的 LLM_GATE_*、WAITRESS_THREADS）；
+    排队算在这次运行的预算里，后端总耗时不超过预算（见 tests/test_timeout_budgets.py）。
 
     默认 wait_seconds=0：不排队、满了立刻 429（单测和老的调用方式照旧）。正式装配见 app/container.py。
+
+    acquire 给了 deadline（这次运行的截止时间，排队也算在里面）时，最多排到「截止前还留 min_run_seconds」：
+    排得再久，排到了也来不及跑完，不如早点告诉学生。答疑也用这个类（busy_error 换成答疑自己的说法）。
     """
 
-    def __init__(self, max_concurrent: int = 2, *, wait_seconds: float = 0.0, max_waiting: int = 0):
+    def __init__(
+        self,
+        max_concurrent: int = 2,
+        *,
+        wait_seconds: float = 0.0,
+        max_waiting: int = 0,
+        min_run_seconds: float = 20.0,
+        busy_error: Callable[[str], Exception] = ExamBusyError,
+        what: str = "批改 / 出题",
+    ):
         self._sem = threading.BoundedSemaphore(max_concurrent)
         self._wait_seconds = wait_seconds
         self._max_waiting = max_waiting
+        self._min_run_seconds = min_run_seconds
+        self._busy_error = busy_error
+        self._what = what
         self._waiting = 0
         self._lock = threading.Lock()
 
+    @property
+    def waiting(self) -> int:
+        with self._lock:
+            return self._waiting
+
     @contextmanager
-    def acquire(self):
+    def acquire(self, *, deadline: float | None = None):
         if not self._sem.acquire(blocking=False):
-            self._queue_for_a_slot()
+            self._queue_for_a_slot(deadline)
         try:
             yield
         finally:
             self._sem.release()
 
-    def _queue_for_a_slot(self) -> None:
+    def _queue_for_a_slot(self, deadline: float | None) -> None:
+        wait = self._wait_seconds
+        if deadline is not None and math.isfinite(deadline):
+            wait = min(wait, deadline - time.monotonic() - self._min_run_seconds)
         with self._lock:
-            if self._wait_seconds <= 0 or self._waiting >= self._max_waiting:
-                raise ExamBusyError("出题/判分请求过多，请稍后再试")
+            if wait <= 0 or self._waiting >= self._max_waiting:
+                raise self._busy_error(f"同时在{self._what}的人太多，请稍后再试")
             self._waiting += 1
         try:
-            got = self._sem.acquire(timeout=self._wait_seconds)
+            got = self._sem.acquire(timeout=wait)
         finally:
             with self._lock:
                 self._waiting -= 1
         if not got:
-            raise ExamBusyError(f"同时在批改 / 出题的人太多，排了 {self._wait_seconds:.0f} 秒还没轮到，请稍后再试")
+            raise self._busy_error(f"同时在{self._what}的人太多，排了 {wait:.0f} 秒还没轮到，请稍后再试")

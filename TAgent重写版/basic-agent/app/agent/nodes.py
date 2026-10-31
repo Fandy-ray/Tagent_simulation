@@ -21,6 +21,7 @@ from app.agent.runtime import AgentDeps, attempt_timeout
 from app.config import UPSTREAM_STALL_SECONDS
 from app.errors.exam_errors import InvalidExamRequestError
 from app.infra import llm_json
+from app.infra.model_client_factory import structured_bind_kwargs
 from app.util.json_items import JsonItemScanner
 
 log = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ def json_call(
     timeout = attempt_timeout(limit, floor, budget)
     client = deps.client_factory.get(
         deps.provider, timeout_seconds=UPSTREAM_STALL_SECONDS, max_retries=0
-    ).bind(max_tokens=max_tokens)
+    ).bind(max_tokens=max_tokens, **structured_bind_kwargs(deps.provider))
     client = llm_json.StreamingClient(client, open_reader or _skip_pieces)
     # 经由模块属性调用，单测才能 monkeypatch app.infra.llm_json.call_json_llm
     return llm_json.call_json_llm(

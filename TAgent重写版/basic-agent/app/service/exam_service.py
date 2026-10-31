@@ -105,9 +105,9 @@ class ExamService:
         deps = self._deps(provider, EXAM_LLM_BUDGET)
         # 注意：闸门按「一次出卷」计名额，而一次出卷会同时发出 7 路上游调用
         # （大题三路、填空两路、选择两路，见 app/agent/graphs/exam.py）。
-        # 即上游并发峰值 = EXAM_MAX_CONCURRENT_LLM × 7（默认 5×7=35），
+        # 即上游并发峰值 = EXAM_MAX_CONCURRENT_LLM × 7（默认 10×7=70），
         # 不等于闸门容量本身。调整闸门容量时按这个倍数换算。闪卡是 × 3。
-        with self.llm_gate.acquire():
+        with self.llm_gate.acquire(deadline=deps.deadline):
             exam = EXAM_GRAPH.invoke(
                 {"topic": topic, "notebook_ids": notebook_ids}, context=deps
             )["exam"]
@@ -126,7 +126,7 @@ class ExamService:
         """闪卡组：填空 + 选择两类，按材料分片并发，卡组不计分。流程见 app/agent/graphs/flash.py。"""
         deps = self._deps(provider, FLASH_LLM_BUDGET)
         # 闸门照旧按「一次出卡组」计一个名额，上游并发峰值 = 容量 × FLASH_SHARD_COUNT
-        with self.llm_gate.acquire():
+        with self.llm_gate.acquire(deadline=deps.deadline):
             deck = FLASH_GRAPH.invoke(
                 {"topic": topic, "notebook_ids": notebook_ids}, context=deps
             )["deck"]
@@ -160,7 +160,7 @@ class ExamService:
         """
         deps = self._deps(provider, FLASH_LLM_BUDGET)
         deck_id = str(uuid.uuid4())
-        with self.llm_gate.acquire():
+        with self.llm_gate.acquire(deadline=deps.deadline):
             stream = FLASH_GRAPH.stream(
                 {"topic": topic, "notebook_ids": notebook_ids, "stream": True},
                 context=deps,
@@ -341,7 +341,7 @@ class ExamService:
             if provider is None:
                 raise ModelMismatchError("判卷模型不可用，请重新生成试卷")
             # 只在真有题要送模型时才拿闸门：本机就能判完的卷子不该排队，闸门满时也不该被拒
-            with self.llm_gate.acquire():
+            with self.llm_gate.acquire(deadline=deps.deadline):
                 graded = GRADE_GRAPH.invoke({"items": llm_items}, context=deps)["graded"]
             for item in graded:
                 question, answer = llm_meta[item.question_id]

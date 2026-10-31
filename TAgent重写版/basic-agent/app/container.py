@@ -12,7 +12,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from app.config import LLM_GATE_MAX_WAITING, LLM_GATE_WAIT_SECONDS, AgentConfig
+from app.config import (
+    ANSWER_GATE_MAX_WAITING,
+    ANSWER_GATE_WAIT_SECONDS,
+    LLM_GATE_MAX_WAITING,
+    LLM_GATE_MIN_RUN_SECONDS,
+    LLM_GATE_WAIT_SECONDS,
+    AgentConfig,
+)
 from app.repository.provider_repository import load_model_registry
 
 
@@ -96,6 +103,7 @@ def build_services(
 ) -> Services:
     # 延迟 import：这几个模块会拉起 langchain/langgraph，
     # 只想构造 app 做单测时不该付这个代价。
+    from app.errors.api_errors import AgentAPIError
     from app.infra.model_client_factory import ModelClientFactory
     from app.repository.exam_cache import ExamCache, LLMGate
     from app.repository.exam_persistence import ExamPersistence
@@ -112,13 +120,23 @@ def build_services(
         max_concurrent=settings.exam_max_concurrent_llm,
         wait_seconds=LLM_GATE_WAIT_SECONDS,
         max_waiting=LLM_GATE_MAX_WAITING,
+        min_run_seconds=LLM_GATE_MIN_RUN_SECONDS,
     )
     store = build_learning_store(settings) if learning_store else None
     # 私有卷也落一份进学习记录库：重启后学生还能交卷（库没开就只在内存，和以前一样）
     exam_cache = ExamCache(persistence=ExamPersistence(store) if store is not None else None)
 
+    # 答疑单独一道闸门（不和出卷判卷抢名额）：同时检索、生成的最多 answer_max_concurrent 个，其余在门口排队
+    answer_gate = LLMGate(
+        max_concurrent=settings.answer_max_concurrent,
+        wait_seconds=ANSWER_GATE_WAIT_SECONDS,
+        max_waiting=ANSWER_GATE_MAX_WAITING,
+        busy_error=lambda message: AgentAPIError(message, 429, "answer_busy"),
+        what="提问",
+    )
+
     services = Services(
-        chat=ChatService(knowledge_base, client_factory),
+        chat=ChatService(knowledge_base, client_factory, answer_gate=answer_gate),
         quiz=QuizService(knowledge_base, client_factory),
         exam=ExamService(knowledge_base, client_factory, llm_gate=llm_gate, exam_cache=exam_cache),
         essay=EssayService(

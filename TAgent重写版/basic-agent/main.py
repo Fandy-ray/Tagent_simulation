@@ -25,7 +25,13 @@ def main() -> None:
         try:
             from waitress import serve
 
-            serve(app, host=settings.host, port=settings.port, threads=settings.waitress_threads)
+            serve(
+                app,
+                host=settings.host,
+                port=settings.port,
+                threads=settings.waitress_threads,
+                connection_limit=settings.waitress_connection_limit,
+            )
             return
         except ImportError:
             pass

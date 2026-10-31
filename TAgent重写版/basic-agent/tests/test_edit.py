@@ -161,7 +161,9 @@ class Factory:
 
 def deps_for(llm) -> AgentDeps:
     return AgentDeps(
-        knowledge_base=None, client_factory=Factory(llm), provider=None,
+        knowledge_base=None,
+        client_factory=Factory(llm),
+        provider=types.SimpleNamespace(extra_body={}, structured_extra_body={}),
         deadline=time.monotonic() + 60,
     )
 

@@ -18,6 +18,7 @@ from flask import Response, jsonify, stream_with_context
 
 from app.api.deps import get_chat_service
 from app.api.learner import current_learner, note_chat
+from app.errors.api_errors import AgentAPIError
 from app.service.chat_service import FINISH_INTERRUPTED, STREAM_FAILED_NOTE
 from app.api.validators import (
     chat_mode,
@@ -153,13 +154,15 @@ def chat_completion_response(data, provider):
             outcome = finish_reason
         except GeneratorExit:
             raise
-        except Exception:
+        except Exception as exc:
             outcome = "error"
+            # 门口排太久（429）就照实说是人太多，别说成「模型服务出错了」
+            busy = isinstance(exc, AgentAPIError) and exc.status == 429
             payload = _chunk(
                 chat_id,
                 created,
                 provider.served_model_id,
-                STREAM_FAILED_NOTE,
+                f"\n\n（{exc.message}）" if busy else STREAM_FAILED_NOTE,
             )
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
         finally:

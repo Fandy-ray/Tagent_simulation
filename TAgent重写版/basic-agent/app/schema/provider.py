@@ -42,6 +42,8 @@ class ModelProvider:
     updated_at: str = ""
     # 原样并进每次请求体的厂商参数，见 normalize_extra_body。dict 不可哈希，不参与 hash
     extra_body: dict = field(default_factory=dict, hash=False)
+    # 只有出题、批改这类要结构化 JSON 的调用才加的厂商参数，答疑不带，见 structured_bind_kwargs
+    structured_extra_body: dict = field(default_factory=dict, hash=False)
 
     @property
     def as_openai_config(self) -> OpenAICompatibleConfig:
@@ -100,13 +102,14 @@ EXTRA_BODY_RESERVED = frozenset(
 EXTRA_BODY_MAX_CHARS = 2000
 
 
-def normalize_extra_body(value: Any) -> dict:
+def normalize_extra_body(value: Any, name: str = "extra_body") -> dict:
     """登记模型时可选的「附加参数」：原样并进每次请求体。
 
     主要用来关闭思考。会先思考的模型把思考也算进输出额度，思考长了正文就被挤没
     （2026-10-07 Windows 测试报告：额度 256 时正文为空）。各家关闭的写法不一样，
     例如 DeepSeek / 智谱 / 豆包是 {"thinking": {"type": "disabled"}}，
     通义千问是 {"enable_thinking": false}，所以不做成开关，照厂商文档填。
+    name 是报错里写的字段名：structured_extra_body 走的是同一套规则。
     """
     if value is None or value == "":
         return {}
@@ -114,18 +117,18 @@ def normalize_extra_body(value: Any) -> dict:
         try:
             value = json.loads(value)
         except json.JSONDecodeError as exc:
-            raise ValueError("extra_body must be a JSON object") from exc
+            raise ValueError(f"{name} must be a JSON object") from exc
     if not isinstance(value, dict):
-        raise ValueError("extra_body must be a JSON object")
+        raise ValueError(f"{name} must be a JSON object")
     reserved = sorted(EXTRA_BODY_RESERVED & set(value))
     if reserved:
-        raise ValueError(f"extra_body must not set {', '.join(reserved)}")
+        raise ValueError(f"{name} must not set {', '.join(reserved)}")
     try:
         text = json.dumps(value, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError) as exc:
-        raise ValueError("extra_body must contain plain JSON values only") from exc
+        raise ValueError(f"{name} must contain plain JSON values only") from exc
     if len(text) > EXTRA_BODY_MAX_CHARS:
-        raise ValueError(f"extra_body must be at most {EXTRA_BODY_MAX_CHARS} characters of JSON")
+        raise ValueError(f"{name} must be at most {EXTRA_BODY_MAX_CHARS} characters of JSON")
     return json.loads(text)  # 深拷贝：之后谁改了传进来的对象都影响不到这里
 
 

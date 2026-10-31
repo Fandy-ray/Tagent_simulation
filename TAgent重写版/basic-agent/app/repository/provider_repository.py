@@ -288,6 +288,9 @@ class ModelProviderRegistry:
         auth_mode = str(payload.get("auth_mode") or "bearer").strip().lower()
         temperature = normalize_temperature(payload.get("temperature", 0.1))
         extra_body = normalize_extra_body(payload.get("extra_body"))
+        structured_extra_body = normalize_extra_body(
+            payload.get("structured_extra_body"), "structured_extra_body"
+        )
         enabled = payload.get("enabled", True)
 
         if not name:
@@ -329,6 +332,7 @@ class ModelProviderRegistry:
             "created_at": created_at,
             "updated_at": updated_at,
             "extra_body": extra_body,
+            "structured_extra_body": structured_extra_body,
         }
 
     @staticmethod
@@ -340,7 +344,13 @@ class ModelProviderRegistry:
     @staticmethod
     def _provider_from_dict(provider: dict[str, Any]) -> ModelProvider:
         # 附加参数是可变的字典，和缓存里的那份分开，用的人改了也不会带坏缓存
-        return ModelProvider(**{**provider, "extra_body": copy.deepcopy(provider.get("extra_body") or {})})
+        return ModelProvider(
+            **{
+                **provider,
+                "extra_body": copy.deepcopy(provider.get("extra_body") or {}),
+                "structured_extra_body": copy.deepcopy(provider.get("structured_extra_body") or {}),
+            }
+        )
 
     @staticmethod
     def _public_provider(provider: dict[str, Any], include_secrets: bool = False) -> dict[str, Any]:
@@ -360,6 +370,7 @@ class ModelProviderRegistry:
         }
         # 不是密钥，照常给出去，登记页要能看见、改它
         public["extra_body"] = provider.get("extra_body") or {}
+        public["structured_extra_body"] = provider.get("structured_extra_body") or {}
         if include_secrets:
             public["api_key"] = provider.get("api_key", "")
         else:

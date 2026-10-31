@@ -110,6 +110,19 @@ class ModelClientFactory:
                 http_client.close()
 
 
+def structured_bind_kwargs(provider) -> dict:
+    """出题、批改这类结构化 JSON 调用要多带的 .bind() 入参。没登记时返回空 dict。
+
+    关思考不能一刀切：答疑要留着思考，出题批改只要一段 JSON，思考只是白等
+    （2026-10-30 服务器实测 deepseek-flash：关掉后首字 0.6 秒，开着 5.9~8.5 秒）。
+    extra_body 是整个覆盖的，所以和登记时填的那份合并着传，同名时听这里的。
+    """
+    extra = provider.structured_extra_body
+    if not extra:
+        return {}
+    return {"extra_body": {**(provider.extra_body or {}), **extra}}
+
+
 # ====================== 每次请求的可调参数 ======================
 #
 # 客户端是按 (模型, 超时, 重试) 缓存的，每次请求的参数**不能**进缓存键——

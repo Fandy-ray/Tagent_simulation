@@ -123,7 +123,17 @@ class AgentConfig:
     # 连 /health 都跟着卡住（压测 S7）。这些线程都在等网络，多开很便宜。
     # 32 → 100（2026-10-11 压测，回答约 18 秒）：32 个占满后所有请求都排队，50 人同时提问后 18 人首字要等 18.7 秒；
     # 100 个时 50 人全部 0.8 秒内出字，内存只多十几 MB。代价是同时打到模型的请求上限跟着变成 100。
-    waitress_threads: int = 100
+    # 100 → 300（2026-10-30）：答疑和出卷都改成满了在门口排队（见 answer_max_concurrent、LLM_GATE_*），
+    # 排着的人也各占一个线程；同时打到模型的请求数改由那两个闸门管，线程多了不会多压模型。
+    waitress_threads: int = 300
+    # 同时开着的连接上限（waitress 的 connection_limit，它自己默认只有 100）。到了上限就不再接新连接，
+    # 连打开页面的轻请求也得排在后面。2026-10-30 在 2 核 2G 的服务器上 200 人同时提问时就卡在这 100 上
+    # （日志：total open connections reached the connection limit）
+    waitress_connection_limit: int = 500
+    # 同时在检索、生成的答疑最多几个，其余在门口排队：不报错，只是第一个字来得晚。
+    # 2026-10-30 在 2 核 2G 的服务器上压测（假模型，一问约 14 秒）：不限的话 100 人同时提问两个核全满、
+    # 后端内存从 700M 涨到 1G，系统内存不够，把后端杀了
+    answer_max_concurrent: int = 32
 
     admin_token: str = ""
     internal_token: str = ""
@@ -143,9 +153,11 @@ class AgentConfig:
     notebook_token: str = ""
 
     # 出卷、批改同时跑几份（并发闸门容量）。2 → 5（2026-10-11 压测，一次批改约 15 秒）：10 人同时交稿，
-    # 容量 2 有 6 人等满 30 秒被拒，容量 5 全部批完。上游并发峰值：批改 = 容量 × 3 = 15，
-    # 出整卷 = 容量 × 7 = 35（整卷七路同时发，见 app/agent/graphs/exam.py）。
-    exam_max_concurrent_llm: int = 5
+    # 容量 2 有 6 人等满 30 秒被拒，容量 5 全部批完。5 → 10（2026-10-31，2 核 2G 上 200 人出整卷）：
+    # 容量 5 时 CPU 还有富余，人都卡在排队上，改完中位 84 → 44 秒、P95 157 → 79 秒，CPU 峰值 58%。
+    # 上游并发峰值：批改 = 容量 × 3 = 30，
+    # 出整卷 = 容量 × 7 = 70（整卷七路同时发，见 app/agent/graphs/exam.py）。
+    exam_max_concurrent_llm: int = 10
     llm_max_orphan_tasks: int = 2
 
     # 向量索引的磁盘缓存目录。None = 不缓存（TAGENT_VECTOR_CACHE=0，或单测）
@@ -178,7 +190,9 @@ class AgentConfig:
             host=_env("BASIC_AGENT_HOST", "AGENT_HOST", default="127.0.0.1"),
             port=int(_env("BASIC_AGENT_PORT", "AGENT_PORT", default="5001")),
             use_waitress=os.getenv("USE_WAITRESS", "1") == "1",
-            waitress_threads=int(os.getenv("WAITRESS_THREADS", "100")),
+            waitress_threads=int(os.getenv("WAITRESS_THREADS", "300")),
+            waitress_connection_limit=int(os.getenv("WAITRESS_CONNECTION_LIMIT", "500")),
+            answer_max_concurrent=max(1, int(os.getenv("ANSWER_MAX_CONCURRENT", "32"))),
             admin_token=os.getenv("AGENT_ADMIN_TOKEN", ""),
             internal_token=os.getenv("AGENT_INTERNAL_TOKEN", ""),
             model_providers_path=Path(
@@ -196,7 +210,7 @@ class AgentConfig:
             notebook_token=_env(
                 "OPEN_NOTEBOOK_PASSWORD", "OPEN_NOTEBOOK_TOKEN", "NOTEBOOK_TOKEN"
             ),
-            exam_max_concurrent_llm=int(os.getenv("EXAM_MAX_CONCURRENT_LLM", "5")),
+            exam_max_concurrent_llm=int(os.getenv("EXAM_MAX_CONCURRENT_LLM", "10")),
             llm_max_orphan_tasks=int(os.getenv("LLM_MAX_ORPHAN_TASKS", "2")),
             vector_cache_dir=(
                 None
@@ -398,13 +412,21 @@ EDIT_MAX_SUGGESTIONS = 5
 # ====================== LLM 闸门的排队 ======================
 #
 # 闸门满了先排队，排不上才 429（见 app/repository/exam_cache.py 的 LLMGate）。
-# 等多久必须短于「前端超时 − 后端预算」的余量：整卷 380−330=50、闪卡 240−200=40、
-# 论文批改 260−220=40 秒，取 30 秒，排到之后还够一次完整的预算。
-# tests/test_timeout_budgets.py 盯着这几个数：改预算或前端超时时，三边要一起动。
-# 队长上限：排队的人各占一个 waitress 线程干等（共 WAITRESS_THREADS 个，默认 100），
-# 给流式答疑留足。
-LLM_GATE_WAIT_SECONDS = 30.0
-LLM_GATE_MAX_WAITING = 8
+# 排队的时间算在这次运行的预算里（截止时间从进门算起），闸门最多排到「截止前还留 LLM_GATE_MIN_RUN_SECONDS」，
+# 所以后端总耗时不会超过预算，前端只要比预算多等一点就行（tests/test_timeout_budgets.py 盯着）。
+# 留的这段要够跑：每次调模型前，剩余预算不到「单次超时下限 + 5 秒」就直接判超时（见 app/agent/nodes.py），
+# 下限最大的整卷是 30 秒，再留一次重来的余地。
+# 30 秒 / 8 人 → 180 秒 / 300 人（2026-10-30）：100~200 人的班一起出卷时，以前排不上的人直接看到
+# 「人太多」；关掉思考后一张卷几秒出完，排几十个人也就一两分钟。
+# 排队的人各占一个 waitress 线程干等（WAITRESS_THREADS 默认 300）。
+LLM_GATE_WAIT_SECONDS = 180.0
+LLM_GATE_MAX_WAITING = 300
+LLM_GATE_MIN_RUN_SECONDS = 45.0
+
+# 答疑门口的排队（容量是 AgentConfig.answer_max_concurrent）。答疑前端不设超时，排多久都等着；
+# 这两个数只是兜底：真排了 10 分钟、或者门口已经站了 1000 人，就别再接着排了
+ANSWER_GATE_WAIT_SECONDS = 600.0
+ANSWER_GATE_MAX_WAITING = 1000
 
 
 # ====================== 请求合并 / 上游连接 ======================

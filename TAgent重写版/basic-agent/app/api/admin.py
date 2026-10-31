@@ -83,8 +83,14 @@ def probe_provider(served_model_id: str):
     """原样回上游的状态码和响应体（带 UPSTREAM_RELAY_HEADER），和 /v1/raw/chat/completions 一个样子。"""
     require_admin_token()
     provider = select_provider(served_model_id)
+    # 带上出题批改用的那份参数：它写错了上游会拒，「试一下」这里就能看出来，不用等到学生出卷失败
     status, body, content_type = passthrough_client.complete(
-        {"model": served_model_id, "messages": PROBE_MESSAGES, "max_tokens": PROBE_MAX_TOKENS},
+        {
+            "model": served_model_id,
+            "messages": PROBE_MESSAGES,
+            "max_tokens": PROBE_MAX_TOKENS,
+            **provider.structured_extra_body,
+        },
         provider,
         timeout=PROBE_TIMEOUT_SECONDS,
     )

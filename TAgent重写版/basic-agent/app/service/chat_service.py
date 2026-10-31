@@ -8,6 +8,7 @@ service 层规则：不 import flask，不认识 request/current_app。
 from __future__ import annotations
 
 import math
+from contextlib import nullcontext
 from typing import Any, Callable
 
 from app.agent.graphs.answer import (
@@ -52,11 +53,19 @@ def _retrieval_query(messages: list[dict[str, str]], retrieval_query: str | None
 
 
 class ChatService:
-    """答疑的门面。流程在 app/agent/graphs/answer.py；答疑不走闸门。"""
+    """答疑的门面。流程在 app/agent/graphs/answer.py。
 
-    def __init__(self, knowledge_base, client_factory):
+    门口一道闸门（answer_gate，见 app/container.py）：同时检索、生成的答疑有上限，其余排队。
+    名额从检索之前拿、到最后一个字发完（或学生点了停止、生成器被关掉）才还。不给就不限（单测）。
+    """
+
+    def __init__(self, knowledge_base, client_factory, *, answer_gate=None):
         self.knowledge_base = knowledge_base
         self.client_factory = client_factory
+        self.answer_gate = answer_gate
+
+    def _admitted(self):
+        return self.answer_gate.acquire() if self.answer_gate is not None else nullcontext()
 
     def _run(
         self,
@@ -104,10 +113,11 @@ class ChatService:
         tuning: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
-            result, _ = self._run(
-                messages, provider, notebook_ids,
-                mode=mode, retrieval_query=retrieval_query, tuning=tuning, stream=False,
-            )
+            with self._admitted():
+                result, _ = self._run(
+                    messages, provider, notebook_ids,
+                    mode=mode, retrieval_query=retrieval_query, tuning=tuning, stream=False,
+                )
             return {
                 "content": result["content"],
                 "retrieved_context": result.get("retrieved_context", ""),
@@ -137,30 +147,31 @@ class ChatService:
         学生点停止、生成器被关掉时，上游的流要跟着立刻断。
         """
         try:
-            state, deps = self._run(
-                messages, provider, notebook_ids,
-                mode=mode, retrieval_query=retrieval_query, tuning=tuning, stream=True,
-            )
-            if on_citations is not None:
-                on_citations(citations_from_documents(state.get("retrieved_documents") or []))
-            finish_reason = None
-            spoken: list[str] = []
-            for chunk in answer_client(deps).stream(prompt_messages(state)):
-                metadata = getattr(chunk, "response_metadata", None) or {}
-                # A final usage-only chunk can contain finish_reason=None.
-                # It must not erase the preceding stop/length/filter reason.
-                if metadata.get("finish_reason"):
-                    finish_reason = metadata["finish_reason"]
-                content = content_text(chunk.content)
-                if content:
-                    spoken.append(content)
-                    yield content, None
-            if finish_reason is None:
-                yield STREAM_INTERRUPTED_NOTE, None
-                finish_reason = FINISH_INTERRUPTED
-            elif finish_reason == "length":
-                yield truncation_tail("".join(spoken)), None
-            yield "", finish_reason
+            with self._admitted():
+                state, deps = self._run(
+                    messages, provider, notebook_ids,
+                    mode=mode, retrieval_query=retrieval_query, tuning=tuning, stream=True,
+                )
+                if on_citations is not None:
+                    on_citations(citations_from_documents(state.get("retrieved_documents") or []))
+                finish_reason = None
+                spoken: list[str] = []
+                for chunk in answer_client(deps).stream(prompt_messages(state)):
+                    metadata = getattr(chunk, "response_metadata", None) or {}
+                    # A final usage-only chunk can contain finish_reason=None.
+                    # It must not erase the preceding stop/length/filter reason.
+                    if metadata.get("finish_reason"):
+                        finish_reason = metadata["finish_reason"]
+                    content = content_text(chunk.content)
+                    if content:
+                        spoken.append(content)
+                        yield content, None
+                if finish_reason is None:
+                    yield STREAM_INTERRUPTED_NOTE, None
+                    finish_reason = FINISH_INTERRUPTED
+                elif finish_reason == "length":
+                    yield truncation_tail("".join(spoken)), None
+                yield "", finish_reason
         except AgentAPIError:
             raise
         except Exception as exc:
