@@ -86,7 +86,9 @@ OpenNotebook 跑在 Docker 里（`opennotebook/docker-compose.yml`）。<https:/
 
 **用自己的 DeepSeek Key，不要用别人的。** 没登记的话前端顶栏是「选择模型」，答疑和出题都会失败。
 
-管理 token 在 `TAgent重写版/.env.runtime` 的 `AGENT_ADMIN_TOKEN`（启动脚本自动生成）。
+管理 token 在 `TAgent重写版/.env.runtime` 的 `AGENT_ADMIN_TOKEN`（启动脚本自动生成）。部署在服务器上时，
+在部署目录跑 `bash TAgent重写版/scripts/show-admin-token.sh` 就能打印出来（Windows 是同目录的
+`show-admin-token.ps1`）；登记页和管理员面板可以勾「在这台电脑上记住」，点「锁定」清掉。
 
 **网页登记（推荐）**：打开 <http://localhost:5173/models>（或顶栏模型下拉 →「登记 / 管理模型」），
 粘贴管理 token → 「连接」→「登记新模型」→ 点「DeepSeek」填好常用项 → 填自己的 Key → 「保存」→「试一下」。
