@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 
 const origin = 'http://127.0.0.1:4173';
 const authEnabled = process.env.FIXTURE_AUTH_ENABLED !== '0';
+let failFolderWrites = Number(process.env.FIXTURE_FAIL_FOLDER_WRITES || 0);
 const student = {
 	id: 'fixture-student',
 	username: 'student',
@@ -55,6 +56,7 @@ const server = createServer(async (request, response) => {
 		});
 	if (url.pathname === '/health') return send(200, { status: 'ok' });
 	if (url.pathname === '/auth/login' && method === 'POST') {
+		if (account) return send(409, { error: { message: '请先退出当前账号，再登录其他账号。' } });
 		let body = '';
 		for await (const chunk of request) body += chunk;
 		const input = JSON.parse(body || '{}');
@@ -115,6 +117,10 @@ const server = createServer(async (request, response) => {
 		if (method === 'PUT') {
 			if (request.headers['x-tagent-csrf'] !== 'fixture-csrf')
 				return send(403, { error: { message: '测试页面校验失败。' } });
+			if (url.pathname === '/me/data/qa_folders' && failFolderWrites > 0) {
+				failFolderWrites -= 1;
+				return send(503, { error: { message: '本地夹具模拟的暂时保存失败。' } });
+			}
 			let body = '';
 			for await (const chunk of request) body += chunk;
 			const input = JSON.parse(body || '{}');

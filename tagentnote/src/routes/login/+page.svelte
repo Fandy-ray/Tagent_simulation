@@ -84,6 +84,10 @@
 			</p>{/if}
 		{#if $currentAccount}<p class="mt-5 text-sm text-slate-300">
 				当前已登录：{$currentAccount.username || $currentAccount.email}
-			</p>{/if}
+			</p>
+			<a href={resolve('/account')} class="mt-2 inline-block text-sm text-blue-300"
+				>前往账号页退出登录</a
+			>
+		{/if}
 	</form>
 </main>

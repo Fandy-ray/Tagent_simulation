@@ -54,6 +54,23 @@ def test_registration_verification_session_and_reset(identity):
     assert service.login("student@example.org", "another long password!", "127.0.0.1")
 
 
+def test_password_change_invalidates_session_when_cleanup_fails(identity, monkeypatch):
+    _, mailer, service, _ = identity
+    service.register("student@example.org", "a long test password!", "Student", "127.0.0.1")
+    service.verify_email(token_from(mailer.outbox[-1]))
+    old_token, session = service.login("student@example.org", "a long test password!", "127.0.0.1")
+    with monkeypatch.context() as patch:
+        def fail_cleanup(_uid):
+            raise OSError("cleanup failed")
+        patch.setattr(service, "revoke_all", fail_cleanup)
+        with pytest.raises(OSError):
+            service.change_password(session.account, "a long test password!", "another long password!")
+    assert service.session(old_token) is None
+    with pytest.raises(AgentAPIError):
+        service.login("student@example.org", "a long test password!", "127.0.0.1")
+    assert service.login("student@example.org", "another long password!", "127.0.0.1")
+
+
 def test_personal_data_is_encrypted_versioned_and_scoped(identity):
     store, _, service, personal = identity
     service.register("one@example.org", "a long test password!", "One", "1.1.1.1")

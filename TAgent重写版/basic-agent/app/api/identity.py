@@ -84,6 +84,16 @@ def delete_account():
     return response
 
 
+@blueprint.post("/me/password")
+def change_password():
+    service, _ = _services()
+    body = _json()
+    service.change_password(g.account, body.get("current_password"), body.get("new_password"))
+    response = make_response(jsonify({"changed": True}))
+    response.delete_cookie(current_app.config["AUTH_COOKIE_NAME"], path="/")
+    return response
+
+
 @blueprint.get("/admin/accounts")
 def list_accounts():
     _admin()

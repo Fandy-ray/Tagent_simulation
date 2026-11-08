@@ -84,6 +84,9 @@ def reset_password():
 @blueprint.post("/login")
 def login():
     data = _data()
+    existing = request.cookies.get(current_app.config["AUTH_COOKIE_NAME"], "")
+    if existing and _service().session(existing):
+        raise AgentAPIError("请先退出当前账号，再登录其他账号。", 409, "already_logged_in")
     token, session = _service().login(data.get("identifier", data.get("email")), data.get("password"), _ip())
     response = make_response(jsonify({
         "user": public_account(session.account), "csrf": session.csrf,

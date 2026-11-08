@@ -52,6 +52,13 @@ def enforce_identity() -> None:
         raise AgentAPIError("账号服务暂时不可用。", 503, "auth_store_unavailable") from exc
     if not session:
         raise AgentAPIError("请先登录。", 401, "login_required")
+    claimed_account = request.headers.get("X-Tagent-Account-Id", "")
+    if claimed_account and claimed_account != session.account["uid"]:
+        raise AgentAPIError("此页面的登录账号已变化；若有未同步草稿，请先导出再刷新。", 409,
+                            "account_changed")
+    if (request.headers.get("X-Tagent-Via-Frontend") == "1"
+            and path != "/auth/me" and not claimed_account):
+        raise AgentAPIError("页面账号信息缺失，请刷新页面。", 409, "account_context_missing")
     g.auth_session = session
     g.account = session.account
     g.course = None

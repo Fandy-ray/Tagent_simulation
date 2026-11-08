@@ -261,8 +261,9 @@ class AuthService:
         password = self.password(password)
         account = self._consume(token, "reset")
         self.store.query(
-            "UPDATE auth_accounts SET password_hash = $hash WHERE uid = $uid",
-            {"hash": self._hash(password), "uid": account["uid"]},
+            "UPDATE auth_accounts SET password_hash = $hash, auth_nonce = $nonce WHERE uid = $uid",
+            {"hash": self._hash(password), "nonce": secrets.token_urlsafe(16),
+             "uid": account["uid"]},
         )
         self.revoke_all(account["uid"])
 
@@ -293,6 +294,7 @@ class AuthService:
             {"value": {
                 "digest": digest(token), "account_id": account["uid"], "csrf": csrf,
                 "created_at": now, "last_seen_at": now, "expires_at": expires,
+                "auth_nonce": account.get("auth_nonce", ""),
             }},
         )
         return token, Session(account, csrf, digest(token), expires)
@@ -308,6 +310,8 @@ class AuthService:
             return None
         account = self.account(row["account_id"])
         if not account or not account.get("active", True) or not account.get("verified_at"):
+            return None
+        if row.get("auth_nonce", "") != account.get("auth_nonce", ""):
             return None
         idle = 30 * 60_000 if account["role"] == "admin" else 12 * 60 * 60_000
         if int(row["last_seen_at"]) + idle < now_ms():
@@ -325,6 +329,29 @@ class AuthService:
 
     def revoke_all(self, account_id: str) -> None:
         self.store.query("DELETE auth_sessions WHERE account_id = $uid", {"uid": account_id})
+
+    def change_password(self, account: dict, current_password: str, new_password: str) -> None:
+        new_password = self.password(new_password)
+        uid = account["uid"]
+        self._limit("change_password", uid, 5, 15 * 60_000)
+        try:
+            with password_slot():
+                valid = _PASSWORD.verify(account["password_hash"], current_password)
+        except (argon_errors.VerifyMismatchError, argon_errors.VerificationError, TypeError):
+            valid = False
+        if not valid:
+            self._event("change_password", uid)
+            raise AgentAPIError("当前密码不正确。", 403, "invalid_credentials")
+        rows = self.store.query(
+            "UPDATE auth_accounts SET password_hash = $new_hash, auth_nonce = $nonce WHERE uid = $uid "
+            "AND password_hash = $old_hash RETURN AFTER",
+            {"uid": uid, "old_hash": account["password_hash"],
+             "new_hash": self._hash(new_password),
+             "nonce": secrets.token_urlsafe(16)},
+        )
+        if not rows:
+            raise AgentAPIError("密码已在其他位置修改，请重新登录。", 409, "password_changed")
+        self.revoke_all(uid)
 
     def courses_for(self, account: dict) -> list[dict]:
         if account["role"] == "admin":

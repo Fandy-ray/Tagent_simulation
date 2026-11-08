@@ -7,7 +7,15 @@
 	import '../app.css';
 	import { initI18n, setI18nContext } from '$lib/i18n';
 	import { loadUserSettings } from '$lib/data/userSettings';
-	import { authMode, authReady, currentAccount, initializeAuth, syncError } from '$lib/apis/auth';
+	import {
+		authMode,
+		authReady,
+		currentAccount,
+		flushPersonalWrites,
+		hasPendingPersonalWrites,
+		initializeAuth,
+		syncError
+	} from '$lib/apis/auth';
 
 	// 初始化 i18n 并设置 context（在组件初始化时同步执行）。
 	// 默认语言取设置里的（默认简体中文），不按浏览器语言猜：页面上大量文字本来就是写死的中文，
@@ -48,12 +56,19 @@
 	onMount(() => {
 		void initializeAuth();
 		const update = () => (online = navigator.onLine);
+		const warnUnsaved = (event: BeforeUnloadEvent) => {
+			if (!hasPendingPersonalWrites()) return;
+			event.preventDefault();
+			event.returnValue = '';
+		};
 		update();
 		window.addEventListener('online', update);
 		window.addEventListener('offline', update);
+		window.addEventListener('beforeunload', warnUnsaved);
 		return () => {
 			window.removeEventListener('online', update);
 			window.removeEventListener('offline', update);
+			window.removeEventListener('beforeunload', warnUnsaved);
 		};
 	});
 </script>
@@ -77,7 +92,12 @@
 		role="alert"
 		class="fixed inset-x-0 top-0 z-[101] bg-rose-600 px-4 py-2 text-center text-sm text-white"
 	>
-		{$syncError} 请勿关闭页面，检查连接后刷新。
+		{$syncError} 请保留本页；可重试同步，发生冲突时先到“我的账号”导出本机草稿。
+		<button
+			type="button"
+			class="ml-3 underline"
+			onclick={() => void flushPersonalWrites().catch(() => {})}>重试同步</button
+		>
 	</div>
 {/if}
 {#if !online && $authMode === 'enabled'}

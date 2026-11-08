@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import secrets
 
 from app.auth.mail import DisabledMailer
 from app.auth.service import AuthService
@@ -18,8 +19,9 @@ def reset_student(store: IdentityStore, username: str, password: str) -> None:
     if not account or account.get("role") != "student" or not account.get("active", True):
         raise ValueError("找不到可重置的学生账号")
     service = AuthService(store, DisabledMailer(), "")
-    store.query("UPDATE auth_accounts SET password_hash = $hash WHERE uid = $uid",
-                {"hash": service._hash(password), "uid": account["uid"]})
+    store.query("UPDATE auth_accounts SET password_hash = $hash, auth_nonce = $nonce WHERE uid = $uid",
+                {"hash": service._hash(password), "nonce": secrets.token_urlsafe(16),
+                 "uid": account["uid"]})
     service.revoke_all(account["uid"])
 
 

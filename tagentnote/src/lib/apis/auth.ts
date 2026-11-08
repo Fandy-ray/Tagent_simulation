@@ -45,6 +45,50 @@ export type PersonalKind = keyof typeof dataKeys;
 const versions = new Map<string, number>();
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const writes = new Map<string, Promise<void>>();
+const blockedKeys = new Set<string>();
+const pendingKey = (key: string) => `${key}.pending`;
+const userPrefix = (user: Account) => `tagent.account.${user.id}.`;
+
+export function hasPendingPersonalWrites(): boolean {
+	if (!browser) return false;
+	const user = get(currentAccount);
+	if (!user) return false;
+	for (let index = 0; index < sessionStorage.length; index++) {
+		const key = sessionStorage.key(index);
+		if (key?.startsWith(userPrefix(user)) && key.endsWith('.pending')) return true;
+	}
+	return false;
+}
+
+export function exportPendingPersonalData(): Blob {
+	const user = get(currentAccount);
+	if (!browser || !user) throw new Error('请先登录。');
+	const items: { kind: string; context: string; data: unknown }[] = [];
+	for (let index = 0; index < sessionStorage.length; index++) {
+		const marker = sessionStorage.key(index);
+		if (!marker?.startsWith(userPrefix(user)) || !marker.endsWith('.pending')) continue;
+		const key = marker.slice(0, -'.pending'.length);
+		const raw = sessionStorage.getItem(key);
+		if (raw === null) continue;
+		const parts = key.slice(userPrefix(user).length).split('.');
+		let data: unknown = raw;
+		try {
+			data = JSON.parse(raw);
+		} catch {
+			// 格式损坏时保留原文，仍可供人工恢复。
+		}
+		items.push({ context: parts[0], kind: parts[1], data });
+	}
+	if (items.length === 0) throw new Error('当前没有可导出的本机草稿。');
+	return new Blob(
+		[
+			JSON.stringify({ account_id: user.id, exported_at: new Date().toISOString(), items }, null, 2)
+		],
+		{
+			type: 'application/json'
+		}
+	);
+}
 
 const contextFor = (kind: PersonalKind) =>
 	kind === 'settings' || kind === 'controls' ? 'global' : get(currentCourseId);
@@ -142,7 +186,17 @@ export function writePersonalCache(kind: PersonalKind, raw: string): void {
 	if (!navigator.onLine) throw new Error('离线时不能保存账号数据。');
 	const context = contextFor(kind);
 	const key = scopedKey(kind, user, context);
-	sessionStorage.setItem(key, raw);
+	if (blockedKeys.has(key))
+		throw new Error('另一台设备已更新这份内容，请先导出本机草稿并处理冲突。');
+	const previousMarker = sessionStorage.getItem(pendingKey(key));
+	try {
+		sessionStorage.setItem(pendingKey(key), String(versions.get(key) || 0));
+		sessionStorage.setItem(key, raw);
+	} catch (cause) {
+		if (previousMarker === null) sessionStorage.removeItem(pendingKey(key));
+		else sessionStorage.setItem(pendingKey(key), previousMarker);
+		throw cause;
+	}
 	const oldTimer = timers.get(key);
 	if (oldTimer) clearTimeout(oldTimer);
 	timers.set(
@@ -168,9 +222,19 @@ function persistKey(key: string, kind: PersonalKind, context: string): Promise<v
 				context === 'global' ? 'general' : context
 			);
 			versions.set(key, response.version);
-			syncError.set('');
+			if (sessionStorage.getItem(key) === current) sessionStorage.removeItem(pendingKey(key));
+			else sessionStorage.setItem(pendingKey(key), String(response.version));
+			if (!hasPendingPersonalWrites() && blockedKeys.size === 0) syncError.set('');
 		})
 		.catch((cause) => {
+			if (
+				cause instanceof AuthError &&
+				['version_conflict', 'account_changed', 'account_context_missing'].includes(
+					cause.code || ''
+				)
+			) {
+				blockedKeys.add(key);
+			}
 			syncError.set(
 				cause instanceof Error ? `保存到服务器失败：${cause.message}` : '保存到服务器失败。'
 			);
@@ -188,7 +252,18 @@ export async function flushPersonalWrites(): Promise<void> {
 		const parts = key.split('.');
 		void persistKey(key, parts[4] as PersonalKind, parts[3]).catch(() => {});
 	}
-	await Promise.all([...writes.values()]);
+	await Promise.allSettled([...writes.values()]);
+	const user = get(currentAccount);
+	if (user) {
+		for (const key of versions.keys()) {
+			if (!key.startsWith(userPrefix(user)) || sessionStorage.getItem(pendingKey(key)) === null)
+				continue;
+			if (blockedKeys.has(key))
+				throw new Error('另一台设备已更新这份内容，请先导出本机草稿并处理冲突。');
+			await persistKey(key, key.split('.')[4] as PersonalKind, key.split('.')[3]);
+		}
+	}
+	if (hasPendingPersonalWrites()) throw new Error('仍有本机草稿尚未同步，请重试或先导出草稿。');
 	const error = get(syncError);
 	if (error) throw new Error(error);
 }
@@ -214,6 +289,25 @@ async function hydratePersonal(user: Account): Promise<void> {
 		const context = contextFor(kind);
 		const key = scopedKey(kind, user, context);
 		const result = await getPersonal<unknown>(kind, context === 'global' ? 'general' : context);
+		const pending = sessionStorage.getItem(pendingKey(key));
+		const local = sessionStorage.getItem(key);
+		if (pending !== null && local !== null) {
+			const pendingVersion = Number(pending);
+			if (Number.isSafeInteger(pendingVersion) && pendingVersion === result.version) {
+				versions.set(key, pendingVersion);
+				try {
+					await persistKey(key, kind, context);
+				} catch {
+					// 保留本机草稿与待同步标记，用户可重试。
+				}
+			} else {
+				versions.set(key, result.version);
+				blockedKeys.add(key);
+				syncError.set('另一台设备已更新个人内容；本机草稿已保留，请导出草稿后处理冲突。');
+			}
+			continue;
+		}
+		if (pending !== null) sessionStorage.removeItem(pendingKey(key));
 		versions.set(key, result.version);
 		if (result.data === null) sessionStorage.removeItem(key);
 		else sessionStorage.setItem(key, JSON.stringify(result.data));
@@ -228,6 +322,9 @@ async function hydratePersonal(user: Account): Promise<void> {
 				versions.set(key, result.version);
 			}
 		}
+	}
+	if (hasPendingPersonalWrites() && !get(syncError)) {
+		syncError.set('仍有本机草稿尚未同步，请重试或先导出草稿。');
 	}
 }
 
@@ -281,6 +378,8 @@ export class AuthError extends Error {
 export function sessionHeaders(method = 'GET'): Headers {
 	const headers = new Headers();
 	if (get(authMode) === 'enabled') {
+		const account = get(currentAccount);
+		if (account) headers.set('X-Tagent-Account-Id', account.id);
 		headers.set('X-Tagent-Course-Id', get(currentCourseId));
 		if (!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) && csrf) {
 			headers.set('X-Tagent-CSRF', csrf);
@@ -343,6 +442,7 @@ export async function initializeAuth(): Promise<void> {
 	if (initialized) return initialized;
 	initialized = (async () => {
 		authReady.set(false);
+		syncError.set('');
 		try {
 			const status = await json<{
 				enabled: boolean;
@@ -381,7 +481,11 @@ export async function initializeAuth(): Promise<void> {
 }
 
 export async function login(identifier: string, password: string): Promise<Account> {
+	if (get(currentAccount)) {
+		throw new AuthError('请先退出当前账号，再登录其他账号。', 409, 'already_logged_in');
+	}
 	authReady.set(false);
+	syncError.set('');
 	try {
 		const session = await json<{ user: Account; csrf: string }>(
 			'/auth/login',
@@ -391,7 +495,6 @@ export async function login(identifier: string, password: string): Promise<Accou
 		currentAccount.set(session.user);
 		await refreshCourses(session.user);
 		await hydratePersonal(session.user);
-		syncError.set('');
 		return session.user;
 	} catch (cause) {
 		if (get(currentAccount)) {
@@ -422,6 +525,7 @@ export async function logout(): Promise<void> {
 		timers.clear();
 		writes.clear();
 		versions.clear();
+		blockedKeys.clear();
 		syncError.set('');
 		currentAccount.set(null);
 		availableCourses.set([]);
@@ -438,10 +542,10 @@ export async function chooseCourse(id: string): Promise<void> {
 	const user = get(currentAccount);
 	try {
 		await flushPersonalWrites();
+		syncError.set('');
 		currentCourseId.set(id);
 		if (user) await hydratePersonal(user);
 		if (browser && user) sessionStorage.setItem(`tagent.course.${user.id}`, id);
-		syncError.set('');
 	} catch (cause) {
 		currentCourseId.set(previous);
 		syncError.set('切换课程失败。请检查连接后重试。');
@@ -496,4 +600,15 @@ export async function deleteAccount(password: string): Promise<{ deleted: boolea
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ password })
 	});
+}
+
+export async function changePassword(
+	currentPassword: string,
+	newPassword: string
+): Promise<{ changed: boolean }> {
+	await flushPersonalWrites();
+	return json(
+		'/me/password',
+		body({ current_password: currentPassword, new_password: newPassword })
+	);
 }

@@ -109,7 +109,7 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Headers"] = (
                 "Content-Type, X-Tagent-Client-Id, X-Tagent-Client-Name, X-Tagent-No-Record, "
-                "X-Tagent-CSRF, X-Tagent-Course-Id"
+                "X-Tagent-CSRF, X-Tagent-Course-Id, X-Tagent-Account-Id"
             )
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
         return response

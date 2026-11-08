@@ -56,6 +56,10 @@ def test_public_and_protected_boundary(system):
     account, csrf = register_verified(client, mailer)
     assert account["role"] == "student"
     assert client.get("/auth/me").json["user"]["id"] == account["id"]
+    assert client.post("/auth/login", json={
+        "email": account["email"], "password": "a sufficiently long password"
+    }).status_code == 409
+    assert client.get("/auth/me").json["user"]["id"] == account["id"]
     assert client.get("/v1/models").status_code == 200
     assert client.put("/me/data/qa_chats", json={"data": [], "version": 0}).status_code == 403
     assert client.put("/me/data/qa_chats", json={"data": [], "version": 0}, headers={
@@ -87,6 +91,57 @@ def test_course_membership_and_personal_isolation(system):
     assert client.get("/me/data/qa_chats", headers=headers).json["data"] == {"chats": ["A"]}
     assert client.get("/me/data/qa_chats").json["data"] is None
     assert client.get("/v1/models", headers=headers).json["data"] == []
+
+
+def test_change_password_revokes_all_devices_and_keeps_personal_data(system):
+    first_device, _, mailer, _ = system
+    account, csrf = register_verified(first_device, mailer)
+    second_device = first_device.application.test_client()
+    assert second_device.post("/auth/login", json={
+        "email": account["email"], "password": "a sufficiently long password"
+    }).status_code == 200
+    assert first_device.put("/me/data/qa_chats", json={
+        "data": {"chats": [{"id": "saved-chat"}]}, "version": 0
+    }, headers={"X-Tagent-CSRF": csrf}).status_code == 200
+    payload = {"current_password": "wrong password", "new_password": "another long password"}
+    assert first_device.post("/me/password", json=payload).status_code == 403
+    assert first_device.post("/me/password", json=payload,
+                             headers={"X-Tagent-CSRF": csrf}).status_code == 403
+    assert first_device.get("/auth/me").status_code == 200
+    changed = first_device.post("/me/password", json={
+        "current_password": "a sufficiently long password",
+        "new_password": "another long password",
+    }, headers={"X-Tagent-CSRF": csrf})
+    assert changed.status_code == 200
+    assert changed.json["changed"] is True
+    assert first_device.get("/auth/me").status_code == 401
+    assert second_device.get("/auth/me").status_code == 401
+    assert second_device.post("/auth/login", json={
+        "email": account["email"], "password": "a sufficiently long password"
+    }).status_code == 401
+    assert second_device.post("/auth/login", json={
+        "email": account["email"], "password": "another long password"
+    }).status_code == 200
+    assert second_device.get("/me/data/qa_chats").json["data"]["chats"][0]["id"] == "saved-chat"
+
+
+def test_stale_tab_cannot_write_to_new_account(system):
+    browser, _, mailer, _ = system
+    first, first_csrf = register_verified(browser, mailer, "first@example.org")
+    assert browser.post("/auth/logout", headers={"X-Tagent-CSRF": first_csrf}).status_code == 200
+    second, second_csrf = register_verified(browser, mailer, "second@example.org")
+    assert browser.put("/me/data/qa_chats", json={"data": {"chats": ["old"]}, "version": 0},
+                       headers={"X-Tagent-Via-Frontend": "1",
+                                "X-Tagent-Account-Id": first["id"],
+                                "X-Tagent-CSRF": second_csrf}).status_code == 409
+    assert browser.get("/me/data/qa_chats").json["data"] is None
+    assert browser.get("/me/data/qa_chats", headers={
+        "X-Tagent-Via-Frontend": "1"
+    }).status_code == 409
+    assert browser.put("/me/data/qa_chats", json={"data": {"chats": ["new"]}, "version": 0},
+                       headers={"X-Tagent-Via-Frontend": "1",
+                                "X-Tagent-Account-Id": second["id"],
+                                "X-Tagent-CSRF": second_csrf}).status_code == 200
 
 
 def test_admin_course_membership_and_account_revocation(system):
