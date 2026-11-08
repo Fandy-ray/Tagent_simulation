@@ -7,12 +7,13 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from cryptography.fernet import Fernet
 
-from app.auth.mail import MemoryMailer
+from app.auth.mail import DisabledMailer, MemoryMailer
 from app.auth.personal import PersonalService
 from app.auth.service import AuthService, now_ms
 from app.auth.store import IdentityStore
 from app.factory import create_app
 from tools.init_auth_db import SCHEMA
+from tools.reset_student_password import reset_student
 
 
 @pytest.fixture
@@ -122,3 +123,130 @@ def test_admin_course_membership_and_account_revocation(system):
     assert admin_client.patch(f"/admin/accounts/{student['id']}", json={"active": False},
                               headers={"X-Tagent-CSRF": admin_csrf}).status_code == 200
     assert student_client.get("/me/courses").status_code == 401
+
+
+def test_two_devices_and_shared_browser_account_boundary(system, monkeypatch):
+    browser, _, mailer, service = system
+    first, first_csrf = register_verified(browser, mailer, "first@example.org")
+    other_device = browser.application.test_client()
+    second_session = other_device.post("/auth/login", json={
+        "email": first["email"], "password": "a sufficiently long password"
+    })
+    assert second_session.status_code == 200
+    assert browser.put("/me/data/qa_chats", json={
+        "data": {"chats": [{"id": "first-chat"}]}, "version": 0
+    }, headers={"X-Tagent-CSRF": first_csrf}).status_code == 200
+    assert other_device.get("/me/data/qa_chats").json["data"]["chats"][0]["id"] == "first-chat"
+    assert other_device.put("/me/data/qa_chats", json={
+        "data": {"chats": []}, "version": 0
+    }, headers={"X-Tagent-CSRF": second_session.json["csrf"]}).status_code == 409
+
+    assert browser.post("/auth/logout", headers={"X-Tagent-CSRF": first_csrf}).status_code == 200
+    assert browser.get("/me/data/qa_chats").status_code == 401
+    assert other_device.get("/me/data/qa_chats").status_code == 200
+    second, _ = register_verified(browser, mailer, "second@example.org")
+    assert second["id"] != first["id"]
+    assert browser.get("/me/data/qa_chats").json["data"] is None
+    assert other_device.get("/me/data/qa_chats").json["data"]["chats"][0]["id"] == "first-chat"
+
+    with monkeypatch.context() as patch:
+        def fail_session(_token):
+            raise OSError("identity database unavailable")
+        patch.setattr(service, "session", fail_session)
+        assert other_device.get("/me/data/qa_chats").status_code == 503
+    assert other_device.get("/me/data/qa_chats").status_code == 200
+
+
+def test_username_self_registration_without_smtp_and_cross_device_sync():
+    store = IdentityStore("mem://", "tagent_test", "no_mail", "", "")
+    try:
+        for statement in SCHEMA:
+            store.query(statement)
+        service = AuthService(store, DisabledMailer(), "http://localhost:5173")
+        personal = PersonalService(store, Fernet.generate_key().decode())
+        app = create_app({
+            "TESTING": True, "AUTH_ENABLED": True,
+            "AUTH_PUBLIC_ORIGIN": "http://localhost:5173", "AUTH_COOKIE_SECURE": False,
+            "AUTH_STORE": store, "AUTH_SERVICE": service, "PERSONAL_SERVICE": personal,
+        })
+        first_device = app.test_client()
+        second_device = app.test_client()
+        status = first_device.get("/auth/status").json
+        assert status["registration_open"] is True
+        assert status["registration_method"] == "username"
+        assert status["password_reset_available"] is False
+        service.set_registration_open(False)
+        assert first_device.post("/auth/register", json={
+            "username": "closed.user", "password": "a sufficiently long password"
+        }).status_code == 403
+        service.set_registration_open(True)
+        assert first_device.post("/auth/register", json={
+            "username": "  Student.One  ", "password": "a sufficiently long password", "name": "One"
+        }).status_code == 201
+        assert first_device.post("/auth/register", json={
+            "username": "student.one", "password": "another long password", "name": "Copy"
+        }).status_code == 409
+        assert first_device.post("/auth/register", json={
+            "username": "bad@name", "password": "a sufficiently long password"
+        }).status_code == 400
+        assert first_device.post("/auth/password/forgot", json={
+            "email": "nobody@example.org"
+        }).status_code == 503
+        assert first_device.post("/auth/verify-email", json={"token": "ignored"}).status_code == 503
+        assert first_device.post("/auth/password/reset", json={
+            "token": "ignored", "password": "a sufficiently long password"
+        }).status_code == 503
+        first_login = first_device.post("/auth/login", json={
+            "identifier": "student.one", "password": "a sufficiently long password"
+        })
+        assert first_login.status_code == 200
+        assert first_login.json["user"]["username"] == "student.one"
+        assert first_login.json["user"]["email"] is None
+        second_login = second_device.post("/auth/login", json={
+            "identifier": "student.one", "password": "a sufficiently long password"
+        })
+        assert second_login.status_code == 200
+        assert first_device.put("/me/data/qa_chats", json={
+            "data": {"chats": [{"id": "saved-on-first-device"}]}, "version": 0
+        }, headers={"X-Tagent-CSRF": first_login.json["csrf"]}).status_code == 200
+        assert second_device.get("/me/data/qa_chats").json["data"]["chats"][0]["id"] == "saved-on-first-device"
+        assert first_device.post("/auth/logout", headers={
+            "X-Tagent-CSRF": first_login.json["csrf"]
+        }).status_code == 200
+        assert first_device.post("/auth/register", json={
+            "username": "other.student", "password": "a sufficiently long password", "name": "Other"
+        }).status_code == 201
+        assert first_device.post("/auth/login", json={
+            "identifier": "other.student", "password": "a sufficiently long password"
+        }).status_code == 200
+        assert first_device.get("/me/data/qa_chats").json["data"] is None
+        store.query("CREATE auth_accounts CONTENT $value", {"value": {
+            "uid": "admin-no-mail", "email": "admin@example.org", "name": "Admin",
+            "password_hash": service._hash("a sufficiently long admin password"),
+            "role": "admin", "active": True, "verified_at": now_ms(), "created_at": now_ms(),
+        }})
+        admin_device = app.test_client()
+        admin_login = admin_device.post("/auth/login", json={
+            "identifier": "admin@example.org", "password": "a sufficiently long admin password"
+        })
+        assert admin_login.status_code == 200
+        admin_csrf = admin_login.json["csrf"]
+        created = admin_device.post("/admin/courses", json={"name": "Course A"},
+                                    headers={"X-Tagent-CSRF": admin_csrf})
+        assert created.status_code == 201
+        course_id = created.json["course"]["id"]
+        assert admin_device.post(f"/admin/courses/{course_id}/members", json={
+            "identifier": "student.one"
+        }, headers={"X-Tagent-CSRF": admin_csrf}).status_code == 200
+        assert second_device.get("/me/courses").json["courses"][0]["id"] == course_id
+        reset_student(store, "student.one", "a new sufficiently long password")
+        assert second_device.get("/me/data/qa_chats").status_code == 401
+        assert second_device.post("/auth/login", json={
+            "identifier": "student.one", "password": "a sufficiently long password"
+        }).status_code == 401
+        assert second_device.post("/auth/login", json={
+            "identifier": "student.one", "password": "a new sufficiently long password"
+        }).status_code == 200
+        assert second_device.get("/me/data/qa_chats").json["data"]["chats"][0]["id"] == "saved-on-first-device"
+    finally:
+        store.close()

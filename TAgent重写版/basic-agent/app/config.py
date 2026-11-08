@@ -601,7 +601,7 @@ class AuthConfig:
             public_origin=os.getenv("TAGENT_PUBLIC_ORIGIN", "").rstrip("/"),
             cookie_secure=os.getenv("TAGENT_AUTH_COOKIE_SECURE", "1") != "0",
             registration_open=os.getenv("TAGENT_REGISTRATION_OPEN", "0") == "1",
-            mail_mode=os.getenv("TAGENT_MAIL_MODE", "memory"),
+            mail_mode=os.getenv("TAGENT_MAIL_MODE", "disabled"),
             smtp_host=os.getenv("TAGENT_SMTP_HOST", ""),
             smtp_port=int(os.getenv("TAGENT_SMTP_PORT", "587")),
             smtp_user=os.getenv("TAGENT_SMTP_USER", ""),

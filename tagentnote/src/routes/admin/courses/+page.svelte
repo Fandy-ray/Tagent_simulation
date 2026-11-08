@@ -19,7 +19,7 @@
 	let description = $state('');
 	let models = $state('');
 	let notebooks = $state('');
-	let memberEmail = $state('');
+	let memberIdentifier = $state('');
 	let busy = $state(false);
 	let error = $state('');
 	let message = $state('');
@@ -99,9 +99,9 @@
 		message = '';
 		try {
 			await identityRequest(`/admin/courses/${encodeURIComponent(selected)}/members`, 'POST', {
-				email: memberEmail
+				identifier: memberIdentifier
 			});
-			memberEmail = '';
+			memberIdentifier = '';
 			await selectCourse(selected);
 			message = '学生已加入课程。';
 		} catch (cause) {
@@ -236,6 +236,7 @@
 										class="border-t border-gray-200 dark:border-white/10"
 										><td class="p-2"
 											>{student.name ||
+												members.find((item) => item.id === student.id)?.username ||
 												members.find((item) => item.id === student.id)?.email ||
 												student.id}</td
 										><td class="p-2">{student.chat_turns}</td><td class="p-2"
@@ -255,11 +256,11 @@
 				<h2 class="text-lg font-medium">课程学生</h2>
 				<form onsubmit={addMember} class="mt-4 flex gap-2">
 					<input
-						type="email"
-						aria-label="学生邮箱"
-						placeholder="已验证的学生邮箱"
+						type="text"
+						aria-label="学生用户名或邮箱"
+						placeholder="学生用户名或邮箱"
 						required
-						bind:value={memberEmail}
+						bind:value={memberIdentifier}
 						class="min-w-0 flex-1 rounded-lg border border-gray-300 bg-transparent px-3 py-2 dark:border-white/20"
 					/>
 					<button
@@ -272,7 +273,10 @@
 					{#each members as account (account.id)}<li
 							class="flex items-center justify-between gap-3 border-t border-gray-200 py-2 text-sm dark:border-white/10"
 						>
-							<span>{account.name || account.email} · {account.email}</span><button
+							<span
+								>{account.name || account.username || account.email} · {account.username ||
+									account.email}</span
+							><button
 								type="button"
 								disabled={busy}
 								onclick={() => removeMember(account)}

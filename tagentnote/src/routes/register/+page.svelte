@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { register, registrationOpen } from '$lib/apis/auth';
-	let email = $state('');
+	import { register, registrationMethod, registrationOpen } from '$lib/apis/auth';
+	let identifier = $state('');
 	let name = $state('');
 	let password = $state('');
 	let busy = $state(false);
@@ -12,7 +12,7 @@
 		busy = true;
 		error = '';
 		try {
-			message = (await register(email, password, name)).message;
+			message = (await register(identifier, password, name)).message;
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : '注册失败，请稍后重试。';
 		} finally {
@@ -30,7 +30,9 @@
 		<a href={resolve('/login')} class="text-sm text-blue-300">← 返回登录</a>
 		<h1 class="mt-5 text-2xl font-semibold">注册学生账号</h1>
 		<p class="mt-2 text-sm text-slate-300">
-			提交后请打开邮箱中的验证链接。管理员账号由学校单独创建。
+			{$registrationMethod === 'username'
+				? '自己设置用户名和密码，创建后即可登录。请记住用户名；忘记密码需联系管理员。'
+				: '提交后请打开邮箱中的验证链接。'}管理员账号单独创建。
 		</p>
 		<label for="name" class="mt-6 block text-sm">姓名或昵称</label>
 		<input
@@ -40,13 +42,17 @@
 			bind:value={name}
 			class="mt-2 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2.5"
 		/>
-		<label for="email" class="mt-5 block text-sm">邮箱</label>
+		<label for="identifier" class="mt-5 block text-sm"
+			>{$registrationMethod === 'username' ? '用户名' : '邮箱'}</label
+		>
 		<input
-			id="email"
-			type="email"
-			autocomplete="email"
+			id="identifier"
+			type={$registrationMethod === 'username' ? 'text' : 'email'}
+			autocomplete="username"
+			minlength={$registrationMethod === 'username' ? 3 : undefined}
+			maxlength={$registrationMethod === 'username' ? 32 : undefined}
 			required
-			bind:value={email}
+			bind:value={identifier}
 			class="mt-2 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2.5"
 		/>
 		<label for="password" class="mt-5 block text-sm">密码（至少 12 个字符）</label>

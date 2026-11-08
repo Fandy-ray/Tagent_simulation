@@ -148,7 +148,9 @@
 		</header>
 		{#if $authMode === 'enabled' && $currentAccount}
 			<div class="mt-5 flex flex-wrap items-center gap-3 text-sm">
-				<span class="text-gray-300">{$currentAccount.name || $currentAccount.email}</span>
+				<span class="text-gray-300"
+					>{$currentAccount.name || $currentAccount.username || $currentAccount.email}</span
+				>
 				<label for="course-switch" class="text-gray-400">当前课程</label>
 				<select
 					id="course-switch"

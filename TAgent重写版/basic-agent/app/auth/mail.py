@@ -1,4 +1,4 @@
-"""账号邮件传输。开发测试使用内存信箱，正式部署使用 SMTP。"""
+"""账号邮件传输。无 SMTP 时使用用户名自助注册，不发送邮件。"""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from email.message import EmailMessage
 
 
 class MemoryMailer:
+    can_send = True
+
     def __init__(self):
         self.outbox: list[dict[str, str]] = []
 
@@ -16,6 +18,8 @@ class MemoryMailer:
 
 
 class SMTPMailer:
+    can_send = True
+
     def __init__(self, host: str, port: int, username: str, password: str, sender: str):
         if not all((host, port, username, password, sender)):
             raise ValueError("SMTP configuration is incomplete")
@@ -40,3 +44,12 @@ class SMTPMailer:
                 smtp.starttls(context=ssl.create_default_context())
                 smtp.login(self.username, self.password)
                 smtp.send_message(message)
+
+
+class DisabledMailer:
+    """无 SMTP 时不提供邮件验证或找回。"""
+
+    can_send = False
+
+    def send(self, to: str, subject: str, body: str) -> None:
+        raise RuntimeError("Mail delivery is disabled")

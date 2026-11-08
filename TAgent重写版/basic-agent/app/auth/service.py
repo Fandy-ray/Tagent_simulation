@@ -18,8 +18,9 @@ from app.errors.api_errors import AgentAPIError
 
 
 _EMAIL = re.compile(r"^[^\s@]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,63}$")
+_USERNAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,31}$")
 _PASSWORD = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1)
-_GENERIC_LOGIN = "邮箱或密码不正确，或账号暂不可用。"
+_GENERIC_LOGIN = "账号或密码不正确，或账号暂不可用。"
 _DUMMY_HASH = _PASSWORD.hash("this account is intentionally unavailable")
 _PASSWORD_SLOTS = threading.BoundedSemaphore(4)
 
@@ -46,7 +47,8 @@ def digest(token: str) -> str:
 def public_account(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["uid"],
-        "email": row["email"],
+        "email": row.get("email"),
+        "username": row.get("username"),
         "name": row.get("name", ""),
         "role": row["role"],
         "verified": bool(row.get("verified_at")),
@@ -76,6 +78,15 @@ class AuthService:
         return self.store.first(
             "SELECT * FROM auth_accounts WHERE email = $email LIMIT 1", {"email": email}
         )
+
+    def _account_for_username(self, username: str):
+        return self.store.first(
+            "SELECT * FROM auth_accounts WHERE username = $username LIMIT 1", {"username": username}
+        )
+
+    def _account_for_identifier(self, identifier: str):
+        return (self._account_for_email(identifier) if "@" in identifier
+                else self._account_for_username(identifier))
 
     def account(self, uid: str):
         return self.store.first("SELECT * FROM auth_accounts WHERE uid = $uid LIMIT 1", {"uid": uid})
@@ -113,6 +124,13 @@ class AuthService:
         return email
 
     @staticmethod
+    def username(value: str) -> str:
+        username = value.strip().lower() if isinstance(value, str) else ""
+        if not _USERNAME.fullmatch(username):
+            raise AgentAPIError("用户名需为 3～32 位英文字母、数字、下划线、点或连字符，且以字母或数字开头。", 400, "invalid_username")
+        return username
+
+    @staticmethod
     def password(value: str) -> str:
         if not isinstance(value, str) or not 12 <= len(value) <= 256:
             raise AgentAPIError("密码长度应为 12～256 个字符。", 400, "invalid_password")
@@ -123,10 +141,29 @@ class AuthService:
         with password_slot():
             return _PASSWORD.hash(password)
 
-    def register(self, email: str, password: str, name: str, ip: str) -> None:
+    def register(self, identifier: str, password: str, name: str, ip: str) -> None:
         if not self.registration_is_open():
             raise AgentAPIError("注册暂未开放。", 403, "registration_closed")
-        email = self.email(email)
+        if not self.mailer.can_send:
+            username = self.username(identifier)
+            password = self.password(password)
+            name = name.strip()[:40] if isinstance(name, str) else ""
+            self._limit("register_ip", ip, 20, 60 * 60_000)
+            self._event("register_ip", ip)
+            if self._account_for_username(username):
+                raise AgentAPIError("该用户名已被使用。", 409, "username_taken")
+            try:
+                self.store.query("CREATE auth_accounts CONTENT $value", {"value": {
+                    "uid": str(uuid.uuid4()), "username": username, "name": name,
+                    "password_hash": self._hash(password), "role": "student",
+                    "active": True, "verified_at": now_ms(), "created_at": now_ms(),
+                }})
+            except Exception as exc:
+                if self._account_for_username(username):
+                    raise AgentAPIError("该用户名已被使用。", 409, "username_taken") from exc
+                raise
+            return
+        email = self.email(identifier)
         password = self.password(password)
         name = name.strip()[:40] if isinstance(name, str) else ""
         self._limit("register_ip", ip, 300, 60 * 60_000)
@@ -185,6 +222,8 @@ class AuthService:
         self.mailer.send(account["email"], subject, f"请打开以下链接完成操作：\n{link}\n")
 
     def request_reset(self, email: str) -> None:
+        if not self.mailer.can_send:
+            raise AgentAPIError("暂未启用邮件找回，请联系管理员。", 503, "mail_unavailable")
         email = self.email(email)
         self._limit("reset", email, 3, 60 * 60_000)
         self._event("reset", email)
@@ -208,6 +247,8 @@ class AuthService:
         return account
 
     def verify_email(self, token: str) -> None:
+        if not self.mailer.can_send:
+            raise AgentAPIError("当前未启用邮箱验证。", 503, "mail_unavailable")
         account = self._consume(token, "verify")
         self.store.query(
             "UPDATE auth_accounts SET verified_at = $at WHERE uid = $uid",
@@ -215,6 +256,8 @@ class AuthService:
         )
 
     def reset_password(self, token: str, password: str) -> None:
+        if not self.mailer.can_send:
+            raise AgentAPIError("当前未启用邮件找回。", 503, "mail_unavailable")
         password = self.password(password)
         account = self._consume(token, "reset")
         self.store.query(
@@ -223,11 +266,11 @@ class AuthService:
         )
         self.revoke_all(account["uid"])
 
-    def login(self, email: str, password: str, ip: str) -> tuple[str, Session]:
-        email = self.email(email)
-        self._limit("login_email", email, 5, 15 * 60_000)
+    def login(self, identifier: str, password: str, ip: str) -> tuple[str, Session]:
+        identifier = self.email(identifier) if isinstance(identifier, str) and "@" in identifier else self.username(identifier)
+        self._limit("login_identifier", identifier, 5, 15 * 60_000)
         self._limit("login_ip", ip, 1000, 15 * 60_000)
-        account = self._account_for_email(email)
+        account = self._account_for_identifier(identifier)
         valid = False
         if isinstance(password, str):
             try:
@@ -236,7 +279,7 @@ class AuthService:
             except (argon_errors.VerifyMismatchError, argon_errors.VerificationError):
                 pass
         if not valid or not account or not account.get("active", True):
-            self._event("login_email", email)
+            self._event("login_identifier", identifier)
             self._event("login_ip", ip)
             raise AgentAPIError(_GENERIC_LOGIN, 401, "invalid_credentials")
         if not account.get("verified_at"):

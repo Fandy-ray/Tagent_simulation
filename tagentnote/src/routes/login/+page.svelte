@@ -2,9 +2,16 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
-	import { authMode, currentAccount, login } from '$lib/apis/auth';
+	import {
+		authMode,
+		currentAccount,
+		login,
+		registrationMethod,
+		registrationOpen,
+		passwordResetAvailable
+	} from '$lib/apis/auth';
 
-	let email = $state('');
+	let identifier = $state('');
 	let password = $state('');
 	let busy = $state(false);
 	let error = $state('');
@@ -14,7 +21,7 @@
 		busy = true;
 		error = '';
 		try {
-			await login(email, password);
+			await login(identifier, password);
 			const requested = $page.url.searchParams.get('next') || '/agent-select';
 			const destination =
 				requested.startsWith('/') && !requested.startsWith('//') ? requested : '/agent-select';
@@ -37,13 +44,15 @@
 		<a href={resolve('/welcome')} class="text-sm text-blue-300">← 返回首页</a>
 		<h1 class="mt-5 text-2xl font-semibold">登录 TAgent</h1>
 		<p class="mt-2 text-sm text-slate-300">用自己的账号保存课程学习记录，并在其他设备继续使用。</p>
-		<label class="mt-7 block text-sm" for="login-email">邮箱</label>
+		<label class="mt-7 block text-sm" for="login-identifier"
+			>{$registrationMethod === 'username' ? '用户名（管理员可用邮箱）' : '邮箱'}</label
+		>
 		<input
-			id="login-email"
-			type="email"
+			id="login-identifier"
+			type={$registrationMethod === 'username' ? 'text' : 'email'}
 			autocomplete="username"
 			required
-			bind:value={email}
+			bind:value={identifier}
 			class="mt-2 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2.5"
 		/>
 		<label class="mt-5 block text-sm" for="login-password">密码</label>
@@ -64,14 +73,17 @@
 			{busy ? '正在登录…' : '登录'}
 		</button>
 		<div class="mt-5 flex justify-between text-sm text-blue-300">
-			<a href={resolve('/register')}>注册学生账号</a>
-			<a href={resolve('/forgot-password')}>忘记密码？</a>
+			{#if $registrationOpen}<a href={resolve('/register')}>注册学生账号</a>{/if}
+			{#if $passwordResetAvailable}<a href={resolve('/forgot-password')}>忘记密码？</a>{/if}
 		</div>
+		{#if !$passwordResetAvailable && $authMode === 'enabled'}
+			<p class="mt-3 text-sm text-slate-400">忘记密码请联系管理员核验后重置。</p>
+		{/if}
 		{#if $authMode === 'disabled'}<p class="mt-5 text-sm text-slate-400">
 				当前服务器尚未启用账号登录。
 			</p>{/if}
 		{#if $currentAccount}<p class="mt-5 text-sm text-slate-300">
-				当前已登录：{$currentAccount.email}
+				当前已登录：{$currentAccount.username || $currentAccount.email}
 			</p>{/if}
 	</form>
 </main>

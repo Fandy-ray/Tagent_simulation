@@ -3,6 +3,7 @@ import adapter from '@sveltejs/adapter-auto';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig, type ProxyOptions } from 'vite';
 import { timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 
 import { NOTEBOOK_PROXY_PREFIX, notebookRouteAllowed } from './notebook-proxy.ts';
 
@@ -39,6 +40,20 @@ const equalToken = (a: string, b: string): boolean => {
 	const right = Buffer.from(b);
 	return left.length === right.length && timingSafeEqual(left, right);
 };
+
+function clientIp(request: import('node:http').IncomingMessage): string {
+	const socket = request.socket.remoteAddress || '';
+	const normalized = socket.startsWith('::ffff:') ? socket.slice(7) : socket;
+	// HTTPS 反向代理必须覆盖 X-Real-IP；仅当实际连接来自本机代理时才信此头。
+	const forwarded = request.headers['x-real-ip'];
+	if (
+		(normalized === '127.0.0.1' || normalized === '::1') &&
+		typeof forwarded === 'string' &&
+		isIP(forwarded)
+	)
+		return forwarded;
+	return socket || 'unknown';
+}
 
 async function notebookCallerAllowed(
 	request: import('node:http').IncomingMessage
@@ -81,7 +96,7 @@ const agentProxy = (): ProxyOptions => ({
 	configure(proxy) {
 		proxy.on('proxyReq', (proxyReq, request) => {
 			// 只信 Vite 实际接入的 socket 地址，覆盖浏览器自带的同名头。
-			proxyReq.setHeader('x-tagent-client-ip', request.socket.remoteAddress || 'unknown');
+			proxyReq.setHeader('x-tagent-client-ip', clientIp(request));
 		});
 	}
 });

@@ -35,7 +35,7 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
 
     if app.config["AUTH_ENABLED"]:
         from app.api.auth_gate import enforce_identity
-        from app.auth.mail import MemoryMailer, SMTPMailer
+        from app.auth.mail import DisabledMailer, MemoryMailer, SMTPMailer
         from app.auth.personal import PersonalService
         from app.auth.service import AuthService
         from app.auth.store import IdentityStore
@@ -48,6 +48,8 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         mail_mode = auth_settings.mail_mode
         if app.config.get("TESTING") and mail_mode == "memory":
             mailer = MemoryMailer()
+        elif mail_mode == "disabled":
+            mailer = DisabledMailer()
         elif mail_mode == "smtp":
             mailer = SMTPMailer(
                 auth_settings.smtp_host, auth_settings.smtp_port,
@@ -55,7 +57,7 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
                 auth_settings.smtp_from,
             )
         else:
-            raise ValueError("Public registration requires SMTP mail delivery")
+            raise ValueError("Choose disabled mail or configure SMTP mail delivery")
         store = app.config.get("AUTH_STORE")
         if store is None and (app.config.get("AUTH_SERVICE") is None or app.config.get("PERSONAL_SERVICE") is None):
             store = IdentityStore(

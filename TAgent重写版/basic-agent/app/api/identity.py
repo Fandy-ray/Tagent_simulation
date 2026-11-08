@@ -89,7 +89,7 @@ def list_accounts():
     _admin()
     service, _ = _services()
     rows = service.store.query(
-        "SELECT uid, email, name, role, active, deletion_pending, verified_at, created_at "
+        "SELECT uid, email, username, name, role, active, deletion_pending, verified_at, created_at "
         "FROM auth_accounts ORDER BY created_at DESC LIMIT 1000"
     ) or []
     return jsonify({"accounts": [public_account(row) for row in rows]})
@@ -239,10 +239,11 @@ def add_member(uid: str):
     service, _ = _services()
     if not service.course(uid):
         raise AgentAPIError("课程不存在。", 404, "course_not_found")
-    email = service.email(_json().get("email"))
-    account = service._account_for_email(email)
+    identifier = _json().get("identifier", _json().get("email"))
+    identifier = service.email(identifier) if isinstance(identifier, str) and "@" in identifier else service.username(identifier)
+    account = service._account_for_identifier(identifier)
     if not account or account.get("role") != "student" or not account.get("verified_at"):
-        raise AgentAPIError("找不到已验证的账号。", 404, "account_not_found")
+        raise AgentAPIError("找不到可用的学生账号。", 404, "account_not_found")
     if not service.is_member(account["uid"], uid):
         service.store.query(
             "CREATE auth_memberships CONTENT $value",

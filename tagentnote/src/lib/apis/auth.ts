@@ -5,7 +5,8 @@ import { clearAdminToken } from '$lib/data/adminToken';
 
 export type Account = {
 	id: string;
-	email: string;
+	email: string | null;
+	username?: string | null;
 	name: string;
 	role: 'student' | 'admin';
 	verified: boolean;
@@ -27,6 +28,8 @@ export const currentAccount = writable<Account | null>(null);
 export const availableCourses = writable<Course[]>([]);
 export const currentCourseId = writable('general');
 export const registrationOpen = writable(false);
+export const registrationMethod = writable<'username' | 'email'>('username');
+export const passwordResetAvailable = writable(false);
 export const authReady = writable(false);
 export const syncError = writable('');
 let csrf = '';
@@ -45,6 +48,8 @@ const writes = new Map<string, Promise<void>>();
 
 const contextFor = (kind: PersonalKind) =>
 	kind === 'settings' || kind === 'controls' ? 'global' : get(currentCourseId);
+const legacyContextFor = (kind: PersonalKind) =>
+	kind === 'settings' || kind === 'controls' ? 'global' : 'general';
 const scopedKey = (kind: PersonalKind, user: Account, context = contextFor(kind)) =>
 	`tagent.account.${user.id}.${context}.${kind}`;
 
@@ -54,8 +59,66 @@ export function legacyDataKinds(): PersonalKind[] {
 	return (Object.keys(dataKeys) as PersonalKind[]).filter(
 		(kind) =>
 			localStorage.getItem(dataKeys[kind]) !== null &&
-			(!user || (versions.get(scopedKey(kind, user)) || 0) === 0)
+			(!user || (versions.get(scopedKey(kind, user, legacyContextFor(kind))) || 0) === 0)
 	);
+}
+
+export type LegacyDataOverview = {
+	kind: PersonalKind;
+	label: string;
+	summary: string;
+	valid: boolean;
+};
+
+export function legacyDataOverview(): LegacyDataOverview[] {
+	if (!browser) return [];
+	const labels: Record<PersonalKind, string> = {
+		settings: '个人设置（可能包含第三方连接密钥）',
+		qa_chats: '答疑会话',
+		qa_folders: '答疑文件夹',
+		workspace: '工作空间内容',
+		controls: '答疑控制设置'
+	};
+	return legacyDataKinds().map((kind) => {
+		try {
+			const parsed: unknown = JSON.parse(localStorage.getItem(dataKeys[kind]) || 'null');
+			let count: number | null = null;
+			if (kind === 'qa_chats' && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				const chats = (parsed as { chats?: unknown }).chats;
+				if (!Array.isArray(chats)) throw new Error('invalid chats');
+				count = chats.length;
+			} else if (kind === 'qa_folders' && Array.isArray(parsed)) {
+				count = parsed.length;
+			} else if (
+				kind === 'workspace' &&
+				parsed &&
+				typeof parsed === 'object' &&
+				!Array.isArray(parsed)
+			) {
+				count = Object.values(parsed).reduce<number>(
+					(total, value) => total + (Array.isArray(value) ? value.length : 0),
+					0
+				);
+			} else if (
+				(kind === 'settings' || kind === 'controls') &&
+				parsed &&
+				typeof parsed === 'object' &&
+				!Array.isArray(parsed)
+			) {
+				// 只展示是否存在，不把设置中的连接信息或密钥展示给下一位使用者。
+			} else {
+				throw new Error('invalid legacy shape');
+			}
+			return {
+				kind,
+				label: labels[kind],
+				summary: count === null ? '已保存' : `${count} 项`,
+				valid: true
+			};
+		} catch {
+			return { kind, label: labels[kind], summary: '格式无法识别，不能导入', valid: false };
+		}
+	});
 }
 
 export function readPersonalCache(kind: PersonalKind): string | null {
@@ -155,6 +218,17 @@ async function hydratePersonal(user: Account): Promise<void> {
 		if (result.data === null) sessionStorage.removeItem(key);
 		else sessionStorage.setItem(key, JSON.stringify(result.data));
 	}
+	// 旧浏览器内容只能导入通用区。若登录时恢复的是课程页，也要先知道通用区
+	// 是否已有服务端数据，避免再次提示导入或误以为可以覆盖。
+	if (get(currentCourseId) !== 'general') {
+		for (const kind of ['qa_chats', 'qa_folders', 'workspace'] as const) {
+			const key = scopedKey(kind, user, 'general');
+			if (!versions.has(key)) {
+				const result = await getPersonal<unknown>(kind, 'general');
+				versions.set(key, result.version);
+			}
+		}
+	}
 }
 
 export async function importLegacyData(): Promise<{
@@ -165,8 +239,12 @@ export async function importLegacyData(): Promise<{
 	if (!browser || !user || get(authMode) !== 'enabled') throw new Error('请先登录。');
 	const imported: PersonalKind[] = [];
 	const skipped: PersonalKind[] = [];
-	for (const kind of legacyDataKinds()) {
-		const context = contextFor(kind);
+	const candidates = legacyDataOverview();
+	if (candidates.some((entry) => !entry.valid)) {
+		throw new Error('旧数据中有无法识别的内容。请先备份这台浏览器的数据；未导入任何内容。');
+	}
+	for (const { kind } of candidates) {
+		const context = legacyContextFor(kind);
 		const key = scopedKey(kind, user, context);
 		if ((versions.get(key) || 0) !== 0) {
 			skipped.push(kind);
@@ -266,8 +344,15 @@ export async function initializeAuth(): Promise<void> {
 	initialized = (async () => {
 		authReady.set(false);
 		try {
-			const status = await json<{ enabled: boolean; registration_open: boolean }>('/auth/status');
+			const status = await json<{
+				enabled: boolean;
+				registration_open: boolean;
+				registration_method: 'username' | 'email';
+				password_reset_available: boolean;
+			}>('/auth/status');
 			registrationOpen.set(status.registration_open);
+			registrationMethod.set(status.registration_method || 'username');
+			passwordResetAvailable.set(Boolean(status.password_reset_available));
 			if (!status.enabled) {
 				authMode.set('disabled');
 				authReady.set(true);
@@ -295,12 +380,12 @@ export async function initializeAuth(): Promise<void> {
 	return initialized;
 }
 
-export async function login(email: string, password: string): Promise<Account> {
+export async function login(identifier: string, password: string): Promise<Account> {
 	authReady.set(false);
 	try {
 		const session = await json<{ user: Account; csrf: string }>(
 			'/auth/login',
-			body({ email, password })
+			body({ identifier, password })
 		);
 		csrf = session.csrf;
 		currentAccount.set(session.user);
@@ -366,8 +451,11 @@ export async function chooseCourse(id: string): Promise<void> {
 	}
 }
 
-export const register = (email: string, password: string, name: string) =>
-	json<{ message: string }>('/auth/register', body({ email, password, name }));
+export const register = (identifier: string, password: string, name: string) =>
+	json<{ message: string }>(
+		'/auth/register',
+		body({ [get(registrationMethod)]: identifier, password, name })
+	);
 export const verifyEmail = (token: string) =>
 	json<{ verified: boolean }>('/auth/verify-email', body({ token }));
 export const requestPasswordReset = (email: string) =>

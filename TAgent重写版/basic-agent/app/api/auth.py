@@ -19,9 +19,12 @@ blueprint = Blueprint("auth", __name__, url_prefix="/auth")
 def status():
     """让前端识别是否已切到账号模式，不泄露账号配置。"""
     enabled = bool(current_app.config.get("AUTH_ENABLED"))
-    return jsonify({"enabled": enabled, "registration_open": (
-        _service().registration_is_open() if enabled else False
-    )})
+    return jsonify({
+        "enabled": enabled,
+        "registration_open": _service().registration_is_open() if enabled else False,
+        "registration_method": ("email" if _service().mailer.can_send else "username") if enabled else "username",
+        "password_reset_available": bool(_service().mailer.can_send) if enabled else False,
+    })
 
 
 def _service():
@@ -52,7 +55,10 @@ def _ip():
 @blueprint.post("/register")
 def register():
     data = _data()
-    _service().register(data.get("email"), data.get("password"), data.get("name", ""), _ip())
+    mail_enabled = _service().mailer.can_send
+    _service().register(data.get("email" if mail_enabled else "username"), data.get("password"), data.get("name", ""), _ip())
+    if not mail_enabled:
+        return jsonify({"message": "账号已创建，请登录。"}), 201
     return jsonify({"message": "如该邮箱可以注册，验证邮件将很快送达。"}), 202
 
 
@@ -78,7 +84,7 @@ def reset_password():
 @blueprint.post("/login")
 def login():
     data = _data()
-    token, session = _service().login(data.get("email"), data.get("password"), _ip())
+    token, session = _service().login(data.get("identifier", data.get("email")), data.get("password"), _ip())
     response = make_response(jsonify({
         "user": public_account(session.account), "csrf": session.csrf,
     }))

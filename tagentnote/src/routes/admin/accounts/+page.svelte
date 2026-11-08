@@ -58,7 +58,7 @@
 		}
 	}
 	async function finishDeletion(account: Account) {
-		if (!confirm(`确认完成 ${account.email} 的待注销数据清理？`)) return;
+		if (!confirm(`确认完成 ${account.username || account.email} 的待注销数据清理？`)) return;
 		busy = true;
 		error = '';
 		message = '';
@@ -80,7 +80,7 @@
 <svelte:head><title>账号管理 | TAgent</title></svelte:head>
 <div class="p-6">
 	<h1 class="text-2xl font-semibold">账号管理</h1>
-	<p class="mt-2 text-sm text-gray-500">学生自行通过邮箱注册；管理员账号由部署人员单独创建。</p>
+	<p class="mt-2 text-sm text-gray-500">学生可自行创建账号；管理员账号由部署人员单独创建。</p>
 	<div
 		class="mt-5 flex items-center gap-3 rounded-xl border border-gray-200 p-4 dark:border-white/15"
 	>
@@ -99,17 +99,19 @@
 		<table class="w-full text-left text-sm">
 			<thead class="bg-gray-50 dark:bg-white/5"
 				><tr
-					><th class="p-3">姓名</th><th class="p-3">邮箱</th><th class="p-3">角色</th><th
-						class="p-3">验证</th
+					><th class="p-3">姓名</th><th class="p-3">登录账号</th><th class="p-3">角色</th><th
+						class="p-3">可登录</th
 					><th class="p-3">状态</th><th class="p-3">操作</th></tr
 				></thead
 			>
 			<tbody
 				>{#each accounts as account (account.id)}
 					<tr class="border-t border-gray-200 dark:border-white/10">
-						<td class="p-3">{account.name || '—'}</td><td class="p-3">{account.email}</td>
+						<td class="p-3">{account.name || '—'}</td><td class="p-3"
+							>{account.username || account.email}</td
+						>
 						<td class="p-3">{account.role === 'admin' ? '管理员' : '学生'}</td>
-						<td class="p-3">{account.verified ? '已验证' : '未验证'}</td>
+						<td class="p-3">{account.verified ? '是' : '否'}</td>
 						<td class="p-3"
 							>{account.deletion_pending ? '待完成注销' : account.active ? '启用' : '停用'}</td
 						>

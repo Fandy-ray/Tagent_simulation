@@ -7,18 +7,18 @@
 		deleteAccount,
 		exportAccount,
 		importLegacyData,
-		legacyDataKinds,
+		legacyDataOverview,
 		logout,
-		type PersonalKind
+		type LegacyDataOverview
 	} from '$lib/apis/auth';
 
-	let legacy = $state<PersonalKind[]>([]);
+	let legacy = $state<LegacyDataOverview[]>([]);
 	let password = $state('');
 	let busy = $state(false);
 	let message = $state('');
 	let error = $state('');
 	onMount(() => {
-		legacy = legacyDataKinds();
+		legacy = legacyDataOverview();
 	});
 
 	async function importOld() {
@@ -27,8 +27,8 @@
 		error = '';
 		try {
 			const result = await importLegacyData();
-			message = `已导入 ${result.imported.length} 类数据；${result.skipped.length} 类已有服务端数据，未覆盖。`;
-			legacy = legacyDataKinds();
+			message = `已导入 ${result.imported.length} 类数据到通用区；${result.skipped.length} 类已有服务端数据，未覆盖。`;
+			legacy = legacyDataOverview();
 		} catch (cause) {
 			error = cause instanceof Error ? cause.message : '导入失败。';
 		} finally {
@@ -77,7 +77,7 @@
 		<h1 class="mt-6 text-3xl font-semibold">我的账号</h1>
 		{#if $currentAccount}
 			<p class="mt-3 text-slate-300">
-				{$currentAccount.name || '未填写姓名'} · {$currentAccount.email}
+				{$currentAccount.name || '未填写姓名'} · {$currentAccount.username || $currentAccount.email}
 			</p>
 		{/if}
 		<section class="mt-8 rounded-xl border border-white/15 p-6">
@@ -94,11 +94,16 @@
 			<section class="mt-5 rounded-xl border border-amber-500/40 p-6">
 				<h2 class="text-lg font-medium">发现这台浏览器的旧数据</h2>
 				<p class="mt-2 text-sm text-slate-300">
-					这些内容没有账号归属，可能来自共用电脑。仅在确认属于你时导入；不会覆盖账号中已有的数据。
+					这些内容没有账号归属，可能来自共用电脑。仅在确认属于你时导入到通用区；不会覆盖账号中已有的数据。
 				</p>
+				<ul class="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-200">
+					{#each legacy as entry (entry.kind)}
+						<li>{entry.label}：{entry.summary}</li>
+					{/each}
+				</ul>
 				<button
 					type="button"
-					disabled={busy}
+					disabled={busy || legacy.some((entry) => !entry.valid)}
 					onclick={importOld}
 					class="mt-4 rounded-lg border border-amber-400 px-4 py-2 text-amber-200 disabled:opacity-50"
 					>确认属于我并导入</button

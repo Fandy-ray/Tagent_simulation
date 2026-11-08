@@ -14,6 +14,7 @@ from surrealdb import Surreal
 SCHEMA = (
     "DEFINE TABLE IF NOT EXISTS auth_accounts SCHEMALESS",
     "DEFINE INDEX IF NOT EXISTS account_email ON auth_accounts FIELDS email UNIQUE",
+    "DEFINE INDEX IF NOT EXISTS account_username ON auth_accounts FIELDS username UNIQUE",
     "DEFINE INDEX IF NOT EXISTS account_uid ON auth_accounts FIELDS uid UNIQUE",
     "DEFINE TABLE IF NOT EXISTS auth_sessions SCHEMALESS",
     "DEFINE INDEX IF NOT EXISTS session_digest ON auth_sessions FIELDS digest UNIQUE",
