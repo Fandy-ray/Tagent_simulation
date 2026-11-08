@@ -17,6 +17,7 @@
 	} from '$lib/data/qaFolders';
 	import { loadUserSettings } from '$lib/data/userSettings';
 	import { adminToken, clearAdminToken, restoreAdminToken } from '$lib/apis/admin';
+	import { authMode, currentAccount, logout } from '$lib/apis/auth';
 	import AdminTokenGate from '$lib/components/admin/AdminTokenGate.svelte';
 
 	let sidebarOpen = $state(true);
@@ -145,6 +146,8 @@
 	};
 
 	const tabs = [
+		{ label: '账号', href: '/admin/accounts', match: '/admin/accounts' },
+		{ label: '课程', href: '/admin/courses', match: '/admin/courses' },
 		{ label: '用户', href: '/admin/users/overview', match: '/admin/users' },
 		{ label: '分析', href: '/admin/analytics/dashboard', match: '/admin/analytics' },
 		{ label: '评估', href: '/admin/evaluations/leaderboard', match: '/admin/evaluations' },
@@ -190,7 +193,10 @@
 			onPlayground={() => goto(resolve('/playground'))}
 			onAdmin={() => goto(resolve('/admin/users/overview'))}
 			onShortcuts={() => goto(resolve('/qa?sidebar-action=shortcuts'))}
-			onSignOut={() => goto(resolve('/welcome'))}
+			onSignOut={async () => {
+				if ($authMode === 'enabled') await logout();
+				await goto(resolve('/welcome'));
+			}}
 			onCreateFolder={createFolder}
 			onUpdateFolder={updateFolder}
 			onDeleteFolder={deleteFolder}
@@ -244,7 +250,7 @@
 						{/each}
 					</div>
 				</div>
-				{#if $adminToken}
+				{#if $authMode !== 'enabled' && $adminToken}
 					<button
 						type="button"
 						class="dark:hover:bg-gray-850 shrink-0 rounded-lg px-2 py-1 text-xs text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:text-white"
@@ -256,7 +262,7 @@
 		</nav>
 
 		<div class="min-h-0 flex-1 overflow-y-auto pb-1">
-			{#if $adminToken}
+			{#if ($authMode === 'enabled' && $currentAccount?.role === 'admin') || ($authMode === 'disabled' && $adminToken)}
 				{@render children?.()}
 			{:else}
 				<AdminTokenGate />

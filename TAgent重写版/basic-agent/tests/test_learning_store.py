@@ -286,9 +286,10 @@ def test_two_processes_opening_a_fresh_db_do_not_both_create_tables(tmp_path):
     first = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     first.execute("PRAGMA journal_mode=WAL")
     first.execute("BEGIN IMMEDIATE")
-    for statement in (s.strip() for s in MIGRATIONS[0].split(";")):
-        if statement:
-            first.execute(statement)
+    for migration in MIGRATIONS:
+        for statement in (s.strip() for s in migration.split(";")):
+            if statement:
+                first.execute(statement)
     first.execute(f"PRAGMA user_version={len(MIGRATIONS)}")
 
     def finish_later():

@@ -4,6 +4,7 @@
 	import { afterNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
+	import { authMode, logout } from '$lib/apis/auth';
 
 	import MockSidebar from '$lib/components/chat/MockSidebar.svelte';
 	import type { FolderFormValue } from '$lib/components/chat/FolderModal.svelte';
@@ -206,7 +207,10 @@
 			onPlayground={() => goto(resolve('/playground'))}
 			onAdmin={() => goto(resolve('/admin/users/overview'))}
 			onShortcuts={() => goto(resolve('/qa?sidebar-action=shortcuts'))}
-			onSignOut={() => goto(resolve('/welcome'))}
+			onSignOut={async () => {
+				if ($authMode === 'enabled') await logout();
+				await goto(resolve('/welcome'));
+			}}
 			onCreateFolder={createFolder}
 			onUpdateFolder={updateFolder}
 			onDeleteFolder={deleteFolder}

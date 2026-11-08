@@ -6,22 +6,70 @@ from flask import Flask, request
 
 from app.api import register_blueprints
 from app.api.error_handler import register_error_handlers
-from app.config import AgentConfig, running_under_pytest
+from app.config import AgentConfig, AuthConfig, running_under_pytest
 from app.container import build_registry, build_services
 
 
 def create_app(config: dict | None = None, *, registry=None, services=None) -> Flask:
     settings = AgentConfig.from_env()
+    auth_settings = AuthConfig.from_env()
 
     app = Flask(__name__)
     app.config.from_mapping(
         AGENT_ADMIN_TOKEN=settings.admin_token,
         AGENT_INTERNAL_TOKEN=settings.internal_token,
         MAX_CONTENT_LENGTH=settings.max_content_length,
+        AUTH_ENABLED=auth_settings.enabled,
+        AUTH_PUBLIC_ORIGIN=auth_settings.public_origin,
+        AUTH_COOKIE_SECURE=auth_settings.cookie_secure,
     )
     if config:
         app.config.update(config)
+    if app.config["AUTH_ENABLED"]:
+        # 个人文档允许 5 MiB 明文；加密和 JSON 请求包装需要额外余量。
+        app.config["MAX_CONTENT_LENGTH"] = max(app.config["MAX_CONTENT_LENGTH"], 8 * 1024 * 1024)
+    app.config["AUTH_COOKIE_NAME"] = (
+        "__Host-tagent_session" if app.config["AUTH_COOKIE_SECURE"] else "tagent_session_dev"
+    )
     app.json.ensure_ascii = False
+
+    if app.config["AUTH_ENABLED"]:
+        from app.api.auth_gate import enforce_identity
+        from app.auth.mail import MemoryMailer, SMTPMailer
+        from app.auth.personal import PersonalService
+        from app.auth.service import AuthService
+        from app.auth.store import IdentityStore
+
+        origin = app.config["AUTH_PUBLIC_ORIGIN"]
+        if not origin or (not app.config.get("TESTING") and not origin.startswith("https://")):
+            raise ValueError("TAgent login requires a configured HTTPS public origin")
+        if not app.config["AUTH_COOKIE_SECURE"] and not app.config.get("TESTING"):
+            raise ValueError("TAgent login requires Secure session cookies")
+        mail_mode = auth_settings.mail_mode
+        if app.config.get("TESTING") and mail_mode == "memory":
+            mailer = MemoryMailer()
+        elif mail_mode == "smtp":
+            mailer = SMTPMailer(
+                auth_settings.smtp_host, auth_settings.smtp_port,
+                auth_settings.smtp_user, auth_settings.smtp_password,
+                auth_settings.smtp_from,
+            )
+        else:
+            raise ValueError("Public registration requires SMTP mail delivery")
+        store = app.config.get("AUTH_STORE")
+        if store is None and (app.config.get("AUTH_SERVICE") is None or app.config.get("PERSONAL_SERVICE") is None):
+            store = IdentityStore(
+                auth_settings.db_url, auth_settings.db_namespace,
+                auth_settings.db_database, auth_settings.db_user,
+                auth_settings.db_password,
+            )
+        app.extensions["auth_service"] = app.config.get("AUTH_SERVICE") or AuthService(
+            store, mailer, origin, registration_open=auth_settings.registration_open
+        )
+        app.extensions["personal_service"] = app.config.get("PERSONAL_SERVICE") or PersonalService(
+            store, auth_settings.data_keys
+        )
+        app.before_request(enforce_identity)
 
     app.extensions["settings"] = settings
     app.extensions["model_provider_registry"] = registry or build_registry(settings)
@@ -37,6 +85,8 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         include_notebook=not testing and not running_under_pytest(),
         registry=app.extensions["model_provider_registry"],
     )
+    if app.config["AUTH_ENABLED"] and not testing and app.extensions["services"].store is None:
+        raise ValueError("TAgent login requires a working learning records database")
 
     register_blueprints(app)
     register_error_handlers(app)
@@ -48,13 +98,18 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
 
     @app.after_request
     def allow_tagentnote(response):
+        if app.config["AUTH_ENABLED"]:
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["X-Content-Type-Options"] = "nosniff"
         origin = request.headers.get("Origin", "")
         if origin in {"http://127.0.0.1:5173", "http://localhost:5173"}:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Headers"] = (
-                "Content-Type, X-Tagent-Client-Id, X-Tagent-Client-Name, X-Tagent-No-Record"
+                "Content-Type, X-Tagent-Client-Id, X-Tagent-Client-Name, X-Tagent-No-Record, "
+                "X-Tagent-CSRF, X-Tagent-Course-Id"
             )
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
         return response
 
     return app

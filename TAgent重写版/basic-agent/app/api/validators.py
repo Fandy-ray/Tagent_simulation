@@ -139,6 +139,19 @@ def exam_json_body() -> dict[str, Any]:
 
 
 def optional_notebook_ids(data: dict[str, Any]) -> list[str] | None:
+    from flask import current_app, g
+
+    course = getattr(g, "course", None)
+    if current_app.config.get("AUTH_ENABLED") and course:
+        allowed = course.get("notebook_ids") or []
+        if not allowed:
+            raise AgentAPIError("这门课程尚未配置知识来源。", 409, "course_sources_empty")
+        requested = data.get("notebook_ids")
+        if requested and requested != "":
+            values = [requested] if isinstance(requested, str) else requested
+            if not isinstance(values, list) or any(item not in allowed for item in values):
+                raise AgentAPIError("不能使用当前课程以外的资料。", 403, "course_source_forbidden")
+        return list(allowed)
     value = data.get("notebook_ids")
     if value is None or value == "":
         return None

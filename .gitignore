@@ -12,6 +12,7 @@
 .env.*
 !.env.example
 !.env.runtime.example
+!.env.auth.example
 *.key
 *.pem
 *.p12

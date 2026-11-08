@@ -4,6 +4,15 @@
 	import { onMount } from 'svelte';
 
 	import { getAgentModels } from '$lib/apis/agent';
+	import { invalidateNotebookKnowledge } from '$lib/apis/opennotebook';
+	import {
+		authMode,
+		availableCourses,
+		chooseCourse,
+		currentAccount,
+		currentCourseId,
+		logout
+	} from '$lib/apis/auth';
 
 	type AgentType = 'qa' | 'notebook' | 'quiz';
 
@@ -18,7 +27,9 @@
 	let selectedModelId = $state('');
 	let modelsError = $state('');
 
-	onMount(() => {
+	const loadModels = () => {
+		modelsError = '';
+		models = [];
 		void getAgentModels()
 			.then((list) => {
 				models = list.data.map((model) => ({
@@ -33,7 +44,22 @@
 			.catch(() => {
 				modelsError = '读不到 basic-agent 的模型列表，请确认它已在 5001 端口启动。';
 			});
-	});
+	};
+	onMount(loadModels);
+	const changeCourse = async (event: Event) => {
+		const select = event.currentTarget as HTMLSelectElement;
+		try {
+			await chooseCourse(select.value);
+			invalidateNotebookKnowledge();
+			loadModels();
+		} catch {
+			select.value = $currentCourseId;
+		}
+	};
+	const signOut = async () => {
+		await logout();
+		await goto(resolve('/welcome'));
+	};
 
 	const agents: AgentCard[] = [
 		{
@@ -120,6 +146,31 @@
 				</div>
 			</div>
 		</header>
+		{#if $authMode === 'enabled' && $currentAccount}
+			<div class="mt-5 flex flex-wrap items-center gap-3 text-sm">
+				<span class="text-gray-300">{$currentAccount.name || $currentAccount.email}</span>
+				<label for="course-switch" class="text-gray-400">当前课程</label>
+				<select
+					id="course-switch"
+					value={$currentCourseId}
+					onchange={changeCourse}
+					class="rounded-lg border border-white/20 bg-gray-800 px-3 py-2 text-white"
+				>
+					<option value="general">通用区</option>
+					{#each $availableCourses as course (course.id)}<option value={course.id}
+							>{course.name}</option
+						>{/each}
+				</select>
+				<a href={resolve('/account')} class="ml-auto text-cyan-300 hover:underline">我的账号</a>
+				{#if $currentAccount.role === 'admin'}<a
+						href={resolve('/admin/accounts')}
+						class="text-cyan-300 hover:underline">管理</a
+					>{/if}
+				<button type="button" onclick={signOut} class="text-gray-300 hover:text-white"
+					>退出登录</button
+				>
+			</div>
+		{/if}
 
 		<section class="py-9" aria-labelledby="agent-mode-title">
 			<div class="flex flex-col justify-between gap-6 md:flex-row md:items-end">

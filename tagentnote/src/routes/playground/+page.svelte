@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { authMode, logout } from '$lib/apis/auth';
 	import MockSidebar from '$lib/components/chat/MockSidebar.svelte';
 	import type { FolderFormValue } from '$lib/components/chat/FolderModal.svelte';
 	import { getAgentModels, streamAgentChat, type AgentModel } from '$lib/apis/agent';
@@ -342,7 +343,10 @@
 			onPlayground={() => (activeTab = 'chat')}
 			onAdmin={() => goto(resolve('/admin/users/overview'))}
 			onShortcuts={() => goto(resolve('/qa?sidebar-action=shortcuts'))}
-			onSignOut={() => goto(resolve('/welcome'))}
+			onSignOut={async () => {
+				if ($authMode === 'enabled') await logout();
+				await goto(resolve('/welcome'));
+			}}
 		/>
 	{/if}
 	<div class="playground">

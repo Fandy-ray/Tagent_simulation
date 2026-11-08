@@ -1,8 +1,7 @@
 import { browser } from '$app/environment';
+import { readPersonalCache, writePersonalCache } from '$lib/apis/auth';
 
 export type ChatControlParams = Record<string, unknown>;
-
-const STORAGE_KEY = 'tagentnote.qa.controls.v1';
 
 export const defaultChatControls = (): ChatControlParams => ({
 	system: '',
@@ -47,7 +46,7 @@ export function loadChatControls(): ChatControlParams {
 	}
 
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const raw = readPersonalCache('controls');
 		if (!raw) {
 			return defaults;
 		}
@@ -73,7 +72,7 @@ export function saveChatControls(params: ChatControlParams) {
 	}
 
 	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(params));
+		writePersonalCache('controls', JSON.stringify(params));
 	} catch {
 		// ignore quota / private mode
 	}

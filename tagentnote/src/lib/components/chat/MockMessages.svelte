@@ -36,6 +36,7 @@
 		continueLabel?: string;
 		onEditMessage?: (messageId: string, content: string) => void;
 		onSaveToNotebook?: (messageId: string) => void;
+		canSaveToNotebook?: boolean;
 		onQuickAction?: (prompt: string, displayContent?: string) => void;
 		onFollowUp?: (prompt: string, insertOnly?: boolean) => void;
 		onToast?: (message: string) => void;
@@ -75,6 +76,7 @@
 		continueLabel = '继续回答',
 		onEditMessage = () => {},
 		onSaveToNotebook = () => {},
+		canSaveToNotebook = true,
 		onQuickAction = () => {},
 		onFollowUp = () => {},
 		onToast = () => {},
@@ -353,13 +355,15 @@
 									class="w-full resize-y rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm leading-6 text-gray-100 outline-none"
 									aria-label="编辑回答"></textarea>
 								<div class="mt-2 flex justify-end gap-2">
-									<button
-										type="button"
-										class="rounded-full px-3 py-1 text-xs text-gray-400 hover:bg-white/[0.06] hover:text-white"
-										onclick={cancelEdit}
-									>
-										取消
-									</button>
+									{#if canSaveToNotebook}
+										<button
+											type="button"
+											class="rounded-full px-3 py-1 text-xs text-gray-400 hover:bg-white/[0.06] hover:text-white"
+											onclick={cancelEdit}
+										>
+											取消
+										</button>
+									{/if}
 									<button
 										type="button"
 										class="rounded-full bg-white px-3 py-1 text-xs font-medium text-black hover:bg-gray-100"

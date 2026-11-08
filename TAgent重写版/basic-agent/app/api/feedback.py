@@ -65,6 +65,7 @@ def record_feedback():
     store.touch_student(learner.id, learner.name)
     store.record_feedback(
         student_id=learner.id,
+        course_id=learner.course_id,
         message_key=message_key,
         model=model.strip(),
         mode=mode,

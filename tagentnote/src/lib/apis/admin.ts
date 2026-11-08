@@ -10,6 +10,7 @@
 import { get, writable } from 'svelte/store';
 
 import { agentBase } from '$lib/apis/agent';
+import { authMode, currentAccount, sessionHeaders } from '$lib/apis/auth';
 import { adminToken, clearAdminToken } from '$lib/data/adminToken';
 
 export {
@@ -38,6 +39,9 @@ function explain(status: number, payload: unknown): AdminError {
 	const error = (payload as { error?: { message?: string; code?: string } })?.error;
 	const code = error?.code;
 	const message = error?.message ?? '';
+	if (get(authMode) === 'enabled' && status === 403) {
+		return new AdminError(message || '当前账号没有权限。', status, code);
+	}
 	if (code === 'admin_token_not_configured') {
 		return new AdminError(
 			'后端还没有管理口令：跑一次启动脚本（start.command / start.bat）会自动生成。',
@@ -70,6 +74,19 @@ function explain(status: number, payload: unknown): AdminError {
 }
 
 async function adminRequest<T>(path: string, method = 'GET', token?: string): Promise<T> {
+	if (get(authMode) === 'enabled') {
+		if (get(currentAccount)?.role !== 'admin') {
+			throw new AdminError('需要管理员账号。', 403, 'admin_required');
+		}
+		const response = await fetch(`${agentBase()}${path}`, {
+			method,
+			headers: sessionHeaders(method),
+			credentials: 'same-origin'
+		});
+		const payload = await response.json().catch(() => ({}));
+		if (!response.ok) throw explain(response.status, payload);
+		return payload as T;
+	}
 	const value = (token ?? get(adminToken)).trim();
 	if (!value) {
 		throw new AdminError('先输入管理口令。', 403, 'forbidden');

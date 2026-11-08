@@ -573,3 +573,44 @@ class NotebookSettings:
             allow_private_urls=_notebook_flag("ON_ALLOW_PRIVATE_URLS", False),
             job_workers=_notebook_int("ON_JOB_WORKERS", 2, low=1, high=8),
         )
+
+
+@dataclass(frozen=True)
+class AuthConfig:
+    enabled: bool
+    public_origin: str
+    cookie_secure: bool
+    registration_open: bool
+    mail_mode: str
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_password: str
+    smtp_from: str
+    db_url: str
+    db_namespace: str
+    db_database: str
+    db_user: str
+    db_password: str
+    data_keys: str
+
+    @classmethod
+    def from_env(cls) -> "AuthConfig":
+        return cls(
+            enabled=os.getenv("TAGENT_AUTH_ENABLED", "0") == "1",
+            public_origin=os.getenv("TAGENT_PUBLIC_ORIGIN", "").rstrip("/"),
+            cookie_secure=os.getenv("TAGENT_AUTH_COOKIE_SECURE", "1") != "0",
+            registration_open=os.getenv("TAGENT_REGISTRATION_OPEN", "0") == "1",
+            mail_mode=os.getenv("TAGENT_MAIL_MODE", "memory"),
+            smtp_host=os.getenv("TAGENT_SMTP_HOST", ""),
+            smtp_port=int(os.getenv("TAGENT_SMTP_PORT", "587")),
+            smtp_user=os.getenv("TAGENT_SMTP_USER", ""),
+            smtp_password=os.getenv("TAGENT_SMTP_PASSWORD", ""),
+            smtp_from=os.getenv("TAGENT_SMTP_FROM", ""),
+            db_url=os.getenv("TAGENT_DB_URL", ""),
+            db_namespace=os.getenv("TAGENT_DB_NAMESPACE", "tagent"),
+            db_database=os.getenv("TAGENT_DB_DATABASE", "app"),
+            db_user=os.getenv("TAGENT_DB_USER", ""),
+            db_password=os.getenv("TAGENT_DB_PASSWORD", ""),
+            data_keys=os.getenv("TAGENT_DATA_KEYS", ""),
+        )

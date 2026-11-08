@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
+	import { authMode, currentAccount } from '$lib/apis/auth';
 
 	let phase = $state(0); // 0=hidden, 1=badge, 2=title, 3=cta
 
@@ -90,7 +91,12 @@
 
 		<p class="subtitle" class:show={phase >= 2}>课程答疑 · 论文辅助 · 知识笔记本 · 智能测评</p>
 
-		<button class="cta-btn" class:show={phase >= 3} onclick={() => goto(resolve('/agent-select'))}>
+		<button
+			class="cta-btn"
+			class:show={phase >= 3}
+			onclick={() =>
+				goto(resolve($authMode === 'enabled' && !$currentAccount ? '/login' : '/agent-select'))}
+		>
 			<span class="cta-text">进入平台</span>
 			<span class="cta-arrow">→</span>
 		</button>
