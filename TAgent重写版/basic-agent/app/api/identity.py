@@ -250,8 +250,8 @@ def add_member(uid: str):
     if not service.course(uid):
         raise AgentAPIError("课程不存在。", 404, "course_not_found")
     identifier = _json().get("identifier", _json().get("email"))
-    identifier = service.email(identifier) if isinstance(identifier, str) and "@" in identifier else service.username(identifier)
-    account = service._account_for_identifier(identifier)
+    identifier = service.email(identifier)
+    account = service._account_for_email(identifier)
     if not account or account.get("role") != "student" or not service.login_ready(account):
         raise AgentAPIError("找不到可用的学生账号。", 404, "account_not_found")
     if not service.is_member(account["uid"], uid):

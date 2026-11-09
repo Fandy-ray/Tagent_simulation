@@ -18,7 +18,6 @@ from app.errors.api_errors import AgentAPIError
 
 
 _EMAIL = re.compile(r"^[^\s@]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,63}$")
-_USERNAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,31}$")
 _PASSWORD = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1)
 _GENERIC_LOGIN = "账号或密码不正确，或账号暂不可用。"
 _DUMMY_HASH = _PASSWORD.hash("this account is intentionally unavailable")
@@ -80,15 +79,6 @@ class AuthService:
             "SELECT * FROM auth_accounts WHERE email = $email LIMIT 1", {"email": email}
         )
 
-    def _account_for_username(self, username: str):
-        return self.store.first(
-            "SELECT * FROM auth_accounts WHERE username = $username LIMIT 1", {"username": username}
-        )
-
-    def _account_for_identifier(self, identifier: str):
-        return (self._account_for_email(identifier) if "@" in identifier
-                else self._account_for_username(identifier))
-
     @staticmethod
     def login_ready(account: dict[str, Any]) -> bool:
         return bool(account.get("active", True)) and (
@@ -130,13 +120,6 @@ class AuthService:
         if len(email) > 254 or not _EMAIL.fullmatch(email):
             raise AgentAPIError("请输入有效邮箱。", 400, "invalid_email")
         return email
-
-    @staticmethod
-    def username(value: str) -> str:
-        username = value.strip().lower() if isinstance(value, str) else ""
-        if not _USERNAME.fullmatch(username):
-            raise AgentAPIError("用户名需为 3～32 位英文字母、数字、下划线、点或连字符，且以字母或数字开头。", 400, "invalid_username")
-        return username
 
     @staticmethod
     def password(value: str) -> str:
@@ -277,10 +260,10 @@ class AuthService:
         self.revoke_all(account["uid"])
 
     def login(self, identifier: str, password: str, ip: str) -> tuple[str, Session]:
-        identifier = self.email(identifier) if isinstance(identifier, str) and "@" in identifier else self.username(identifier)
+        identifier = self.email(identifier)
         self._limit("login_identifier", identifier, 5, 15 * 60_000)
         self._limit("login_ip", ip, 1000, 15 * 60_000)
-        account = self._account_for_identifier(identifier)
+        account = self._account_for_email(identifier)
         valid = False
         if isinstance(password, str):
             try:

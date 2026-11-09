@@ -62,10 +62,7 @@ const server = createServer(async (request, response) => {
 		for await (const chunk of request) body += chunk;
 		const input = JSON.parse(body || '{}');
 		const selected = accounts.find(
-			(item) =>
-				item.username === input.identifier ||
-				item.email === input.identifier ||
-				item.email === input.email
+			(item) => item.email === input.identifier || item.email === input.email
 		);
 		if (!selected || input.password !== (passwords.get(selected.email) || 'fixture-password-123'))
 			return send(401, { error: { message: '测试账号或密码不正确。' } });

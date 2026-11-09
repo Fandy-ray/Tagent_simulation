@@ -259,6 +259,12 @@ def test_unverified_email_self_registration_without_smtp_and_cross_device_sync()
         assert first_login.json["user"]["email"] == "student.one@example.org"
         assert first_login.json["user"]["verified"] is False
         assert first_login.json["user"]["email_verification_required"] is False
+        assert first_device.post("/auth/login", json={
+            "identifier": "student.one", "password": "a sufficiently long password"
+        }).status_code == 409  # 已登录的浏览器不能切换账号
+        assert app.test_client().post("/auth/login", json={
+            "identifier": "student.one", "password": "a sufficiently long password"
+        }).status_code == 400
         second_login = second_device.post("/auth/login", json={
             "identifier": "student.one@example.org", "password": "a sufficiently long password"
         })
