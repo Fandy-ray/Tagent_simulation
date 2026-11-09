@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { register, registrationMethod, registrationOpen } from '$lib/apis/auth';
+	import { register, registrationOpen, emailVerificationRequired } from '$lib/apis/auth';
 	let identifier = $state('');
 	let name = $state('');
 	let password = $state('');
@@ -30,9 +30,9 @@
 		<a href={resolve('/login')} class="text-sm text-blue-300">← 返回登录</a>
 		<h1 class="mt-5 text-2xl font-semibold">注册学生账号</h1>
 		<p class="mt-2 text-sm text-slate-300">
-			{$registrationMethod === 'username'
-				? '自己设置用户名和密码，创建后即可登录。请记住用户名；忘记密码需联系管理员。'
-				: '提交后请打开邮箱中的验证链接。'}管理员账号单独创建。
+			{$emailVerificationRequired
+				? '提交后请打开邮箱中的验证链接。'
+				: '邮箱仅作为登录标识，不验证邮箱归属。创建后即可登录；忘记密码需联系管理员核验后重置。'}管理员账号单独创建。
 		</p>
 		<label for="name" class="mt-6 block text-sm">姓名或昵称</label>
 		<input
@@ -42,15 +42,12 @@
 			bind:value={name}
 			class="mt-2 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2.5"
 		/>
-		<label for="identifier" class="mt-5 block text-sm"
-			>{$registrationMethod === 'username' ? '用户名' : '邮箱'}</label
-		>
+		<label for="identifier" class="mt-5 block text-sm">邮箱</label>
 		<input
 			id="identifier"
-			type={$registrationMethod === 'username' ? 'text' : 'email'}
+			type="email"
 			autocomplete="username"
-			minlength={$registrationMethod === 'username' ? 3 : undefined}
-			maxlength={$registrationMethod === 'username' ? 32 : undefined}
+			maxlength="254"
 			required
 			bind:value={identifier}
 			class="mt-2 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2.5"

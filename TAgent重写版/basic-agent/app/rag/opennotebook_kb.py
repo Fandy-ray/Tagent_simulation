@@ -110,14 +110,20 @@ class OpenNotebookKnowledgeBase:
         raise OpenNotebookError("OpenNotebook 健康检查失败。")
 
     def retrieve(self, query: str, notebook_ids: list[str] | None = None):
+        if notebook_ids == []:
+            return "", []
         documents = self._search_documents(query, limit=4, notebook_ids=notebook_ids)
         context = "\n\n---\n\n".join(document.page_content for document in documents)
         return context, documents
 
     def search(self, query: str, *, k: int = 3, notebook_ids: list[str] | None = None) -> list[Document]:
+        if notebook_ids == []:
+            return []
         return self._search_documents(query, limit=k, notebook_ids=notebook_ids)
 
     def chunks(self, notebook_ids: list[str] | None = None) -> list[Document]:
+        if notebook_ids == []:
+            return []
         scoped = _normalize_ids(notebook_ids)
         if scoped:
             documents = self._list_documents(notebook_ids=scoped)
@@ -137,6 +143,8 @@ class OpenNotebookKnowledgeBase:
     def sample_exam_pieces(
         self, topic: str | None = None, notebook_ids: list[str] | None = None
     ) -> list[tuple[str, str]]:
+        if notebook_ids == []:
+            return []
         """出卷取材的片段和来源。笔记本里的都是学生自己的材料，来源一律记 opennotebook。"""
         if topic:
             documents = self._search_documents(topic, limit=EXAM_SAMPLE_K, notebook_ids=notebook_ids)

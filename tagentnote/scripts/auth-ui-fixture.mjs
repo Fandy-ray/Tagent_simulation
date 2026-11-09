@@ -51,7 +51,8 @@ const server = createServer(async (request, response) => {
 		return send(200, {
 			enabled: authEnabled,
 			registration_open: true,
-			registration_method: 'username',
+			registration_method: 'email',
+			email_verification_required: false,
 			password_reset_available: false
 		});
 	if (url.pathname === '/health') return send(200, { status: 'ok' });
@@ -66,10 +67,7 @@ const server = createServer(async (request, response) => {
 				item.email === input.identifier ||
 				item.email === input.email
 		);
-		if (
-			!selected ||
-			input.password !== (passwords.get(selected.username) || 'fixture-password-123')
-		)
+		if (!selected || input.password !== (passwords.get(selected.email) || 'fixture-password-123'))
 			return send(401, { error: { message: '测试账号或密码不正确。' } });
 		response.setHeader(
 			'set-cookie',
@@ -85,20 +83,21 @@ const server = createServer(async (request, response) => {
 		let body = '';
 		for await (const chunk of request) body += chunk;
 		const input = JSON.parse(body || '{}');
-		if (!/^[a-z0-9][a-z0-9_.-]{2,31}$/.test(input.username || ''))
-			return send(400, { error: { message: '用户名格式无效。' } });
-		if (accounts.some((item) => item.username === input.username))
-			return send(409, { error: { message: '该用户名已被使用。' } });
+		const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+			return send(400, { error: { message: '邮箱格式无效。' } });
+		if (accounts.some((item) => item.email === email))
+			return send(409, { error: { message: '该邮箱已被使用。' } });
 		accounts.push({
 			id: `fixture-new-${nextAccountId++}`,
-			username: input.username,
-			email: null,
+			email,
 			name: input.name || '',
 			role: 'student',
-			verified: true,
+			verified: false,
+			email_verification_required: false,
 			active: true
 		});
-		passwords.set(input.username, input.password);
+		passwords.set(email, input.password);
 		return send(201, { message: '账号已创建，请登录。' });
 	}
 	if (url.pathname === '/auth/password/forgot' && method === 'POST')

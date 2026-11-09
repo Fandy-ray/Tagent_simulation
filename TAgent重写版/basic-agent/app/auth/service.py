@@ -52,6 +52,7 @@ def public_account(row: dict[str, Any]) -> dict[str, Any]:
         "name": row.get("name", ""),
         "role": row["role"],
         "verified": bool(row.get("verified_at")),
+        "email_verification_required": row.get("email_verification_required", True),
         "active": bool(row.get("active", True)),
         "deletion_pending": bool(row.get("deletion_pending")),
     }
@@ -87,6 +88,13 @@ class AuthService:
     def _account_for_identifier(self, identifier: str):
         return (self._account_for_email(identifier) if "@" in identifier
                 else self._account_for_username(identifier))
+
+    @staticmethod
+    def login_ready(account: dict[str, Any]) -> bool:
+        return bool(account.get("active", True)) and (
+            account.get("email_verification_required") is False
+            or bool(account.get("verified_at"))
+        )
 
     def account(self, uid: str):
         return self.store.first("SELECT * FROM auth_accounts WHERE uid = $uid LIMIT 1", {"uid": uid})
@@ -145,22 +153,23 @@ class AuthService:
         if not self.registration_is_open():
             raise AgentAPIError("注册暂未开放。", 403, "registration_closed")
         if not self.mailer.can_send:
-            username = self.username(identifier)
+            email = self.email(identifier)
             password = self.password(password)
             name = name.strip()[:40] if isinstance(name, str) else ""
             self._limit("register_ip", ip, 20, 60 * 60_000)
             self._event("register_ip", ip)
-            if self._account_for_username(username):
-                raise AgentAPIError("该用户名已被使用。", 409, "username_taken")
+            if self._account_for_email(email):
+                raise AgentAPIError("该邮箱已被使用。", 409, "email_taken")
             try:
                 self.store.query("CREATE auth_accounts CONTENT $value", {"value": {
-                    "uid": str(uuid.uuid4()), "username": username, "name": name,
+                    "uid": str(uuid.uuid4()), "email": email, "name": name,
                     "password_hash": self._hash(password), "role": "student",
-                    "active": True, "verified_at": now_ms(), "created_at": now_ms(),
+                    "active": True, "verified_at": None,
+                    "email_verification_required": False, "created_at": now_ms(),
                 }})
             except Exception as exc:
-                if self._account_for_username(username):
-                    raise AgentAPIError("该用户名已被使用。", 409, "username_taken") from exc
+                if self._account_for_email(email):
+                    raise AgentAPIError("该邮箱已被使用。", 409, "email_taken") from exc
                 raise
             return
         email = self.email(identifier)
@@ -283,7 +292,7 @@ class AuthService:
             self._event("login_identifier", identifier)
             self._event("login_ip", ip)
             raise AgentAPIError(_GENERIC_LOGIN, 401, "invalid_credentials")
-        if not account.get("verified_at"):
+        if not self.login_ready(account):
             raise AgentAPIError("请先验证邮箱。", 403, "email_not_verified")
         token = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(24)
@@ -309,7 +318,7 @@ class AuthService:
         if not row:
             return None
         account = self.account(row["account_id"])
-        if not account or not account.get("active", True) or not account.get("verified_at"):
+        if not account or not self.login_ready(account):
             return None
         if row.get("auth_nonce", "") != account.get("auth_nonce", ""):
             return None

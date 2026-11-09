@@ -292,6 +292,37 @@ def test_composite_skips_local_when_notebook_selected():
     assert "本地教材" not in context
 
 
+def test_empty_notebook_scope_never_reads_the_shared_notebook_store():
+    from flask import Flask, g
+
+    from app.api.validators import optional_notebook_ids
+    from app.errors.api_errors import AgentAPIError
+
+    app = Flask(__name__)
+    app.config["AUTH_ENABLED"] = True
+    with app.test_request_context():
+        g.account = {"role": "student"}
+        assert optional_notebook_ids({}) == []
+        with pytest.raises(AgentAPIError) as denied:
+            optional_notebook_ids({"notebook_ids": ["notebook:someone-else"]})
+        assert denied.value.code == "notebook_scope_unavailable"
+
+    client = FakeClient({})
+    notebook = OpenNotebookKnowledgeBase(base_url="http://127.0.0.1:5055", client=client)
+    assert notebook.retrieve("私人问题", notebook_ids=[]) == ("", [])
+    assert notebook.search("私人问题", notebook_ids=[]) == []
+    assert notebook.chunks(notebook_ids=[]) == []
+    assert notebook.sample_exam_pieces("私人问题", notebook_ids=[]) == []
+    assert client.calls == []
+
+    composite = CompositeKnowledgeBase(
+        FakeSource("local", "公共教材"), FakeSource("notebook", "私人笔记")
+    )
+    context, _ = composite.retrieve("延迟", notebook_ids=[])
+    assert "公共教材" in context
+    assert "私人笔记" not in context
+
+
 def test_config_stays_local_without_notebook_url():
     env = {
         "OPEN_NOTEBOOK_API_URL": "",

@@ -212,7 +212,7 @@ def test_two_devices_and_shared_browser_account_boundary(system, monkeypatch):
     assert other_device.get("/me/data/qa_chats").status_code == 200
 
 
-def test_username_self_registration_without_smtp_and_cross_device_sync():
+def test_unverified_email_self_registration_without_smtp_and_cross_device_sync():
     store = IdentityStore("mem://", "tagent_test", "no_mail", "", "")
     try:
         for statement in SCHEMA:
@@ -228,21 +228,22 @@ def test_username_self_registration_without_smtp_and_cross_device_sync():
         second_device = app.test_client()
         status = first_device.get("/auth/status").json
         assert status["registration_open"] is True
-        assert status["registration_method"] == "username"
+        assert status["registration_method"] == "email"
+        assert status["email_verification_required"] is False
         assert status["password_reset_available"] is False
         service.set_registration_open(False)
         assert first_device.post("/auth/register", json={
-            "username": "closed.user", "password": "a sufficiently long password"
+            "email": "closed@example.org", "password": "a sufficiently long password"
         }).status_code == 403
         service.set_registration_open(True)
         assert first_device.post("/auth/register", json={
-            "username": "  Student.One  ", "password": "a sufficiently long password", "name": "One"
+            "email": "  Student.One@Example.Org  ", "password": "a sufficiently long password", "name": "One"
         }).status_code == 201
         assert first_device.post("/auth/register", json={
-            "username": "student.one", "password": "another long password", "name": "Copy"
+            "email": "student.one@example.org", "password": "another long password", "name": "Copy"
         }).status_code == 409
         assert first_device.post("/auth/register", json={
-            "username": "bad@name", "password": "a sufficiently long password"
+            "email": "bad@name", "password": "a sufficiently long password"
         }).status_code == 400
         assert first_device.post("/auth/password/forgot", json={
             "email": "nobody@example.org"
@@ -252,13 +253,14 @@ def test_username_self_registration_without_smtp_and_cross_device_sync():
             "token": "ignored", "password": "a sufficiently long password"
         }).status_code == 503
         first_login = first_device.post("/auth/login", json={
-            "identifier": "student.one", "password": "a sufficiently long password"
+            "identifier": "student.one@example.org", "password": "a sufficiently long password"
         })
         assert first_login.status_code == 200
-        assert first_login.json["user"]["username"] == "student.one"
-        assert first_login.json["user"]["email"] is None
+        assert first_login.json["user"]["email"] == "student.one@example.org"
+        assert first_login.json["user"]["verified"] is False
+        assert first_login.json["user"]["email_verification_required"] is False
         second_login = second_device.post("/auth/login", json={
-            "identifier": "student.one", "password": "a sufficiently long password"
+            "identifier": "student.one@example.org", "password": "a sufficiently long password"
         })
         assert second_login.status_code == 200
         assert first_device.put("/me/data/qa_chats", json={
@@ -269,10 +271,10 @@ def test_username_self_registration_without_smtp_and_cross_device_sync():
             "X-Tagent-CSRF": first_login.json["csrf"]
         }).status_code == 200
         assert first_device.post("/auth/register", json={
-            "username": "other.student", "password": "a sufficiently long password", "name": "Other"
+            "email": "other.student@example.org", "password": "a sufficiently long password", "name": "Other"
         }).status_code == 201
         assert first_device.post("/auth/login", json={
-            "identifier": "other.student", "password": "a sufficiently long password"
+            "identifier": "other.student@example.org", "password": "a sufficiently long password"
         }).status_code == 200
         assert first_device.get("/me/data/qa_chats").json["data"] is None
         store.query("CREATE auth_accounts CONTENT $value", {"value": {
@@ -291,16 +293,16 @@ def test_username_self_registration_without_smtp_and_cross_device_sync():
         assert created.status_code == 201
         course_id = created.json["course"]["id"]
         assert admin_device.post(f"/admin/courses/{course_id}/members", json={
-            "identifier": "student.one"
+            "identifier": "student.one@example.org"
         }, headers={"X-Tagent-CSRF": admin_csrf}).status_code == 200
         assert second_device.get("/me/courses").json["courses"][0]["id"] == course_id
-        reset_student(store, "student.one", "a new sufficiently long password")
+        reset_student(store, "student.one@example.org", "a new sufficiently long password")
         assert second_device.get("/me/data/qa_chats").status_code == 401
         assert second_device.post("/auth/login", json={
-            "identifier": "student.one", "password": "a sufficiently long password"
+            "identifier": "student.one@example.org", "password": "a sufficiently long password"
         }).status_code == 401
         assert second_device.post("/auth/login", json={
-            "identifier": "student.one", "password": "a new sufficiently long password"
+            "identifier": "student.one@example.org", "password": "a new sufficiently long password"
         }).status_code == 200
         assert second_device.get("/me/data/qa_chats").json["data"]["chats"][0]["id"] == "saved-on-first-device"
     finally:

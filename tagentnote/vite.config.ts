@@ -71,6 +71,7 @@ async function notebookCallerAllowed(
 		const path = new URL(request.url || '/', 'http://localhost').pathname.slice(
 			NOTEBOOK_PROXY_PREFIX.length
 		);
+		if (session.user?.role !== 'admin') return false;
 		if (request.method === 'GET' || request.method === 'HEAD') return true;
 		const origin = request.headers.origin;
 		const csrf = request.headers['x-tagent-csrf'];

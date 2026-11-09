@@ -1,6 +1,12 @@
 import { env } from '$env/dynamic/public';
 import { get } from 'svelte/store';
-import { authMode, availableCourses, currentCourseId, sessionHeaders } from '$lib/apis/auth';
+import {
+	authMode,
+	availableCourses,
+	currentAccount,
+	currentCourseId,
+	sessionHeaders
+} from '$lib/apis/auth';
 
 import { createTtlCache } from '$lib/data/ttlCache';
 import {
@@ -138,7 +144,14 @@ export type CreatedNote = {
 	content: string | null;
 };
 
+const assertNotebookAccess = () => {
+	if (get(authMode) === 'enabled' && get(currentAccount)?.role !== 'admin') {
+		throw new Error('个人笔记服务尚未启用。');
+	}
+};
+
 const fetchJson = async <T>(path: string, signal?: AbortSignal): Promise<T> => {
+	assertNotebookAccess();
 	const response = await fetch(`${getOpenNotebookApiUrl()}${path}`, { signal });
 
 	if (!response.ok) {
@@ -149,6 +162,7 @@ const fetchJson = async <T>(path: string, signal?: AbortSignal): Promise<T> => {
 };
 
 const postJson = async <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> => {
+	assertNotebookAccess();
 	const headers = sessionHeaders('POST');
 	headers.set('Content-Type', 'application/json');
 	const response = await fetch(`${getOpenNotebookApiUrl()}${path}`, {

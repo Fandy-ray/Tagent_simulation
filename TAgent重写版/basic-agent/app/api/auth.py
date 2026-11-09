@@ -22,7 +22,8 @@ def status():
     return jsonify({
         "enabled": enabled,
         "registration_open": _service().registration_is_open() if enabled else False,
-        "registration_method": ("email" if _service().mailer.can_send else "username") if enabled else "username",
+        "registration_method": "email",
+        "email_verification_required": bool(_service().mailer.can_send) if enabled else False,
         "password_reset_available": bool(_service().mailer.can_send) if enabled else False,
     })
 
@@ -56,7 +57,7 @@ def _ip():
 def register():
     data = _data()
     mail_enabled = _service().mailer.can_send
-    _service().register(data.get("email" if mail_enabled else "username"), data.get("password"), data.get("name", ""), _ip())
+    _service().register(data.get("email"), data.get("password"), data.get("name", ""), _ip())
     if not mail_enabled:
         return jsonify({"message": "账号已创建，请登录。"}), 201
     return jsonify({"message": "如该邮箱可以注册，验证邮件将很快送达。"}), 202

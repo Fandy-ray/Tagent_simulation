@@ -10,6 +10,7 @@ export type Account = {
 	name: string;
 	role: 'student' | 'admin';
 	verified: boolean;
+	email_verification_required?: boolean;
 	active: boolean;
 	deletion_pending?: boolean;
 };
@@ -28,7 +29,7 @@ export const currentAccount = writable<Account | null>(null);
 export const availableCourses = writable<Course[]>([]);
 export const currentCourseId = writable('general');
 export const registrationOpen = writable(false);
-export const registrationMethod = writable<'username' | 'email'>('username');
+export const emailVerificationRequired = writable(false);
 export const passwordResetAvailable = writable(false);
 export const authReady = writable(false);
 export const syncError = writable('');
@@ -447,11 +448,11 @@ export async function initializeAuth(): Promise<void> {
 			const status = await json<{
 				enabled: boolean;
 				registration_open: boolean;
-				registration_method: 'username' | 'email';
+				email_verification_required: boolean;
 				password_reset_available: boolean;
 			}>('/auth/status');
 			registrationOpen.set(status.registration_open);
-			registrationMethod.set(status.registration_method || 'username');
+			emailVerificationRequired.set(Boolean(status.email_verification_required));
 			passwordResetAvailable.set(Boolean(status.password_reset_available));
 			if (!status.enabled) {
 				authMode.set('disabled');
@@ -556,10 +557,7 @@ export async function chooseCourse(id: string): Promise<void> {
 }
 
 export const register = (identifier: string, password: string, name: string) =>
-	json<{ message: string }>(
-		'/auth/register',
-		body({ [get(registrationMethod)]: identifier, password, name })
-	);
+	json<{ message: string }>('/auth/register', body({ email: identifier, password, name }));
 export const verifyEmail = (token: string) =>
 	json<{ verified: boolean }>('/auth/verify-email', body({ token }));
 export const requestPasswordReset = (email: string) =>

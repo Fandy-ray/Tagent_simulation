@@ -6,7 +6,6 @@
 		authMode,
 		currentAccount,
 		login,
-		registrationMethod,
 		registrationOpen,
 		passwordResetAvailable
 	} from '$lib/apis/auth';
@@ -44,12 +43,10 @@
 		<a href={resolve('/welcome')} class="text-sm text-blue-300">← 返回首页</a>
 		<h1 class="mt-5 text-2xl font-semibold">登录 TAgent</h1>
 		<p class="mt-2 text-sm text-slate-300">用自己的账号保存课程学习记录，并在其他设备继续使用。</p>
-		<label class="mt-7 block text-sm" for="login-identifier"
-			>{$registrationMethod === 'username' ? '用户名（管理员可用邮箱）' : '邮箱'}</label
-		>
+		<label class="mt-7 block text-sm" for="login-identifier">邮箱</label>
 		<input
 			id="login-identifier"
-			type={$registrationMethod === 'username' ? 'text' : 'email'}
+			type="email"
 			autocomplete="username"
 			required
 			bind:value={identifier}

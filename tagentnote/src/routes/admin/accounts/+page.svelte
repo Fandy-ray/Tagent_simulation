@@ -100,7 +100,7 @@
 			<thead class="bg-gray-50 dark:bg-white/5"
 				><tr
 					><th class="p-3">姓名</th><th class="p-3">登录账号</th><th class="p-3">角色</th><th
-						class="p-3">可登录</th
+						class="p-3">邮箱验证</th
 					><th class="p-3">状态</th><th class="p-3">操作</th></tr
 				></thead
 			>
@@ -111,7 +111,13 @@
 							>{account.username || account.email}</td
 						>
 						<td class="p-3">{account.role === 'admin' ? '管理员' : '学生'}</td>
-						<td class="p-3">{account.verified ? '是' : '否'}</td>
+						<td class="p-3"
+							>{account.email_verification_required === false
+								? '未启用验证'
+								: account.verified
+									? '已验证'
+									: '未验证'}</td
+						>
 						<td class="p-3"
 							>{account.deletion_pending ? '待完成注销' : account.active ? '启用' : '停用'}</td
 						>

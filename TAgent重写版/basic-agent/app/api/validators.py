@@ -142,6 +142,11 @@ def optional_notebook_ids(data: dict[str, Any]) -> list[str] | None:
     from flask import current_app, g
 
     course = getattr(g, "course", None)
+    if current_app.config.get("AUTH_ENABLED") and getattr(g, "account", {}).get("role") == "student":
+        if data.get("notebook_ids"):
+            raise AgentAPIError("个人笔记权限尚未启用。", 403, "notebook_scope_unavailable")
+        # 空列表表示只使用本地公共知识来源，不能让 OpenNotebook 将空范围解释为全库。
+        return []
     if current_app.config.get("AUTH_ENABLED") and course:
         allowed = course.get("notebook_ids") or []
         if not allowed:

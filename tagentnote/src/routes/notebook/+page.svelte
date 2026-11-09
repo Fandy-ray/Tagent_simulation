@@ -4,7 +4,7 @@
 	import { page } from '$app/stores';
 	import { env } from '$env/dynamic/public';
 	import { onMount } from 'svelte';
-	import { authMode } from '$lib/apis/auth';
+	import { authMode, currentAccount } from '$lib/apis/auth';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 
 	import { listNotebookKnowledge } from '$lib/apis/opennotebook';
@@ -131,15 +131,19 @@
 		<div class="flex h-full items-center justify-center p-6 text-white">
 			<div class="max-w-md rounded-2xl border border-white/15 bg-gray-900 p-8 text-center">
 				<h1 class="text-2xl font-semibold">知识笔记本</h1>
-				<p class="mt-3 text-sm text-gray-300">
-					OpenNotebook 使用独立登录。点击后会在新标签页打开，TAgent 账号不会代替其登录。
-				</p>
-				<a
-					href={openNotebookUrl}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="mt-6 inline-block rounded-lg bg-cyan-600 px-4 py-2">打开 OpenNotebook</a
-				>
+				{#if $currentAccount?.role === 'admin'}
+					<p class="mt-3 text-sm text-gray-300">
+						旧笔记仅供管理员查看；OpenNotebook 使用独立登录。
+					</p>
+					<a
+						href={openNotebookUrl}
+						target="_blank"
+						rel="noopener noreferrer"
+						class="mt-6 inline-block rounded-lg bg-cyan-600 px-4 py-2">打开 OpenNotebook</a
+					>
+				{:else}
+					<p class="mt-3 text-sm text-gray-300">个人笔记服务尚未启用，请稍后再试。</p>
+				{/if}
 				<button
 					type="button"
 					onclick={returnToSource}

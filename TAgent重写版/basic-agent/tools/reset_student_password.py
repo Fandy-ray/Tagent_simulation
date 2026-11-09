@@ -11,11 +11,11 @@ from app.auth.service import AuthService
 from app.auth.store import IdentityStore
 
 
-def reset_student(store: IdentityStore, username: str, password: str) -> None:
-    username = AuthService.username(username)
+def reset_student(store: IdentityStore, email: str, password: str) -> None:
+    email = AuthService.email(email)
     password = AuthService.password(password)
-    account = store.first("SELECT * FROM auth_accounts WHERE username = $username LIMIT 1",
-                          {"username": username})
+    account = store.first("SELECT * FROM auth_accounts WHERE email = $email LIMIT 1",
+                          {"email": email})
     if not account or account.get("role") != "student" or not account.get("active", True):
         raise ValueError("找不到可重置的学生账号")
     service = AuthService(store, DisabledMailer(), "")
@@ -32,11 +32,11 @@ def main() -> None:
         os.environ["TAGENT_DB_USER"], os.environ["TAGENT_DB_PASSWORD"],
     )
     try:
-        username = AuthService.username(input("学生用户名: "))
+        email = AuthService.email(input("学生邮箱: "))
         password = AuthService.password(getpass.getpass("新密码（至少 12 字符）: "))
         if password != getpass.getpass("再次输入新密码: "):
             raise SystemExit("两次输入不一致，未重置。")
-        reset_student(store, username, password)
+        reset_student(store, email, password)
         print("密码已重置，原有登录会话已全部退出。")
     finally:
         store.close()
