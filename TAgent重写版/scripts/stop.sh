@@ -4,12 +4,11 @@
 # 读取 .run 目录下的 PID 文件，校验进程确实是 start.sh 启动的那一个后再结束。
 # 不会按端口结束未知程序。
 #
-# 停 basic-agent (5001)、tagentnote (5173)，以及 start.sh 拉起的
-# OpenNotebook 容器（compose stop，笔记数据保留）。
+# 停 basic-agent (5001)、tagentnote (5173)，以及 start.sh 拉起的笔记本页面 (8502)。
 #
 # 用法：
 #   ./scripts/stop.sh                  全停
-#   ./scripts/stop.sh --keep-notebook  只停前后端，OpenNotebook 容器继续跑
+#   ./scripts/stop.sh --keep-notebook  只停答疑和主前端，笔记本页面继续跑
 
 # ！！改本脚本前先看这条 ！！
 # macOS 自带的是 bash 3.2，在 UTF-8 locale（终端默认就是）下，紧跟在变量名后面
@@ -23,7 +22,7 @@ KEEP_NOTEBOOK=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -KeepNotebook|-keepnotebook|--keep-notebook) KEEP_NOTEBOOK=1 ;;
-        -h|-Help|--help) sed -n '2,13p' "$0"; exit 0 ;;
+        -h|-Help|--help) sed -n '2,12p' "$0"; exit 0 ;;
         *) printf '未知参数: %s\n' "$1" >&2; exit 1 ;;
     esac
     shift
@@ -33,7 +32,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 PACK_ROOT="$(dirname "$ROOT")"
 RUN_DIR="$ROOT/.run"
-NOTEBOOK_COMPOSE="$PACK_ROOT/opennotebook/docker-compose.yml"
 
 step() { printf '\n==> %s\n' "$1"; }
 ok()   { printf '    %s\n' "$1"; }
@@ -149,35 +147,13 @@ echo 'TAgent 停止脚本'
 
 step '停止服务'
 # 逐个停：任何一个失败都不能连累另一个，否则会留下半停状态
-if [ -f "$RUN_DIR/notebook-ui.pid" ]; then
+if [ "$KEEP_NOTEBOOK" = "1" ]; then
+    warn '按 --keep-notebook 跳过，笔记本页面继续运行。'
+elif [ -f "$RUN_DIR/notebook-ui.pid" ]; then
     stop_tracked '笔记本页面' "$RUN_DIR/notebook-ui.pid" "$PACK_ROOT"
 fi
 stop_tracked 'tagentnote'  "$RUN_DIR/frontend.pid" "$PACK_ROOT"
 stop_tracked 'basic-agent' "$RUN_DIR/agent.pid"    "$ROOT"
-
-step '停止旧的 OpenNotebook 容器（若还在）'
-COMPOSE_CMD=''
-if have docker && docker compose version >/dev/null 2>&1; then
-    COMPOSE_CMD='docker compose'
-elif have docker-compose; then
-    COMPOSE_CMD='docker-compose'
-fi
-
-if [ "$KEEP_NOTEBOOK" = "1" ]; then
-    warn '按 --keep-notebook 跳过，容器继续运行。'
-elif [ ! -f "$NOTEBOOK_COMPOSE" ]; then
-    warn '未找到 opennotebook/docker-compose.yml，跳过。'
-elif [ -z "$COMPOSE_CMD" ]; then
-    warn '没有可用的 docker compose 命令，跳过。'
-else
-    # 只 stop 不 down：down 会删掉容器，下次启动要重建。
-    # 数据本来就在 bind mount 上（notebook_data / surreal_data），两种方式都不会丢。
-    if $COMPOSE_CMD -f "$NOTEBOOK_COMPOSE" stop >/dev/null 2>&1; then
-        ok '已停止（笔记数据保留在 opennotebook/notebook_data）'
-    else
-        warn "$COMPOSE_CMD stop 失败（Docker 可能没在跑）。"
-    fi
-fi
 
 step '检查端口占用'
 for p in 5001 5173; do

@@ -5,12 +5,12 @@
 .DESCRIPTION
     按顺序拉起三个服务：
 
-        OpenNotebook 8502 页面 / 5055 接口   笔记本（Docker Compose）
-        basic-agent  127.0.0.1:5001          出题 / 判卷 / 检索
+        basic-agent  127.0.0.1:5001          出题 / 判卷 / 检索（笔记本接口也在这个进程，5055）
         tagentnote   127.0.0.1:5173          前端（先构建，再用 Vite preview 提供生产包）
+        笔记本页面    127.0.0.1:8502          opennotebook新版\frontend，等接口就绪后再拉
 
-    OpenNotebook 走 ..\opennotebook\docker-compose.yml，需要 Docker Desktop
-    在跑。起不来时会说明原因并继续启动其余两个服务 —— 此时答疑只用本地教材。
+    不再使用原来的 Docker OpenNotebook。笔记本接口起不来时继续启动其余服务，
+    此时答疑只用本地教材。
 
     脚本可重复执行；已有的 .env.runtime 里的密钥永远不会被改写。
 .PARAMETER Lan
@@ -18,10 +18,7 @@
 .PARAMETER SkipInstall
     跳过 uv sync 与 npm install（确认依赖已装好时可省几十秒）。
 .PARAMETER SkipNotebook
-    不启动 OpenNotebook（自己已经用别的方式起好了，或这次不需要笔记本）。
-.PARAMETER WithTts
-    连 aliyun-tts-bridge 一起启动（做播客用）。需要先在 opennotebook\.env
-    里填 DASHSCOPE_API_KEY，且会现场 docker build。
+    不拉笔记本管理页面（接口仍随 basic-agent 起来）。
 .PARAMETER Dev
     前端改用开发服务器（改代码时用）。默认先构建生产包再用 vite preview 提供：
     开发服务器把几百个源文件逐个现编现发，页面打开慢约 10 倍，第一次遇到新依赖还会整页刷新。
@@ -33,8 +30,6 @@
     官方源装得动就不会用到它。
 .PARAMETER AgentTimeout
     等待 basic-agent 健康的最长秒数，默认 900（首次要加载嵌入模型并建向量索引）。
-.PARAMETER NotebookTimeout
-    等待 OpenNotebook 接口就绪的最长秒数，默认 180。
 .EXAMPLE
     .\scripts\start.ps1
 .EXAMPLE
@@ -45,14 +40,12 @@ param(
     [switch]$Lan,
     [switch]$SkipInstall,
     [switch]$SkipNotebook,
-    [switch]$WithTts,
     [switch]$Prepare,
     [switch]$Dev,
     [string]$PypiMirror = 'https://mirrors.aliyun.com/pypi/simple/',
     # Windows 测试机首次启动全流程约 221 秒（2026-10-11，含建检索索引），慢的电脑更久。超时会关掉后端，
     # 而向量缓存要建完才保存，设短了慢电脑会一直起不来；后端一就绪就不再等，设长不影响平时启动。
-    [int]$AgentTimeout = 900,
-    [int]$NotebookTimeout = 180
+    [int]$AgentTimeout = 900
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,20 +55,17 @@ $ErrorActionPreference = 'Stop'
 # http://127.0.0.1:5001。改这里就必须同步改那边，否则前端所有请求 502。
 $AgentPort    = 5001
 $FrontendPort = 5173
-# OpenNotebook 的 REST 接口。8502 是 Streamlit 页面，拿它打 /api/* 只会拿到 HTML。
+# 笔记本接口，和 basic-agent 同一个进程。8502 是管理页面。
 $NotebookApi  = 'http://localhost:5055'
 
 $Root     = Split-Path -Parent $PSScriptRoot
-# 交接包根目录：TAgent重写版 的上一级。opennotebook / tagentnote 都挂在这一层。
+# 交接包根目录：TAgent重写版 的上一级。笔记本页面和 tagentnote 都挂在这一层。
 $PackRoot = Split-Path -Parent $Root
 $AgentDir = Join-Path $Root 'basic-agent'
 $EnvFile  = Join-Path $Root '.env.runtime'
 $RunDir   = Join-Path $Root '.run'
 $LogDir   = Join-Path $Root 'logs\runtime'
 $AgentPy  = Join-Path $AgentDir '.venv\Scripts\python.exe'
-
-$NotebookDir     = Join-Path $PackRoot 'opennotebook'
-$NotebookCompose = Join-Path $NotebookDir 'docker-compose.yml'
 
 function Write-Step($Message) { Write-Host "`n==> $Message" -ForegroundColor Cyan }
 function Write-Ok($Message)   { Write-Host "    $Message" -ForegroundColor Green }
@@ -300,8 +290,8 @@ if ($Prepare) {
 
 New-Item -ItemType Directory -Force -Path $RunDir, $LogDir | Out-Null
 
-# ------------------------------------------------- 1. OpenNotebook
-Write-Step 'OpenNotebook'
+# ------------------------------------------------- 1. 笔记本页面
+Write-Step '笔记本'
 
 function Test-NotebookApi {
     try {
@@ -312,32 +302,7 @@ function Test-NotebookApi {
     }
 }
 
-<#
-.SYNOPSIS
-    Docker 引擎是否可用。
-.DESCRIPTION
-    CLI 装了不代表引擎在跑 —— Docker Desktop 没启动、或 WSL2 组件没装时，
-    CLI 都还在，但每条真正要连引擎的命令都会失败。
-
-    注意别用 `docker info` 探测：Docker 29 即使连不上引擎，它照样打印客户端
-    信息并**退出码 0**。要用 `docker version --format {{.Server.Version}}`，
-    这条拿不到服务端就返回非 0。
-#>
-function Test-DockerEngine {
-    if (-not (Test-Cmd 'docker')) { return $false }
-    return ((Invoke-Native 'docker' @('version', '--format', '{{.Server.Version}}')) -eq 0)
-}
-
-function Write-DockerHelp {
-    Write-Warn2 'Docker 引擎不可用，OpenNotebook 起不来。常见原因与排查：'
-    Write-Warn2 '  1. Docker Desktop 没启动 —— 打开它，等鲸鱼图标变绿再重跑本脚本。'
-    Write-Warn2 '  2. 提示"未检测到虚拟化支持"：多数情况 BIOS 是好的，缺的是 Windows 组件。'
-    Write-Warn2 '     以管理员身份运行  wsl --install --no-distribution  然后重启电脑。'
-    Write-Warn2 '     自查：wsl --status；若报 WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED 即是此项。'
-    Write-Warn2 '  3. 确实没装 Docker Desktop：https://www.docker.com/products/docker-desktop/'
-}
-
-# -Prepare 只做准备，容器交给服务管理器（计划任务 / start.ps1）去拉
+# -Prepare 只做准备，页面交给服务管理器去拉
 if ($Prepare) { $SkipNotebook = $true }
 
 # 笔记本后端已经并进 basic-agent，接口仍是 5055，页面仍是 8502。不再拉 Docker。
@@ -358,7 +323,7 @@ if ($SkipNotebook) {
         Write-Warn2 "笔记本接口已在（$NotebookApi），但找不到管理页面，8502 起不来。"
     }
 } elseif (Test-Path (Join-Path $NotebookUiDir 'package.json')) {
-    Write-Ok '笔记本接口随 basic-agent 一起启动（不再使用 Docker）。页面在后端就绪后拉起。'
+    Write-Ok '笔记本接口随 basic-agent 一起启动。页面在后端就绪后拉起。'
     $startNotebookUi = $true
 } else {
     Write-Warn2 '未找到 opennotebook新版\frontend，跳过笔记本页面。'
@@ -554,8 +519,7 @@ $env:BASIC_AGENT_PORT = "$AgentPort"
 # 裸奔直连 huggingface.co 在国内基本必然超时，表现是答疑请求一直卡住不返回，
 # 日志里只有一句 unauthenticated requests 提示，完全看不出是被墙。
 # basic-agent\.env.example 里本来写了 HF_ENDPOINT，但这个脚本从不生成
-# basic-agent\.env（只生成 tagentnote\.env 和 opennotebook\.env），那行等于
-# 从没生效过 —— 所以直接放进进程环境。
+# basic-agent\.env，那行等于从没生效过 —— 所以直接放进进程环境。
 #
 # 两种情况不要碰：
 #   1. 用户自己设过 HF_ENDPOINT，尊重原值；

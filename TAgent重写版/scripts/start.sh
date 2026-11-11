@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # TAgent 一键启动脚本（macOS / Linux）—— 对应 Windows 的 scripts/start.ps1。
 #
-# 按顺序拉起三个服务：
+# 按顺序拉起：
 #
-#     OpenNotebook 8502 页面 / 5055 接口   笔记本（Docker Compose）
-#     basic-agent  127.0.0.1:5001          出题 / 判卷 / 检索
+#     basic-agent  127.0.0.1:5001          出题 / 判卷 / 检索（笔记本接口也在这个进程，5055）
 #     tagentnote   127.0.0.1:5173          前端（先构建，再用 Vite preview 提供生产包）
+#     笔记本页面    127.0.0.1:8502          opennotebook新版/frontend，等接口就绪后再拉
 #
-# OpenNotebook 走 ../opennotebook/docker-compose.yml，需要 Docker 引擎在跑
-# （Docker Desktop / OrbStack / colima 都行）。起不来时会说明原因并继续启动
-# 其余两个服务 —— 此时答疑只用本地教材 book1.md。
+# 不再使用原来的 Docker OpenNotebook。笔记本接口起不来时继续启动其余服务，
+# 此时答疑只用本地教材 book1.md。
 #
 # 脚本可重复执行；已有的 .env.runtime 里的密钥永远不会被改写。
 #
@@ -17,10 +16,8 @@
 #   ./scripts/start.sh                     仅本机访问
 #   ./scripts/start.sh --lan               前端监听 0.0.0.0，供局域网访问
 #   ./scripts/start.sh --skip-install      跳过 uv sync 与 npm install
-#   ./scripts/start.sh --skip-notebook     不启动 OpenNotebook
-#   ./scripts/start.sh --with-tts          连 aliyun-tts-bridge 一起起（需 DashScope Key）
+#   ./scripts/start.sh --skip-notebook     不拉笔记本管理页面（接口仍随 basic-agent 起来）
 #   ./scripts/start.sh --agent-timeout 1800 等 basic-agent 就绪的超时，默认 900
-#   ./scripts/start.sh --notebook-timeout 300 等 OpenNotebook 接口就绪的超时，默认 180
 #   ./scripts/start.sh --no-open           启动完成后不自动打开浏览器
 #   ./scripts/start.sh --dev               前端改用开发服务器（改代码时用；页面打开慢约 10 倍）
 #   ./scripts/start.sh --prepare           只装依赖、生成密钥，不启动任何服务
@@ -36,14 +33,13 @@
 #     echo "退出码 $code，继续"   ->   code?: unbound variable
 # 所以凡是「变量后面直接跟中文」的地方，一律写成 ${code}。英文标点、空格不受影响。
 
-# 不用 set -e：这个脚本要在多处"失败但继续"（比如 Docker 起不来仍然起前后端），
+# 不用 set -e：这个脚本要在多处"失败但继续"（比如笔记本页面起不来仍然起前后端），
 # 关键步骤一律显式 || die。
 set -uo pipefail
 
 LAN=0
 SKIP_INSTALL=0
 SKIP_NOTEBOOK=0
-WITH_TTS=0
 OPEN_BROWSER=1
 # 前端默认构建后用 vite preview 提供生产包；--dev 改回开发服务器
 FRONTEND_DEV=0
@@ -56,7 +52,6 @@ PYPI_MIRROR='https://mirrors.aliyun.com/pypi/simple/'
 # 超时会关掉后端，而向量缓存要建完才保存，下次又得从头建——超时设短了，慢电脑会一直起不来。
 # 后端一就绪就不再等，设长不影响平时启动。
 AGENT_TIMEOUT=900
-NOTEBOOK_TIMEOUT=180
 
 # 打印文件开头那段注释（第 2 行起，到第一个不以 # 开头的行为止）。原来写死 2–26 行，后加的 --pypi-mirror 说明没打出来。
 usage() { awk 'NR == 1 { next } /^#/ { print; next } { exit }' "$0"; }
@@ -66,13 +61,11 @@ while [ $# -gt 0 ]; do
         -Lan|-lan|--lan)                                  LAN=1 ;;
         -SkipInstall|-skipinstall|--skip-install)         SKIP_INSTALL=1 ;;
         -SkipNotebook|-skipnotebook|--skip-notebook)      SKIP_NOTEBOOK=1 ;;
-        -WithTts|-withtts|--with-tts)                     WITH_TTS=1 ;;
         --no-open)                                        OPEN_BROWSER=0 ;;
         -Dev|-dev|--dev)                                  FRONTEND_DEV=1 ;;
         -Prepare|--prepare)                               PREPARE_ONLY=1 ;;
         --pypi-mirror)                                    shift; PYPI_MIRROR="${1:-}" ;;
         -AgentTimeout|--agent-timeout)                    shift; AGENT_TIMEOUT="${1:-900}" ;;
-        -NotebookTimeout|--notebook-timeout)              shift; NOTEBOOK_TIMEOUT="${1:-180}" ;;
         -h|-Help|--help)                                  usage; exit 0 ;;
         *) printf '未知参数: %s\n（--help 看用法）\n' "$1" >&2; exit 1 ;;
     esac
@@ -86,21 +79,18 @@ done
 # 改这里就必须同步改 vite.config.ts，否则前端所有请求 502。
 AGENT_PORT=5001
 FRONTEND_PORT=5173
-# OpenNotebook 的 REST 接口。8502 是 Streamlit 页面，拿它打 /api/* 只会拿到 HTML。
+# 笔记本接口，和 basic-agent 同一个进程。8502 是管理页面。
 NOTEBOOK_API='http://localhost:5055'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
-# 交接包根目录：TAgent重写版 的上一级。opennotebook / tagentnote 都挂在这一层。
+# 交接包根目录：TAgent重写版 的上一级。笔记本页面和 tagentnote 都挂在这一层。
 PACK_ROOT="$(dirname "$ROOT")"
 AGENT_DIR="$ROOT/basic-agent"
 ENV_FILE="$ROOT/.env.runtime"
 RUN_DIR="$ROOT/.run"
 LOG_DIR="$ROOT/logs/runtime"
 AGENT_PY="$AGENT_DIR/.venv/bin/python"
-
-NOTEBOOK_DIR="$PACK_ROOT/opennotebook"
-NOTEBOOK_COMPOSE="$NOTEBOOK_DIR/docker-compose.yml"
 
 step() { printf '\n==> %s\n' "$1"; }
 ok()   { printf '    %s\n' "$1"; }
@@ -301,44 +291,15 @@ fi
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" || die "无法创建 $RUN_DIR / ${LOG_DIR}。"
 
-# ------------------------------------------------- 1. OpenNotebook
-step 'OpenNotebook'
+# ------------------------------------------------- 1. 笔记本页面
+step '笔记本'
 
 notebook_api_up() { curl -fsS -m 5 -o /dev/null "$NOTEBOOK_API/api/notebooks" 2>/dev/null; }
-
-# docker compose（v2 插件）还是 docker-compose（v1 独立命令）
-COMPOSE_CMD=''
-detect_compose() {
-    if have docker && docker compose version >/dev/null 2>&1; then
-        COMPOSE_CMD='docker compose'
-    elif have docker-compose; then
-        COMPOSE_CMD='docker-compose'
-    fi
-    [ -n "$COMPOSE_CMD" ]
-}
-
-# CLI 装了不代表引擎在跑。别用 `docker info` 探测：Docker 29 即使连不上引擎，
-# 照样打印客户端信息并**退出码 0**。要用 version --format {{.Server.Version}}，
-# 这条拿不到服务端就返回非 0。
-docker_engine_ok() {
-    have docker || return 1
-    docker version --format '{{.Server.Version}}' >/dev/null 2>&1
-}
-
-docker_help() {
-    warn 'Docker 引擎不可用，OpenNotebook 起不来。常见原因与排查：'
-    warn '  1. Docker Desktop 没启动 —— 打开它，等菜单栏的鲸鱼图标不再闪动再重跑本脚本。'
-    warn '     命令行确认：docker ps 能通就说明引擎是好的（面板有时只是没刷新）。'
-    warn '  2. 装了 OrbStack / colima 的话，先把它启动：colima start'
-    warn '  3. 确实没装：https://www.docker.com/products/docker-desktop/ （Apple 芯片选 Apple Silicon 版）'
-    warn '  4. 首次跑还要在 Docker Desktop -> Settings -> Resources -> File Sharing'
-    warn "     里确认交接包所在目录可被共享（当前：${PACK_ROOT}）。"
-}
 
 NOTEBOOK_UI_DIR="$PACK_ROOT/opennotebook新版/frontend"
 NOTEBOOK_UP=0
 START_NOTEBOOK_UI=0
-# 笔记本后端已经并进 basic-agent，接口仍是 5055，页面仍是 8502。不再拉 Docker。
+# 接口在 basic-agent 里。这里只决定要不要拉 8502 的管理页面。
 # --prepare 只做准备，页面交给服务管理器去拉。
 if [ "$PREPARE_ONLY" = "1" ]; then SKIP_NOTEBOOK=1; fi
 if [ "$SKIP_NOTEBOOK" = "1" ]; then
@@ -354,7 +315,7 @@ elif notebook_api_up; then
         warn "笔记本接口已在（${NOTEBOOK_API}），但找不到管理页面，8502 起不来。"
     fi
 elif [ -f "$NOTEBOOK_UI_DIR/package.json" ]; then
-    ok '笔记本接口随 basic-agent 一起启动（不再使用 Docker）。页面在后端就绪后拉起。'
+    ok '笔记本接口随 basic-agent 一起启动。页面在后端就绪后拉起。'
     START_NOTEBOOK_UI=1
 else
     warn '未找到 opennotebook新版/frontend，跳过笔记本页面。'
@@ -516,8 +477,7 @@ export BASIC_AGENT_PORT="$AGENT_PORT"
 # 裸奔直连 huggingface.co 在国内基本必然超时，表现是答疑请求一直卡住不返回，
 # 日志里只有一句 unauthenticated requests 提示，完全看不出是被墙。
 # basic-agent/.env.example 里本来写了 HF_ENDPOINT，但这个脚本从不生成
-# basic-agent/.env（只生成 tagentnote/.env 和 opennotebook/.env），那行等于
-# 从没生效过 —— 所以直接放进进程环境。
+# basic-agent/.env，那行等于从没生效过 —— 所以直接放进进程环境。
 #
 # 两种情况不要碰：
 #   1. 用户自己设过 HF_ENDPOINT，尊重原值；

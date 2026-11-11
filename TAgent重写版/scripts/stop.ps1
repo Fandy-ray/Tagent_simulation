@@ -6,10 +6,9 @@
     读取 .run 目录下的 PID 文件，校验进程确实是 start.bat 启动的那一个后再结束。
     不会按端口结束未知程序。
 
-    停 basic-agent (5001)、tagentnote (5173)，以及 start.bat 拉起的
-    OpenNotebook 容器（docker compose stop，数据保留）。
+    停 basic-agent (5001)、tagentnote (5173)，以及 start.bat 拉起的笔记本页面 (8502)。
 .PARAMETER KeepNotebook
-    只停 basic-agent 与前端，OpenNotebook 容器继续跑。
+    只停答疑和主前端，笔记本页面继续跑。
 #>
 [CmdletBinding()]
 param(
@@ -19,10 +18,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $Root     = Split-Path -Parent $PSScriptRoot
-$PackRoot = Split-Path -Parent $Root
 $RunDir   = Join-Path $Root '.run'
-
-$NotebookCompose = Join-Path $PackRoot 'opennotebook\docker-compose.yml'
 
 function Write-Step($Message) { Write-Host "`n==> $Message" -ForegroundColor Cyan }
 function Write-Ok($Message)   { Write-Host "    $Message" -ForegroundColor Green }
@@ -129,10 +125,14 @@ Write-Host 'TAgent 停止脚本' -ForegroundColor White
 
 Write-Step '停止服务'
 # 逐个 try：任何一个服务停止失败都不能连累另一个，否则会留下半停状态
-$notebookUiPid = Join-Path $RunDir 'notebook-ui.pid'
-if (Test-Path $notebookUiPid) {
-    try { Stop-Tracked '笔记本页面' $notebookUiPid } catch {
-        Write-Warn2 "笔记本页面 : 停止过程出错 - $($_.Exception.Message)"
+if ($KeepNotebook) {
+    Write-Warn2 '按 -KeepNotebook 跳过，笔记本页面继续运行。'
+} else {
+    $notebookUiPid = Join-Path $RunDir 'notebook-ui.pid'
+    if (Test-Path $notebookUiPid) {
+        try { Stop-Tracked '笔记本页面' $notebookUiPid } catch {
+            Write-Warn2 "笔记本页面 : 停止过程出错 - $($_.Exception.Message)"
+        }
     }
 }
 foreach ($svc in @(
@@ -143,24 +143,6 @@ foreach ($svc in @(
         Stop-Tracked $svc.Name (Join-Path $RunDir $svc.File)
     } catch {
         Write-Warn2 "$($svc.Name) : 停止过程出错 - $($_.Exception.Message)"
-    }
-}
-
-Write-Step '停止旧的 OpenNotebook 容器（若还在）'
-if ($KeepNotebook) {
-    Write-Warn2 '按 -KeepNotebook 跳过，容器继续运行。'
-} elseif (-not (Test-Path $NotebookCompose)) {
-    Write-Warn2 '未找到 opennotebook\docker-compose.yml，跳过。'
-} elseif (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Warn2 '没有 docker 命令，跳过。'
-} else {
-    # 只 stop 不 down：down 会删掉容器，下次启动要重建。
-    # 数据本来就在 bind mount 上（notebook_data / surreal_data），两种方式都不会丢。
-    $code = Invoke-Native 'docker' @('compose', '-f', $NotebookCompose, 'stop')
-    if ($code -eq 0) {
-        Write-Ok '已停止（笔记数据保留在 opennotebook\notebook_data）'
-    } else {
-        Write-Warn2 "docker compose stop 退出码 $code（Docker 可能没在跑）。"
     }
 }
 
