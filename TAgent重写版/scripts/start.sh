@@ -344,9 +344,15 @@ if [ "$PREPARE_ONLY" = "1" ]; then SKIP_NOTEBOOK=1; fi
 if [ "$SKIP_NOTEBOOK" = "1" ]; then
     warn '按 --skip-notebook 跳过。'
 elif notebook_api_up; then
-    warn "5055 上已经有笔记本接口。若那是旧的 Docker OpenNotebook，请先停掉再启动："
-    warn '    新版接口由 basic-agent 提供，旧容器占着端口的话页面还是旧版。'
     NOTEBOOK_UP=1
+    if port_busy 8502; then
+        ok "笔记本接口已在运行（${NOTEBOOK_API}），页面也在 8502。"
+    elif [ -f "$NOTEBOOK_UI_DIR/package.json" ]; then
+        ok '笔记本接口已在运行。管理页面还没开，后端就绪后拉起 8502。'
+        START_NOTEBOOK_UI=1
+    else
+        warn "笔记本接口已在（${NOTEBOOK_API}），但找不到管理页面，8502 起不来。"
+    fi
 elif [ -f "$NOTEBOOK_UI_DIR/package.json" ]; then
     ok '笔记本接口随 basic-agent 一起启动（不再使用 Docker）。页面在后端就绪后拉起。'
     START_NOTEBOOK_UI=1

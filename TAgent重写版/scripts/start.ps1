@@ -348,9 +348,15 @@ $notebookUp = $false
 if ($SkipNotebook) {
     Write-Warn2 '按 -SkipNotebook 跳过。'
 } elseif (Test-NotebookApi) {
-    Write-Warn2 '5055 上已经有笔记本接口。若那是旧的 Docker OpenNotebook，请先停掉再启动：'
-    Write-Warn2 '    新版接口由 basic-agent 提供，旧容器占着端口的话页面还是旧版。'
     $notebookUp = $true
+    if (Test-PortBusy 8502) {
+        Write-Ok "笔记本接口已在运行（$NotebookApi），页面也在 8502。"
+    } elseif (Test-Path (Join-Path $NotebookUiDir 'package.json')) {
+        Write-Ok '笔记本接口已在运行。管理页面还没开，后端就绪后拉起 8502。'
+        $startNotebookUi = $true
+    } else {
+        Write-Warn2 "笔记本接口已在（$NotebookApi），但找不到管理页面，8502 起不来。"
+    }
 } elseif (Test-Path (Join-Path $NotebookUiDir 'package.json')) {
     Write-Ok '笔记本接口随 basic-agent 一起启动（不再使用 Docker）。页面在后端就绪后拉起。'
     $startNotebookUi = $true
