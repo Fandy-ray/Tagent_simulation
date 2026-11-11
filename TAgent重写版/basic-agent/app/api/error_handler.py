@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import logging
 
-from flask import jsonify
+from flask import jsonify, request
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 from app.errors.api_errors import AgentAPIError
 from app.errors.exam_errors import ExamServiceError
+from app.errors.notebook import NotebookError
 from app.errors.registry_errors import RegistryLoadError
 
 
@@ -41,10 +42,24 @@ def register_error_handlers(app) -> None:
             AgentAPIError(error.message, error.status_code, error.code)
         )
 
+    @app.errorhandler(NotebookError)
+    def handle_notebook_error(error: NotebookError):
+        response = jsonify({"detail": error.detail})
+        response.status_code = error.status
+        if error.status == 401:
+            response.headers["WWW-Authenticate"] = "Bearer"
+        return response
+
     @app.errorhandler(RequestEntityTooLarge)
     def handle_request_too_large(_error):
+        limit = app.config.get("MAX_CONTENT_LENGTH") or 0
+        mib = max(1, limit // (1024 * 1024))
+        if request.path.startswith("/api/"):
+            response = jsonify({"detail": f"File too large（上限 {mib} MB）"})
+            response.status_code = 413
+            return response
         return error_response(
-            AgentAPIError("Request body exceeds the 1 MiB limit.", 413, "request_too_large")
+            AgentAPIError(f"Request body exceeds the {mib} MiB limit.", 413, "request_too_large")
         )
 
     @app.errorhandler(RegistryLoadError)
@@ -62,6 +77,14 @@ def register_error_handlers(app) -> None:
         （浏览器打开一个不存在的地址就是一条）。
         """
         status = error.code or 500
+        if request.path.startswith("/api/"):
+            names = {404: "Not Found", 405: "Method Not Allowed"}
+            response = jsonify({"detail": names.get(status, error.description or "Error")})
+            response.status_code = status
+            for key, value in error.get_headers():
+                if key.lower() == "allow":
+                    response.headers[key] = value
+            return response
         body, _ = error_response(
             AgentAPIError(
                 error.description or error.name,

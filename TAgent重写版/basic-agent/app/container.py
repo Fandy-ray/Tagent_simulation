@@ -38,6 +38,8 @@ class Services:
     client_factory: "object"
     # 学习记录库。None = 没开或没建成：记录直接跳过，答疑、批改照常。
     store: "object | None" = None
+    # 并进来的笔记本。None = 这次没建（单测，或建库失败）。
+    notebook: "object | None" = None
 
     def warm_up(self) -> None:
         """预热知识库。三个 service 共用它，热一次就够。
@@ -59,6 +61,8 @@ class Services:
         self.client_factory.close()
         if self.store is not None:
             self.store.close()
+        if self.notebook is not None:
+            self.notebook.close()
 
 
 def build_registry(settings: AgentConfig):
@@ -99,7 +103,12 @@ def build_learning_store(settings: AgentConfig):
 
 
 def build_services(
-    settings: AgentConfig, *, warm_up: bool = True, learning_store: bool = True
+    settings: AgentConfig,
+    *,
+    warm_up: bool = True,
+    learning_store: bool = True,
+    include_notebook: bool = False,
+    registry=None,
 ) -> Services:
     # 延迟 import：这几个模块会拉起 langchain/langgraph，
     # 只想构造 app 做单测时不该付这个代价。
@@ -112,8 +121,11 @@ def build_services(
     from app.service.exam_service import ExamService
     from app.service.quiz_service import QuizService
 
-    knowledge_base = build_knowledge_base(settings)
     client_factory = ModelClientFactory()
+    notebook, shared_embedder = _build_notebook(settings, client_factory, registry, include_notebook)
+    knowledge_base = build_knowledge_base(
+        settings, notebook_services=notebook, shared_embedder=shared_embedder
+    )
     # 闸门**必须**由出卷判卷与论文批改共用：它计的是"这台机器同时压着多少次
     # 上游调用"，各建一份就等于把容量悄悄翻倍，限流也就名存实亡了。
     llm_gate = LLMGate(
@@ -147,14 +159,19 @@ def build_services(
         knowledge_base=knowledge_base,
         client_factory=client_factory,
         store=store,
+        notebook=notebook,
     )
     if warm_up:
         services.warm_up()
     return services
 
 
-def build_knowledge_base(settings: AgentConfig):
-    """按配置装配知识来源。默认仍是本地教材，避免没开 OpenNotebook 时启动失败。"""
+def build_knowledge_base(settings: AgentConfig, notebook_services=None, shared_embedder=None):
+    """按配置装配知识来源。默认仍是本地教材，避免没开笔记本时启动失败。
+
+    笔记本已经在本进程里时，本机地址不再绕一圈 HTTP（打到自己的 5055）。
+    配了外部地址才继续用原来的 HTTP 适配器。
+    """
     from app.rag.knowledge_base import KnowledgeBase
 
     local = KnowledgeBase(
@@ -166,24 +183,77 @@ def build_knowledge_base(settings: AgentConfig):
         retrieval_cache_max_entries=settings.retrieval_cache_max_entries,
         retrieval_cache_ttl_seconds=settings.retrieval_cache_ttl_seconds,
     )
-    if settings.knowledge_source == "local":
+    if shared_embedder is not None:
+        shared_embedder.bind(local)
+    if settings.knowledge_source == "local" or (notebook_services is None and not settings.notebook_url):
         return local
 
-    from app.rag.opennotebook_kb import OpenNotebookKnowledgeBase
+    if notebook_services is not None and _notebook_url_is_local(settings.notebook_url):
+        from app.rag.opennotebook_kb import InProcessNotebookKnowledgeBase
 
-    # notebook_url 已由 config.normalize_notebook_url 换算成接口基址（默认 5055）。
-    log.info(
-        "知识来源 = %s，OpenNotebook 接口基址 = %s",
-        settings.knowledge_source,
-        settings.notebook_url,
-    )
-    notebook = OpenNotebookKnowledgeBase(
-        base_url=settings.notebook_url,
-        token=settings.notebook_token,
-    )
+        log.info("知识来源 = %s，笔记本在本进程内", settings.knowledge_source)
+        notebook = InProcessNotebookKnowledgeBase(notebook_services)
+    else:
+        from app.rag.opennotebook_kb import OpenNotebookKnowledgeBase
+
+        # notebook_url 已由 config.normalize_notebook_url 换算成接口基址（默认 5055）。
+        log.info(
+            "知识来源 = %s，OpenNotebook 接口基址 = %s",
+            settings.knowledge_source,
+            settings.notebook_url,
+        )
+        notebook = OpenNotebookKnowledgeBase(
+            base_url=settings.notebook_url,
+            token=settings.notebook_token,
+        )
     if settings.knowledge_source == "notebook":
         return notebook
 
     from app.rag.composite_kb import CompositeKnowledgeBase
 
     return CompositeKnowledgeBase(local, notebook)
+
+
+def _notebook_url_is_local(url: str) -> bool:
+    """空地址，或主机是本机：检索直接调进程里的笔记本，不走 HTTP。"""
+    if not (url or "").strip():
+        return True
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").strip("[]").lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _build_notebook(settings: AgentConfig, client_factory, registry, include: bool):
+    """把拆出来的笔记本装进本进程。失败只记日志，答疑照常。"""
+    if not include:
+        return None, None
+    from app.config import NotebookSettings, points_at_local_agent
+    from app.infra.notebook.llm_client import LLMClient, RegistryLLM
+    from app.rag.knowledge_base import EMBEDDING_MODEL
+    from app.rag.notebook.embedder import DisabledEmbedder, SharedEmbedder
+    from app.service.notebook.assembly import build_services as build_notebook_services
+
+    nb_settings = NotebookSettings.from_env()
+    shared = None
+    if nb_settings.embedding_mode == "off":
+        embedder = DisabledEmbedder()
+    else:
+        embedder = SharedEmbedder(nb_settings.embedding_model or EMBEDDING_MODEL)
+        shared = embedder
+    if registry is not None and points_at_local_agent(nb_settings.llm_base_url, settings.port):
+        llm = RegistryLLM(registry, client_factory, model=nb_settings.llm_model)
+    else:
+        llm = LLMClient(
+            nb_settings.llm_base_url,
+            api_key=nb_settings.llm_api_key,
+            model=nb_settings.llm_model,
+            timeout=nb_settings.llm_timeout,
+        )
+    try:
+        notebook = build_notebook_services(nb_settings, embedder=embedder, llm=llm, warm_up=False)
+    except Exception as exc:
+        log.error("笔记本服务没建起来，这次只提供答疑（笔记本接口不可用）：%s", exc)
+        return None, None
+    log.info("笔记本服务已并进本进程，数据目录 %s", nb_settings.data_dir)
+    return notebook, shared

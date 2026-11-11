@@ -465,3 +465,111 @@ LEARNING_BUSY_TIMEOUT_MS = 2000
 # 备份线程多久看一次「距上次备份满一天没有」
 LEARNING_BACKUP_CHECK_SECONDS = 3600
 LEARNING_BACKUP_EVERY_SECONDS = 86_400
+
+
+def running_under_pytest() -> bool:
+    """pytest 跑到某条测试时会设置这个变量。用来避免单测去打开用户的笔记本库。"""
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
+def points_at_local_agent(url: str, port: int) -> bool:
+    """模型地址是不是打回本进程的 basic-agent。是的话改走进程内调用。"""
+    parts = urlsplit(url or "")
+    host = (parts.hostname or "").strip("[]").lower()
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        return False
+    seen = parts.port or (443 if parts.scheme == "https" else 80)
+    return seen == port
+
+
+def _notebook_data_dir() -> Path:
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "OpenNotebookLite"
+    if sys.platform.startswith("win"):
+        return Path(os.environ.get("APPDATA", home)) / "OpenNotebookLite"
+    return Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share")) / "opennotebook-lite"
+
+
+def _notebook_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _notebook_int(name: str, default: int, *, low: int, high: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        value = default
+    return max(low, min(high, value))
+
+
+def _notebook_float(name: str, default: float, *, low: float, high: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        value = default
+    return max(low, min(high, value))
+
+
+@dataclass(frozen=True)
+class NotebookSettings:
+    """笔记本服务的配置。环境变量仍是 ON_ 开头，口令也认 OPEN_NOTEBOOK_PASSWORD。"""
+
+    host: str
+    port: int
+    threads: int
+    data_dir: Path
+    password: str
+    cors_origins: tuple[str, ...]
+    max_upload_mb: int
+    llm_base_url: str
+    llm_api_key: str
+    llm_model: str
+    llm_timeout: float
+    embedding_mode: str
+    embedding_model: str
+    allow_private_urls: bool
+    job_workers: int
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "notebook.sqlite3"
+
+    @property
+    def upload_dir(self) -> Path:
+        return self.data_dir / "uploads"
+
+    @classmethod
+    def from_env(cls) -> "NotebookSettings":
+        data_dir = os.environ.get("ON_DATA_DIR", "").strip()
+        origins = os.environ.get("ON_CORS_ORIGINS", "*").strip() or "*"
+        mode = os.environ.get("ON_EMBEDDING", "local").strip().lower()
+        return cls(
+            host=os.environ.get("ON_HOST", "127.0.0.1").strip() or "127.0.0.1",
+            port=_notebook_int("ON_PORT", 5055, low=1, high=65535),
+            threads=_notebook_int("ON_THREADS", 8, low=2, high=64),
+            data_dir=Path(data_dir).expanduser() if data_dir else _notebook_data_dir(),
+            password=(
+                os.environ.get("ON_PASSWORD") or os.environ.get("OPEN_NOTEBOOK_PASSWORD") or ""
+            ).strip(),
+            cors_origins=tuple(item.strip() for item in origins.split(",") if item.strip()),
+            max_upload_mb=_notebook_int("ON_MAX_UPLOAD_MB", 100, low=1, high=2048),
+            llm_base_url=(
+                os.environ.get("ON_LLM_BASE_URL", "http://127.0.0.1:5001/v1/raw").strip().rstrip("/")
+            ),
+            llm_api_key=os.environ.get("ON_LLM_API_KEY", "").strip(),
+            llm_model=os.environ.get("ON_LLM_MODEL", "").strip(),
+            llm_timeout=_notebook_float("ON_LLM_TIMEOUT", 180.0, low=5.0, high=1800.0),
+            embedding_mode=mode if mode in {"local", "off"} else "local",
+            embedding_model=(
+                os.environ.get("ON_EMBEDDING_MODEL", "shibing624/text2vec-base-chinese").strip()
+                or "shibing624/text2vec-base-chinese"
+            ),
+            allow_private_urls=_notebook_flag("ON_ALLOW_PRIVATE_URLS", False),
+            job_workers=_notebook_int("ON_JOB_WORKERS", 2, low=1, high=8),
+        )

@@ -149,10 +149,13 @@ echo 'TAgent 停止脚本'
 
 step '停止服务'
 # 逐个停：任何一个失败都不能连累另一个，否则会留下半停状态
+if [ -f "$RUN_DIR/notebook-ui.pid" ]; then
+    stop_tracked '笔记本页面' "$RUN_DIR/notebook-ui.pid" "$PACK_ROOT"
+fi
 stop_tracked 'tagentnote'  "$RUN_DIR/frontend.pid" "$PACK_ROOT"
 stop_tracked 'basic-agent' "$RUN_DIR/agent.pid"    "$ROOT"
 
-step '停止 OpenNotebook 容器'
+step '停止旧的 OpenNotebook 容器（若还在）'
 COMPOSE_CMD=''
 if have docker && docker compose version >/dev/null 2>&1; then
     COMPOSE_CMD='docker compose'

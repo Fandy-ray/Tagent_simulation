@@ -335,79 +335,26 @@ docker_help() {
     warn "     里确认交接包所在目录可被共享（当前：${PACK_ROOT}）。"
 }
 
+NOTEBOOK_UI_DIR="$PACK_ROOT/opennotebook新版/frontend"
 NOTEBOOK_UP=0
-# --prepare 只做准备，容器交给服务管理器去拉
+START_NOTEBOOK_UI=0
+# 笔记本后端已经并进 basic-agent，接口仍是 5055，页面仍是 8502。不再拉 Docker。
+# --prepare 只做准备，页面交给服务管理器去拉。
 if [ "$PREPARE_ONLY" = "1" ]; then SKIP_NOTEBOOK=1; fi
-if notebook_api_up; then
-    NOTEBOOK_UP=1
-    ok "已在运行（${NOTEBOOK_API}）"
-elif [ "$SKIP_NOTEBOOK" = "1" ]; then
+if [ "$SKIP_NOTEBOOK" = "1" ]; then
     warn '按 --skip-notebook 跳过。'
-elif [ ! -f "$NOTEBOOK_COMPOSE" ]; then
-    warn "未找到 ${NOTEBOOK_COMPOSE}，跳过。请自行启动 OpenNotebook（页面 8502 / 接口 5055）。"
-elif ! docker_engine_ok; then
-    docker_help
-elif ! detect_compose; then
-    warn '有 docker 但没有 compose 子命令（也没有 docker-compose）。请升级 Docker Desktop。'
+elif notebook_api_up; then
+    warn "5055 上已经有笔记本接口。若那是旧的 Docker OpenNotebook，请先停掉再启动："
+    warn '    新版接口由 basic-agent 提供，旧容器占着端口的话页面还是旧版。'
+    NOTEBOOK_UP=1
+elif [ -f "$NOTEBOOK_UI_DIR/package.json" ]; then
+    ok '笔记本接口随 basic-agent 一起启动（不再使用 Docker）。页面在后端就绪后拉起。'
+    START_NOTEBOOK_UI=1
 else
-    # 加密密钥：compose 里读 ${OPEN_NOTEBOOK_ENCRYPTION_KEY}，
-    # 上游默认值是 change-me-to-a-secret-string，不能就这么用。
-    NOTEBOOK_ENV="$NOTEBOOK_DIR/.env"
-    if ! get_env_secret "$NOTEBOOK_ENV" 'OPEN_NOTEBOOK_ENCRYPTION_KEY' >/dev/null; then
-        UPDATES_FILE="$(mktemp)"
-        queue_update 'OPEN_NOTEBOOK_ENCRYPTION_KEY' "$(openssl rand -hex 32)"
-        apply_env_updates "$NOTEBOOK_ENV"
-        rm -f "$UPDATES_FILE"
-        chmod 600 "$NOTEBOOK_ENV" 2>/dev/null || true
-        ok '已生成 opennotebook/.env 里的加密密钥'
-    fi
-
-    # 默认不带 aliyun-tts-bridge：它要阿里云 DashScope Key（交接包里没有），
-    # 而且要现场 docker build，白等一轮。需要播客再加 --with-tts。
-    if [ "$WITH_TTS" = "1" ]; then
-        COMPOSE_SERVICES='--build'
-    else
-        COMPOSE_SERVICES='surrealdb open_notebook'
-    fi
-
-    warn '首次启动要从 Docker Hub 拉镜像（GB 级），可能要几分钟到十几分钟。'
-    warn '拉取失败请先配镜像加速，见 opennotebook/readme.md 第三步。'
-    ( cd "$NOTEBOOK_DIR" && $COMPOSE_CMD -f "$NOTEBOOK_COMPOSE" up -d $COMPOSE_SERVICES )
-    compose_code=$?
-
-    if [ "$compose_code" -ne 0 ]; then
-        warn "$COMPOSE_CMD 退出码 ${compose_code}，OpenNotebook 没能起来。"
-        if docker_engine_ok; then
-            # 引擎是通的，那就不是"Docker 没起来"，而是拉镜像失败 —— 国内直连
-            # Docker Hub 经常超时（context deadline exceeded / failed to resolve
-            # reference）。两种情况的处置办法完全不同，别把人往错误的方向指。
-            warn 'Docker 引擎本身是通的，是拉镜像那一步失败了。国内直连 Docker Hub 经常超时。'
-            warn '配一个镜像加速再重跑：Docker Desktop -> Settings -> Docker Engine，'
-            warn '在 JSON 里加 "registry-mirrors"（推荐填自己的阿里云/华为云专属地址），'
-            warn '点 Apply & restart 后再跑一次本脚本。细节见 opennotebook/readme.md 第三步。'
-            warn '另外 docker-compose.yml 里写了 pull_policy: always —— 镜像已经在本地也会'
-            warn '每次重新拉一遍；实在拉不动可以把那两行注释掉，用本地镜像起。'
-            warn '只想先把课程用起来：加 --skip-notebook 跳过笔记本，答疑走本地教材。'
-        else
-            docker_help
-        fi
-    else
-        warn "等待 OpenNotebook 接口就绪（最长 $NOTEBOOK_TIMEOUT 秒）..."
-        waited=0
-        while [ "$waited" -lt "$NOTEBOOK_TIMEOUT" ]; do
-            if notebook_api_up; then NOTEBOOK_UP=1; break; fi
-            sleep 3
-            waited=$((waited + 3))
-        done
-        if [ "$NOTEBOOK_UP" = "1" ]; then
-            ok "已就绪（页面 http://localhost:8502 / 接口 ${NOTEBOOK_API}）"
-        else
-            warn "$NOTEBOOK_TIMEOUT 秒内接口仍不可达。看日志：$COMPOSE_CMD -f \"$NOTEBOOK_COMPOSE\" logs open_notebook"
-        fi
-    fi
+    warn '未找到 opennotebook新版/frontend，跳过笔记本页面。'
 fi
 
-if [ "$NOTEBOOK_UP" != "1" ]; then
+if [ "$NOTEBOOK_UP" != "1" ] && [ "$START_NOTEBOOK_UI" != "1" ]; then
     warn '继续启动其余服务。但答疑与出题只会检索本地教材 book1.md，笔记本里的内容一条都取不到。'
 fi
 
@@ -734,6 +681,21 @@ case $? in
         ;;
 esac
 
+if [ "$START_NOTEBOOK_UI" = "1" ]; then
+    step '等待笔记本接口'
+    waited=0
+    while [ "$waited" -lt 30 ]; do
+        if notebook_api_up; then NOTEBOOK_UP=1; break; fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if [ "$NOTEBOOK_UP" = "1" ]; then
+        ok "接口已就绪（${NOTEBOOK_API}）"
+    else
+        warn '5055 没有起来。看 basic-agent 日志。答疑仍可用本地教材。'
+    fi
+fi
+
 # 「怎么跑.txt」让人手动开 /knowledge 看这一项，这里直接替他看了。
 step '检查知识来源'
 # 这个接口已经改成不阻塞（探活挪到后台，见 app/infra/background_probe.py），
@@ -811,6 +773,48 @@ if [ "$FRONT_RC" -ne 0 ]; then
     die "前端在 120 秒内未就绪（basic-agent 也已一并停止）。日志：$FRONT_ERR"
 fi
 ok "已就绪 (PID $FRONT_PID)"
+
+start_notebook_ui() {
+    [ "$START_NOTEBOOK_UI" = "1" ] && [ "$NOTEBOOK_UP" = "1" ] || return 0
+    step '启动笔记本页面 (127.0.0.1:8502)'
+    if port_busy 8502; then
+        warn '8502 已被占用，跳过笔记本页面。接口仍在 5055。'
+        return 0
+    fi
+    standalone="$NOTEBOOK_UI_DIR/.next/standalone/server.js"
+    if [ ! -d "$NOTEBOOK_UI_DIR/node_modules" ]; then
+        warn '安装笔记本页面依赖...'
+        if ! ( cd "$NOTEBOOK_UI_DIR" && npm install --registry=https://registry.npmmirror.com --no-audit --no-fund ); then
+            warn 'npmmirror 装失败，退回官方源再试一次...'
+            ( cd "$NOTEBOOK_UI_DIR" && npm install --no-audit --no-fund ) \
+                || { warn '笔记本页面依赖没装上，跳过页面。接口仍在 5055。'; return 0; }
+        fi
+    fi
+    if [ ! -f "$standalone" ]; then
+        warn '还没有笔记本页面的构建产物，开始构建（首次较慢，要下载字体）...'
+        if ! ( cd "$NOTEBOOK_UI_DIR" && npm run build >"$LOG_DIR/notebook-ui.build.log" 2>&1 ); then
+            show_log_tail "$LOG_DIR/notebook-ui.build.log"
+            warn "笔记本页面构建失败，接口仍在 5055。日志：$LOG_DIR/notebook-ui.build.log"
+            return 0
+        fi
+        ok '构建完成'
+    fi
+    cd "$NOTEBOOK_UI_DIR" || return 0
+    PORT=8502 API_URL='http://127.0.0.1:5055' INTERNAL_API_URL='http://127.0.0.1:5055' \
+        nohup node "$NOTEBOOK_UI_DIR/start-server.js" \
+        >"$LOG_DIR/notebook-ui.out.log" 2>"$LOG_DIR/notebook-ui.err.log" &
+    nb_pid=$!
+    disown %+ 2>/dev/null || disown 2>/dev/null || true
+    cd "$ROOT" || true
+    write_pid_file "$nb_pid" "$RUN_DIR/notebook-ui.pid"
+    if wait_health 'http://127.0.0.1:8502/' 90 "$nb_pid"; then
+        ok "笔记本页面已就绪 (PID $nb_pid)"
+    else
+        show_log_tail "$LOG_DIR/notebook-ui.err.log"
+        warn "笔记本页面没起来。接口仍在 ${NOTEBOOK_API}。日志：$LOG_DIR/notebook-ui.err.log"
+    fi
+}
+start_notebook_ui
 
 # ------------------------------------------------- 完成
 printf '\n启动完成。\n'

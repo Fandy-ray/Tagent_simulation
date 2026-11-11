@@ -1,0 +1,19 @@
+export interface Model {
+  id: string
+  name: string
+  provider: string
+  type: 'language' | 'embedding' | 'text_to_speech' | 'speech_to_text'
+  credential?: string | null
+  created: string
+  updated: string
+}
+
+export interface ModelDefaults {
+  default_chat_model?: string | null
+  default_transformation_model?: string | null
+  large_context_model?: string | null
+  default_text_to_speech_model?: string | null
+  default_speech_to_text_model?: string | null
+  default_embedding_model?: string | null
+  default_tools_model?: string | null
+}

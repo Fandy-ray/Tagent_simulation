@@ -7,15 +7,17 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import random
 import threading
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from langchain_core.documents import Document
 
 from app.config import EXAM_CONTEXT_CHAR_LIMIT, EXAM_SAMPLE_K
+from app.errors.notebook import NotebookError
 from app.rag.knowledge_base import select_quiz_documents
 
 
@@ -339,6 +341,82 @@ class OpenNotebookKnowledgeBase:
         if ident.startswith("source:"):
             return _document_from_hit(self._json("GET", f"/api/sources/{ident}"), fallback_title=fallback_title)
         return document
+
+
+class _PayloadResponse:
+    def __init__(self, status_code: int, payload: Any):
+        self.status_code = status_code
+        self._payload = payload
+        raw = json.dumps(payload, ensure_ascii=False) if payload is not None else ""
+        self.content = raw.encode()
+        self.text = raw
+        self.headers = {"content-type": "application/json"}
+        self.reason_phrase = "error" if status_code >= 400 else "OK"
+
+    def json(self) -> Any:
+        return self._payload
+
+
+class InProcessNotebookKnowledgeBase(OpenNotebookKnowledgeBase):
+    """笔记本就在本进程里：检索不再 HTTP 打 5055。对外方法和 HTTP 版一样。"""
+
+    def __init__(self, notebook):
+        super().__init__(base_url="http://127.0.0.1")
+        self._owns_client = False
+        self._nb = notebook
+
+    def describe(self) -> dict[str, Any]:
+        return {"kind": "notebook", "url": "in-process"}
+
+    def admin_snapshot(self) -> dict[str, Any]:
+        return {**self.describe(), "timeout_seconds": 0, "auth": bool(self._nb.settings.password)}
+
+    def _request(self, method: str, path: str, **kwargs) -> _PayloadResponse:
+        try:
+            status, payload = self._dispatch(method, path, kwargs.get("json"))
+        except NotebookError as exc:
+            status, payload = exc.status, {"detail": exc.detail}
+        except Exception as exc:
+            raise OpenNotebookError(f"笔记本服务出错：{exc}") from exc
+        return _PayloadResponse(status, payload)
+
+    def _dispatch(self, method: str, path: str, body: dict | None) -> tuple[int, Any]:
+        parsed = urlsplit(path)
+        query = {key: values[-1] for key, values in parse_qs(parsed.query).items()}
+        route = parsed.path.rstrip("/") or "/"
+        if method == "GET" and route == "/api/notebooks":
+            return 200, self._nb.notebooks.list(archived=None, order_by="updated desc")
+        if method == "GET" and route == "/api/notes":
+            return 200, self._nb.notes.list(query.get("notebook_id") or None)
+        if method == "GET" and route == "/api/sources":
+            return 200, self._nb.sources.list(
+                notebook_id=query.get("notebook_id") or None,
+                limit=int(query.get("limit") or 100),
+                offset=0,
+                sort_by="updated",
+                sort_order="desc",
+            )
+        if method == "GET" and route.startswith("/api/notes/"):
+            return 200, self._nb.notes.get(route[len("/api/notes/"):])
+        if method == "GET" and route.startswith("/api/sources/"):
+            ident = route[len("/api/sources/"):]
+            if "/" in ident:
+                return 404, {"detail": "Not Found"}
+            return 200, self._nb.sources.get(ident)
+        if method == "POST" and route == "/api/search":
+            payload = body or {}
+            return 200, self._nb.search.search(
+                query=payload.get("query") or "",
+                kind=payload.get("type") or "text",
+                limit=int(payload.get("limit") or 10),
+                sources=bool(payload.get("search_sources", True)),
+                notes=bool(payload.get("search_notes", True)),
+                minimum_score=float(payload.get("minimum_score") or 0),
+                raw_scope=payload.get("notebook_ids"),
+            )
+        if method == "GET" and route in {"/health", "/api/health", "/api/config"}:
+            return 200, {"status": "healthy"}
+        return 404, {"detail": "Not Found"}
 
 
 def _as_list(payload: Any) -> list[Any]:

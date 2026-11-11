@@ -340,61 +340,25 @@ function Write-DockerHelp {
 # -Prepare 只做准备，容器交给服务管理器（计划任务 / start.ps1）去拉
 if ($Prepare) { $SkipNotebook = $true }
 
-$notebookUp = Test-NotebookApi
+# 笔记本后端已经并进 basic-agent，接口仍是 5055，页面仍是 8502。不再拉 Docker。
+$NotebookUiDir = Join-Path $PackRoot 'opennotebook新版\frontend'
+$startNotebookUi = $false
+$notebookUp = $false
 
-if ($notebookUp) {
-    Write-Ok "已在运行（$NotebookApi）"
-} elseif ($SkipNotebook) {
+if ($SkipNotebook) {
     Write-Warn2 '按 -SkipNotebook 跳过。'
-} elseif (-not (Test-Path $NotebookCompose)) {
-    Write-Warn2 "未找到 $NotebookCompose，跳过。请自行启动 OpenNotebook（页面 8502 / 接口 5055）。"
-} elseif (-not (Test-DockerEngine)) {
-    Write-DockerHelp
+} elseif (Test-NotebookApi) {
+    Write-Warn2 '5055 上已经有笔记本接口。若那是旧的 Docker OpenNotebook，请先停掉再启动：'
+    Write-Warn2 '    新版接口由 basic-agent 提供，旧容器占着端口的话页面还是旧版。'
+    $notebookUp = $true
+} elseif (Test-Path (Join-Path $NotebookUiDir 'package.json')) {
+    Write-Ok '笔记本接口随 basic-agent 一起启动（不再使用 Docker）。页面在后端就绪后拉起。'
+    $startNotebookUi = $true
 } else {
-    # 加密密钥：compose 里读 ${OPEN_NOTEBOOK_ENCRYPTION_KEY}，
-    # 上游默认值是 change-me-to-a-secret-string，不能就这么用。
-    $notebookEnv = Join-Path $NotebookDir '.env'
-    if (-not (Get-EnvSecret $notebookEnv 'OPEN_NOTEBOOK_ENCRYPTION_KEY')) {
-        Update-EnvFile $notebookEnv @{ 'OPEN_NOTEBOOK_ENCRYPTION_KEY' = (New-HexToken 32) }
-        Write-Ok '已生成 opennotebook\.env 里的加密密钥'
-    }
-
-    # 默认不带 aliyun-tts-bridge：它要阿里云 DashScope Key（交接包里没有），
-    # 而且要现场 docker build，白等一轮。需要播客再加 -WithTts。
-    $composeArgs = @('compose', '-f', $NotebookCompose, 'up', '-d')
-    if ($WithTts) {
-        $composeArgs += @('--build')
-    } else {
-        $composeArgs += @('surrealdb', 'open_notebook')
-    }
-
-    Write-Warn2 '首次启动要从 Docker Hub 拉镜像（GB 级），可能要几分钟到十几分钟。'
-    Write-Warn2 '拉取失败请先配镜像加速，见 opennotebook\readme.md 第三步。'
-    Push-Location $NotebookDir
-    try {
-        & docker @composeArgs
-        $composeCode = $LASTEXITCODE
-    } finally { Pop-Location }
-
-    if ($composeCode -ne 0) {
-        Write-Warn2 "docker compose 退出码 $composeCode，OpenNotebook 没能起来。"
-        Write-DockerHelp
-    } else {
-        Write-Warn2 "等待 OpenNotebook 接口就绪（最长 $NotebookTimeout 秒）..."
-        $deadline = (Get-Date).AddSeconds($NotebookTimeout)
-        while ((Get-Date) -lt $deadline) {
-            if (Test-NotebookApi) { $notebookUp = $true; break }
-            Start-Sleep -Seconds 3
-        }
-        if ($notebookUp) {
-            Write-Ok "已就绪（页面 http://localhost:8502 / 接口 $NotebookApi）"
-        } else {
-            Write-Warn2 "$NotebookTimeout 秒内接口仍不可达。看日志：docker compose -f `"$NotebookCompose`" logs open_notebook"
-        }
-    }
+    Write-Warn2 '未找到 opennotebook新版\frontend，跳过笔记本页面。'
 }
 
-if (-not $notebookUp) {
+if (-not $notebookUp -and -not $startNotebookUi) {
     Write-Warn2 '继续启动其余服务。但答疑与出题只会检索本地教材 book1.md，笔记本里的内容一条都取不到。'
 }
 
@@ -825,6 +789,58 @@ if (-not (Wait-Health "http://127.0.0.1:$FrontendPort/" 120)) {
     exit 1
 }
 Write-Ok "已就绪 (PID $($frontProc.Id))"
+
+if ($startNotebookUi) {
+    Write-Step '等待笔记本接口'
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-NotebookApi) { $notebookUp = $true; break }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $notebookUp) {
+        Write-Warn2 '5055 没有起来。看 basic-agent 日志。答疑仍可用本地教材。'
+    } else {
+        Write-Ok "接口已就绪（$NotebookApi）"
+        Write-Step '启动笔记本页面 (127.0.0.1:8502)'
+        $standalone = Join-Path $NotebookUiDir '.next\standalone\server.js'
+        if (-not (Test-Path (Join-Path $NotebookUiDir 'node_modules'))) {
+            Write-Warn2 '安装笔记本页面依赖...'
+            Push-Location $NotebookUiDir
+            try { $installCode = Invoke-Native 'npm' @('install', '--no-audit', '--no-fund') }
+            finally { Pop-Location }
+            if ($installCode -ne 0) {
+                Write-Warn2 '笔记本页面依赖没装上，跳过页面。接口仍在 5055。'
+                $notebookUp = $false
+            }
+        }
+        if ($notebookUp -and -not (Test-Path $standalone)) {
+            Write-Warn2 '还没有笔记本页面的构建产物，开始构建（首次较慢，要下载字体）...'
+            Push-Location $NotebookUiDir
+            try { $buildCode = Invoke-Native 'npm' @('run', 'build') }
+            finally { Pop-Location }
+            if ($buildCode -ne 0) {
+                Write-Warn2 '笔记本页面构建失败，接口仍在 5055。'
+                $notebookUp = $false
+            }
+        }
+        if ($notebookUp -and (Test-Path $standalone)) {
+            $nbOut = Join-Path $LogDir 'notebook-ui.out.log'
+            $nbErr = Join-Path $LogDir 'notebook-ui.err.log'
+            $env:PORT = '8502'
+            $env:API_URL = 'http://127.0.0.1:5055'
+            $env:INTERNAL_API_URL = 'http://127.0.0.1:5055'
+            $nbProc = Start-Process -FilePath 'node' -ArgumentList @((Join-Path $NotebookUiDir 'start-server.js')) `
+                -WorkingDirectory $NotebookUiDir -WindowStyle Hidden -PassThru `
+                -RedirectStandardOutput $nbOut -RedirectStandardError $nbErr
+            Write-PidFile $nbProc (Join-Path $RunDir 'notebook-ui.pid')
+            if (Wait-Health 'http://127.0.0.1:8502/' 90) {
+                Write-Ok "笔记本页面已就绪 (PID $($nbProc.Id))"
+            } else {
+                Write-Warn2 "笔记本页面没起来。接口仍在 $NotebookApi。日志：$nbErr"
+            }
+        }
+    }
+}
 
 # ------------------------------------------------- 完成
 Write-Host "`n启动完成。" -ForegroundColor Green

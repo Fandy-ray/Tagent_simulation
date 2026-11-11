@@ -129,6 +129,12 @@ Write-Host 'TAgent 停止脚本' -ForegroundColor White
 
 Write-Step '停止服务'
 # 逐个 try：任何一个服务停止失败都不能连累另一个，否则会留下半停状态
+$notebookUiPid = Join-Path $RunDir 'notebook-ui.pid'
+if (Test-Path $notebookUiPid) {
+    try { Stop-Tracked '笔记本页面' $notebookUiPid } catch {
+        Write-Warn2 "笔记本页面 : 停止过程出错 - $($_.Exception.Message)"
+    }
+}
 foreach ($svc in @(
     @{ Name = 'tagentnote';  File = 'frontend.pid' },
     @{ Name = 'basic-agent'; File = 'agent.pid' }
@@ -140,7 +146,7 @@ foreach ($svc in @(
     }
 }
 
-Write-Step '停止 OpenNotebook 容器'
+Write-Step '停止旧的 OpenNotebook 容器（若还在）'
 if ($KeepNotebook) {
     Write-Warn2 '按 -KeepNotebook 跳过，容器继续运行。'
 } elseif (-not (Test-Path $NotebookCompose)) {
