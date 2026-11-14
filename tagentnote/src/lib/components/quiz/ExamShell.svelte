@@ -1,4 +1,6 @@
 <script lang="ts">
+	import '$lib/styles/space-theme.css';
+	import OrbitMark from '$lib/components/icons/OrbitMark.svelte';
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
 
@@ -317,10 +319,10 @@
 	});
 </script>
 
-<div bind:this={rootEl} class="flex h-full min-h-0 flex-col bg-gray-900 text-gray-100">
+<div bind:this={rootEl} class="space-theme exam-shell flex h-full min-h-0 flex-col text-gray-100">
 	<!-- 顶栏照答疑页的样子：细边、胶囊、左边标题右边范围和模型 -->
 	<nav
-		class="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-white/[0.04] px-3 py-2"
+		class="exam-header flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-white/[0.04] px-3 py-2"
 	>
 		{#if running !== '' || onLeave}
 			<button
@@ -346,9 +348,10 @@
 		{/if}
 
 		<div class="flex min-w-0 items-center gap-2 text-sm">
+			<span class="orbit-mark"><OrbitMark /></span>
 			<span class="truncate font-medium text-white">{headerTitle}</span>
-			<span class="text-gray-600" aria-hidden="true">/</span>
-			<span class="shrink-0 text-gray-400">{headerSubtitle}</span>
+			<span class="hidden text-gray-600 sm:inline" aria-hidden="true">/</span>
+			<span class="hidden shrink-0 text-gray-400 sm:inline">{headerSubtitle}</span>
 		</div>
 
 		{#if confirmLeave}
@@ -412,7 +415,7 @@
 				</span>
 			{:else}
 				<select
-					class="hover:bg-gray-850 h-8 max-w-52 min-w-0 cursor-pointer rounded-lg bg-gray-900 px-1.5 text-sm text-gray-200 transition outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60 disabled:cursor-not-allowed disabled:opacity-60"
+					class="exam-model hover:bg-gray-850 h-8 max-w-52 min-w-0 cursor-pointer rounded-lg bg-gray-900 px-1.5 text-sm text-gray-200 transition outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60 disabled:cursor-not-allowed disabled:opacity-60"
 					bind:value={selectedModelId}
 					disabled={modelsLoading || availableModels.length === 0}
 					aria-label="测评模型"
@@ -572,3 +575,49 @@
 		{/key}
 	</div>
 </div>
+
+<style>
+	.exam-shell {
+		--color-gray-900: var(--m3-background);
+		--color-gray-850: var(--m3-surface-low);
+		--color-gray-800: var(--m3-surface-high);
+		--color-gray-100: var(--m3-on-surface);
+		--color-gray-200: var(--m3-on-surface);
+		--color-gray-400: var(--m3-on-surface-variant);
+		--color-gray-500: #b5aabc;
+		--color-gray-600: #a69caf;
+		background: var(--m3-background);
+		color: var(--m3-on-surface);
+		color-scheme: dark;
+		font-family: var(--space-font);
+	}
+	.exam-header {
+		min-height: 60px;
+		padding-inline: clamp(10px, 3vw, 30px);
+		background: var(--m3-surface-low);
+		border-color: var(--m3-outline-variant);
+	}
+	.orbit-mark {
+		display: grid;
+		width: 30px;
+		height: 30px;
+		flex: none;
+		place-items: center;
+		border: 1px solid color-mix(in srgb, var(--space-amber), transparent 48%);
+		border-radius: 50%;
+		color: var(--space-amber);
+		font-size: 19px;
+	}
+	.exam-model {
+		max-width: min(40vw, 208px);
+		min-height: 36px;
+		padding-inline: 10px;
+		border: 1px solid var(--m3-outline-variant);
+		background: var(--m3-background);
+		color: var(--m3-on-surface);
+	}
+	.exam-shell :global(:is(button, a, select):focus-visible) {
+		outline: 2px solid var(--m3-primary);
+		outline-offset: 2px;
+	}
+</style>

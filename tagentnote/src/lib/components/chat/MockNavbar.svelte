@@ -210,7 +210,7 @@
 </script>
 
 <nav
-	class="sticky top-0 z-30 flex w-full shrink-0 flex-col items-center overflow-visible border-b border-white/[0.04] bg-gray-900 pt-1 pb-1"
+	class="chat-navbar sticky top-0 z-30 flex w-full shrink-0 flex-col items-center overflow-visible border-b border-white/[0.04] bg-gray-900 pt-1 pb-1"
 	aria-label={$i18n.t('Chat Header Navigation')}
 >
 	<div class="flex w-full items-center px-1.5 pr-1">
@@ -297,6 +297,7 @@
 							class={`rounded-full px-2 py-1 transition @md:px-2.5 ${
 								assistMode === 'qa' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-gray-200'
 							}`}
+							aria-pressed={assistMode === 'qa'}
 							onclick={() => onAssistModeChange('qa')}
 						>
 							{$i18n.t('QA Mode')}
@@ -308,6 +309,7 @@
 									? 'bg-amber-500/20 text-amber-100'
 									: 'text-gray-400 hover:text-gray-200'
 							}`}
+							aria-pressed={assistMode === 'paper'}
 							onclick={() => onAssistModeChange('paper')}
 						>
 							{$i18n.t('Paper Assistant')}
@@ -317,7 +319,7 @@
 					<div class="relative mr-1" bind:this={collectionTriggerEl}>
 						<button
 							type="button"
-							class="mt-1 flex max-w-[180px] items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] leading-none text-gray-200 transition hover:bg-white/[0.08]"
+							class="chat-collection mt-1 flex max-w-[180px] items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] leading-none text-gray-200 transition hover:bg-white/[0.08]"
 							onclick={toggleCollectionMenu}
 							title={$i18n.t('Current Knowledge Base')}
 							aria-expanded={collectionMenuOpen}

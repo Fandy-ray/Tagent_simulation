@@ -4,6 +4,7 @@
 	import RecursiveFolder from './RecursiveFolder.svelte';
 	import UserMenu from '$lib/components/layout/UserMenu.svelte';
 	import SearchModal from '$lib/components/layout/SearchModal.svelte';
+	import OrbitMark from '$lib/components/icons/OrbitMark.svelte';
 	import Search from '$lib/components/icons/Search.svelte';
 	import type { QaChat } from '$lib/data/qaConversations';
 	import type { QaFolder } from '$lib/data/qaFolders';
@@ -21,6 +22,7 @@
 	type NavKey = 'chats' | 'notes' | 'workspace';
 
 	type Props = {
+		spaceBrand?: boolean;
 		activeChatId?: string | null;
 		selectedFolderId?: string | null;
 		chats?: ChatSummary[];
@@ -58,6 +60,7 @@
 	};
 
 	let {
+		spaceBrand = false,
 		activeChatId = null,
 		selectedFolderId = null,
 		chats = [],
@@ -266,9 +269,9 @@
 </script>
 
 <aside
-	class="fixed inset-y-0 left-0 z-40 flex h-screen w-[260px] shrink-0 flex-col overflow-hidden border-r border-white/[0.04] bg-gray-900 text-sm text-gray-200 shadow-2xl shadow-black/50 select-none md:static md:z-auto md:shadow-none"
+	class="chat-sidebar fixed inset-y-0 left-0 z-40 flex h-dvh w-[260px] shrink-0 flex-col overflow-hidden border-r border-white/[0.04] bg-gray-900 text-sm text-gray-200 shadow-2xl shadow-black/50 select-none md:static md:z-auto md:shadow-none"
 >
-	<header class="flex h-12 shrink-0 items-center gap-2 px-2">
+	<header class="chat-sidebar-header flex h-12 shrink-0 items-center gap-2 px-2">
 		<button
 			type="button"
 			class="flex size-8 shrink-0 items-center justify-center rounded-xl transition hover:bg-gray-900"
@@ -276,11 +279,15 @@
 			title="返回选择智能体"
 			aria-label="返回选择智能体"
 		>
-			<div
-				class="flex size-6 items-center justify-center rounded-full border border-black/20 bg-white text-xs font-black text-black dark:border-transparent"
-			>
-				T
-			</div>
+			{#if spaceBrand}
+				<span class="qa-orbit-mark"><OrbitMark /></span>
+			{:else}
+				<div
+					class="flex size-6 items-center justify-center rounded-full border border-black/20 bg-white text-xs font-black text-black dark:border-transparent"
+				>
+					T
+				</div>
+			{/if}
 		</button>
 
 		<button
@@ -288,7 +295,7 @@
 			class="min-w-0 flex-1 truncate px-1 text-left text-xs font-medium text-white"
 			onclick={onHome}
 		>
-			系统建模与仿真智能体
+			{spaceBrand ? '航天探索实验室' : '系统建模与仿真智能体'}
 		</button>
 
 		<button
@@ -510,6 +517,7 @@
 								? 'bg-gray-900 text-white'
 								: 'text-gray-300 hover:bg-gray-900'
 						}`}
+						aria-current={activeChatId === chat.id ? 'true' : undefined}
 						draggable="true"
 						ondragstart={(e) => onChatDragStart(e, chat.id)}
 						onclick={() => onSelectChat(chat.id)}
@@ -538,6 +546,7 @@
 											? 'bg-gray-900 text-white'
 											: 'text-gray-300 hover:bg-gray-900'
 									}`}
+									aria-current={activeChatId === chat.id ? 'true' : undefined}
 									draggable="true"
 									ondragstart={(e) => onChatDragStart(e, chat.id)}
 									onclick={() => onSelectChat(chat.id)}

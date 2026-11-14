@@ -1,4 +1,5 @@
 <script lang="ts">
+	import OrbitMark from '$lib/components/icons/OrbitMark.svelte';
 	import MockMessageInput from './MockMessageInput.svelte';
 	import type { InputAttachment } from './MessageInput/InputMenu.svelte';
 	import MockSuggestions from './MockSuggestions.svelte';
@@ -87,96 +88,77 @@
 	};
 </script>
 
-<div
-	class={`m-auto w-full max-w-6xl px-2 text-center min-[640px]:px-20 ${chatLanding ? 'translate-y-0 py-10' : 'translate-y-6 py-24'}`}
->
-	<div class="flex w-full items-center gap-4 text-center text-3xl text-gray-100">
-		<div class="flex w-full flex-col items-center justify-center">
-			{#if temporaryChat}
-				<div
-					class="mb-3 flex items-center gap-2 text-base text-gray-500"
-					title="此对话不会出现在历史记录中，消息也不会被保存。"
+<div class="qa-start m-auto w-full max-w-3xl px-4 py-8 sm:px-6">
+	<div class="flex w-full flex-col">
+		{#if temporaryChat}
+			<div
+				class="mb-3 flex items-center gap-2 text-base text-gray-500"
+				title="此对话不会出现在历史记录中，消息也不会被保存。"
+			>
+				<svg
+					class="size-4"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2.5"
+					aria-hidden="true"
 				>
-					<svg
-						class="size-4"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2.5"
-						aria-hidden="true"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88"
-						></path>
-					</svg>
-					临时对话
-				</div>
-			{/if}
-
-			{#if !chatLanding}
-				<div class="flex w-fit flex-row justify-center gap-3 px-5">
-					<div class="flex shrink-0 justify-center">
-						<div class="flex -space-x-4">
-							<div
-								class="flex size-10 items-center justify-center rounded-full bg-white text-base font-black text-black"
-								aria-hidden="true"
-							>
-								T
-							</div>
-						</div>
-					</div>
-
-					<div class="flex items-center text-3xl">
-						<span class="line-clamp-1">
-							{modelName}
-						</span>
-					</div>
-				</div>
-
-				<div class="mt-1 mb-2 flex min-h-3"></div>
-			{/if}
-
-			<div class="w-full py-3 text-base font-normal md:max-w-3xl">
-				<MockMessageInput
-					bind:prompt
-					placeholder="有什么我能帮您的吗？"
-					{generating}
-					{ctrlEnterToSend}
-					{largeTextAsFile}
-					{enableMessageQueue}
-					{showFormattingToolbar}
-					{richTextInput}
-					{promptAutocomplete}
-					{imageCompression}
-					{imageCompressionSize}
-					{lastUserMessage}
-					{speechAutoSend}
-					{webSearchAlways}
-					{noteOptions}
-					{chatOptions}
-					{modelName}
-					{onSubmit}
-					{resolveAttachment}
-					{onStop}
-					{onToast}
-					{onReview}
-					{onFillSample}
-					{knowledgeOptions}
-					{modelOptions}
-					{onSelectKnowledge}
-					{onSelectModel}
-				/>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88"
+					></path>
+				</svg>
+				临时对话
 			</div>
+		{/if}
+
+		{#if !chatLanding}
+			<div class="qa-intro">
+				<span class="qa-orbit-mark"><OrbitMark /></span>
+				<h1>{mode === 'qa' ? '课程答疑' : '论文助手'}</h1>
+				<p>
+					{mode === 'qa'
+						? '围绕系统建模与仿真提问，结合教材和笔记理解课程内容。'
+						: '从选题到交稿，逐步完成课程论文。'}
+				</p>
+			</div>
+		{/if}
+
+		<div class="w-full">
+			<MockMessageInput
+				bind:prompt
+				placeholder={mode === 'qa' ? '输入你的课程问题…' : '有什么我能帮您的吗？'}
+				{generating}
+				{ctrlEnterToSend}
+				{largeTextAsFile}
+				{enableMessageQueue}
+				{showFormattingToolbar}
+				{richTextInput}
+				{promptAutocomplete}
+				{imageCompression}
+				{imageCompressionSize}
+				{lastUserMessage}
+				{speechAutoSend}
+				{webSearchAlways}
+				{noteOptions}
+				{chatOptions}
+				{modelName}
+				{onSubmit}
+				{resolveAttachment}
+				{onStop}
+				{onToast}
+				{onReview}
+				{onFillSample}
+				{knowledgeOptions}
+				{modelOptions}
+				{onSelectKnowledge}
+				{onSelectModel}
+			/>
 		</div>
 	</div>
 
 	{#if !chatLanding && mode === 'qa'}
-		<div class="mx-auto mt-2 max-w-2xl">
-			<div class="mx-5">
-				<MockSuggestions inputValue={prompt} {mode} onSelect={selectSuggestion} />
-			</div>
-		</div>
+		<MockSuggestions inputValue={prompt} {mode} onSelect={selectSuggestion} />
 	{/if}
 </div>

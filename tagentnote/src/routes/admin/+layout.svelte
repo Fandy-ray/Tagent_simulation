@@ -190,7 +190,7 @@
 			onPlayground={() => goto(resolve('/playground'))}
 			onAdmin={() => goto(resolve('/admin/users/overview'))}
 			onShortcuts={() => goto(resolve('/qa?sidebar-action=shortcuts'))}
-			onSignOut={() => goto(resolve('/welcome'))}
+			onSignOut={() => goto(resolve('/space-exploration'))}
 			onCreateFolder={createFolder}
 			onUpdateFolder={updateFolder}
 			onDeleteFolder={deleteFolder}

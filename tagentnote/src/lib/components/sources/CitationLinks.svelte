@@ -26,7 +26,7 @@
 <!-- eslint-disable svelte/no-navigation-without-resolve -- external citation URLs are intentionally preserved. -->
 
 {#if citations.length > 0}
-	<div class="mt-3 space-y-1.5">
+	<div class="qa-citations mt-3 space-y-1.5">
 		<div class="text-[11px] font-medium tracking-wide text-gray-500">
 			{label}
 		</div>

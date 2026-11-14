@@ -1,4 +1,6 @@
 <script lang="ts">
+	import '$lib/styles/space-theme.css';
+	import './workspace.css';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	type SpeechRecognitionResultLike = { [index: number]: { transcript: string } };
 	type SpeechRecognitionEventLike = { results: ArrayLike<SpeechRecognitionResultLike> };
@@ -1112,7 +1114,7 @@
 		bumpGeneration();
 		generating = false;
 		commitActive();
-		void goto(resolve('/welcome'));
+		void goto(resolve('/space-exploration'));
 	};
 
 	const unarchiveChat = (chatId: string) => {
@@ -2419,9 +2421,10 @@
 	}}
 />
 
-<main class="flex h-screen overflow-hidden bg-gray-900 text-white">
+<main class="space-theme qa-workspace flex h-dvh overflow-hidden bg-gray-900 text-white">
 	{#if sidebarOpen}
 		<MockSidebar
+			spaceBrand
 			{activeChatId}
 			{selectedFolderId}
 			chats={sidebarChats}
@@ -2589,7 +2592,7 @@
 								</div>
 							</div>
 						{/if}
-						<div class="flex min-h-0 w-full flex-1 items-center">
+						<div class="flex min-h-0 w-full flex-1 flex-col overflow-y-auto">
 							<MockPlaceholder
 								bind:prompt
 								{generating}
@@ -2710,7 +2713,7 @@
 						>
 							<MockMessageInput
 								bind:prompt
-								placeholder="有什么我能帮您的吗？"
+								placeholder={assistMode === 'qa' ? '输入你的课程问题…' : '有什么我能帮您的吗？'}
 								{generating}
 								ctrlEnterToSend={userSettings.ctrlEnterToSend}
 								enableMessageQueue={userSettings.enableMessageQueue}
@@ -2740,7 +2743,7 @@
 						</div>
 
 						<p class="mt-2 text-center text-[11px] text-gray-600">
-							回答来自 basic-agent 检索的教材与笔记，请核实重要内容。
+							请结合教材与笔记核实重要内容。
 						</p>
 					</div>
 				{/if}

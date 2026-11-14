@@ -151,10 +151,8 @@
 	});
 </script>
 
-<div class="relative w-full max-w-md text-left">
-	<div
-		class="rounded-2xl border border-white/[0.08] bg-white/[0.035] transition focus-within:border-white/20 hover:border-white/[0.12]"
-	>
+<div class="relative w-full text-left">
+	<div class="source-field">
 		{#if selectedSources.length > 0}
 			<div class="flex flex-wrap gap-1 px-2 pt-2">
 				{#each selectedSources as item (sourceKey(item.collection.id, item.file.id))}
@@ -174,8 +172,9 @@
 
 		<div class="relative">
 			<input
-				class="w-full bg-transparent px-3 py-2 pr-9 text-sm text-gray-100 outline-none placeholder:text-gray-500"
+				class="min-h-10 w-full bg-transparent px-3 py-2 pr-9 text-sm outline-none"
 				{placeholder}
+				aria-label="出题主题、笔记本与来源"
 				maxlength="100"
 				role="combobox"
 				aria-expanded={open}
@@ -228,7 +227,7 @@
 	{#if open}
 		<div
 			id="knowledge-combobox-list"
-			class="bg-gray-850 absolute inset-x-0 top-[calc(100%+6px)] z-20 max-h-72 overflow-y-auto rounded-xl border border-white/10 py-1 shadow-lg"
+			class="source-menu bg-gray-850 absolute inset-x-0 top-[calc(100%+6px)] z-20 max-h-72 overflow-y-auto rounded-xl border border-white/10 py-1 shadow-lg"
 			tabindex="-1"
 			role="tree"
 			onmousedown={keepMenu}
@@ -261,7 +260,7 @@
 								<span
 									class={`flex size-4 items-center justify-center rounded-sm border text-[10px] leading-none ${
 										notebook.all || notebook.some
-											? 'border-white bg-white text-black'
+											? 'border-white bg-[var(--m3-primary)] text-[var(--m3-on-primary)]'
 											: 'border-white/30'
 									}`}
 								>
@@ -318,7 +317,9 @@
 									>
 										<span
 											class={`flex size-4 shrink-0 items-center justify-center rounded-sm border text-[10px] leading-none ${
-												checked ? 'border-white bg-white text-black' : 'border-white/30'
+												checked
+													? 'border-white bg-[var(--m3-primary)] text-[var(--m3-on-primary)]'
+													: 'border-white/30'
 											}`}
 										>
 											{checked ? '✓' : ''}
@@ -350,3 +351,22 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.source-field {
+		border: 1px solid var(--m3-outline-variant);
+		border-radius: 10px;
+		background: var(--m3-background);
+		color: var(--m3-on-surface);
+	}
+	.source-field:focus-within {
+		border-color: var(--m3-primary);
+	}
+	input::placeholder {
+		color: var(--m3-on-surface-variant);
+	}
+	.source-menu {
+		border-color: var(--m3-outline-variant);
+		background: var(--m3-surface-high);
+	}
+</style>

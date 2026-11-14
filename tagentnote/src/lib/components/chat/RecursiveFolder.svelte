@@ -244,6 +244,7 @@
 					class={`flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left transition ${
 						activeChatId === chat.id ? 'bg-gray-900 text-white' : 'text-gray-400 hover:bg-gray-900'
 					}`}
+					aria-current={activeChatId === chat.id ? 'true' : undefined}
 					draggable="true"
 					ondragstart={(e) => onChatDragStart(e, chat.id)}
 					onclick={() => onSelectChat(chat.id)}

@@ -342,7 +342,7 @@
 			onPlayground={() => (activeTab = 'chat')}
 			onAdmin={() => goto(resolve('/admin/users/overview'))}
 			onShortcuts={() => goto(resolve('/qa?sidebar-action=shortcuts'))}
-			onSignOut={() => goto(resolve('/welcome'))}
+			onSignOut={() => goto(resolve('/space-exploration'))}
 		/>
 	{/if}
 	<div class="playground">

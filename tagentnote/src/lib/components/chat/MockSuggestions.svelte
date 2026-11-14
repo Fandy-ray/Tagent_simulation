@@ -24,8 +24,8 @@
 		},
 		{
 			id: 'suggestion-2',
-			title: ['用一个例子', '解释我不懂的地方'],
-			content: '用一个具体例子解释这部分内容。'
+			title: ['看一个建模例子', '用排队系统理解仿真'],
+			content: '用排队系统举例，说明如何建立一个离散事件仿真模型。'
 		},
 		{
 			id: 'suggestion-3',
@@ -76,67 +76,29 @@
 	);
 </script>
 
-<div class="mb-1 flex items-center gap-1 text-xs font-medium text-gray-400">
-	{#if filteredSuggestions.length > 0}
-		<svg
-			class="size-3.5"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="1.8"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			aria-hidden="true"
-		>
-			<path d="m13 2-8 12h7l-1 8 8-12h-7z"></path>
-		</svg>
-		<span>{mode === 'paper' ? '论文辅助建议' : '建议'}</span>
-	{:else}
-		<div class="flex w-full items-center justify-center text-gray-500">
-			{mode === 'paper' ? '课程论文写作助手' : '系统建模与仿真智能体'}
-		</div>
-	{/if}
-</div>
-
-<div class="h-40 w-full">
-	{#if filteredSuggestions.length > 0}
-		<div class="max-h-40 items-start overflow-auto">
-			{#each filteredSuggestions as suggestion, index (suggestion.id)}
-				<button
-					type="button"
-					class="suggestion-item group flex w-full flex-col justify-between rounded-xl bg-transparent px-3 py-2 text-left transition hover:bg-white/[0.05]"
-					style={`animation-delay: ${index * 60}ms`}
-					onclick={() => onSelect(suggestion.content)}
-				>
-					<span
-						class="line-clamp-1 text-xs font-medium text-gray-300 transition group-hover:text-gray-200"
+{#if filteredSuggestions.length > 0}
+	<section class="qa-prompts" aria-labelledby="qa-prompts-title">
+		<h2 id="qa-prompts-title">试试这样问</h2>
+		<div class="qa-prompt-list">
+			{#each filteredSuggestions as suggestion (suggestion.id)}
+				<button type="button" class="qa-prompt" onclick={() => onSelect(suggestion.content)}>
+					<span>
+						<strong>{suggestion.title[0]}</strong>
+						<small>{suggestion.title[1]}</small>
+					</span>
+					<svg
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.6"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
 					>
-						{suggestion.title[0]}
-					</span>
-					<span class="line-clamp-1 text-xs font-normal text-gray-500">
-						{suggestion.title[1]}
-					</span>
+						<path d="M6 18 18 6M8 6h10v10" />
+					</svg>
 				</button>
 			{/each}
 		</div>
-	{/if}
-</div>
-
-<style>
-	@keyframes fade-in-up {
-		from {
-			opacity: 0;
-			transform: translateY(20px);
-		}
-
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
-	}
-
-	.suggestion-item {
-		opacity: 0;
-		animation: fade-in-up 200ms ease forwards;
-	}
-</style>
+	</section>
+{/if}

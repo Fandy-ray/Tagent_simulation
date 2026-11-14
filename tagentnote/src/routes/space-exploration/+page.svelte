@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
+
 	let activeLesson = $state<string | null>(null);
 	let launchSpeed = $state(72);
 	let launchAngle = $state(48);
@@ -70,6 +73,10 @@
 		isRunning = false;
 	}
 
+	function enterPlatform() {
+		void goto(resolve('/agent-select'));
+	}
+
 	function runSimulation() {
 		isRunning = !isRunning;
 		if (isRunning) runCount += 1;
@@ -117,7 +124,7 @@
 			<a href="#lessons">学习场景</a>
 			<a href="#about">关于项目</a>
 		</nav>
-		<button class="top-cta" onclick={() => openSimulation()}>开始探索 <span aria-hidden="true">↗</span></button>
+		<button class="top-cta" onclick={enterPlatform}>开始探索 <span aria-hidden="true">↗</span></button>
 	</header>
 
 	<main id="top">
@@ -128,7 +135,7 @@
 				<p class="hero-summary">从小学到高中，跟着一个航天问题，看懂过程、尝试调整、检验自己的想法。</p>
 
 				<div class="hero-actions">
-					<button class="primary-button" onclick={() => openSimulation()}>开始体验</button>
+					<button class="primary-button" onclick={enterPlatform}>开始体验</button>
 					<p class="status-note"><span class="status-mark" aria-hidden="true">✳</span><span>当前体验课程：系统建模与仿真<br />航天主题体验仍在项目规划中</span></p>
 				</div>
 			</div>
@@ -191,7 +198,7 @@
 		<section class="closing" id="about">
 			<div class="closing-star" aria-hidden="true">✳</div>
 			<div><h2>从好奇出发，逐步看懂航天</h2><p>沿着一个问题走进去，把每一次观察都变成下一次发现。</p></div>
-			<button class="text-button" onclick={() => openSimulation()}>进入探索 <span aria-hidden="true">→</span></button>
+			<button class="text-button" onclick={enterPlatform}>进入探索 <span aria-hidden="true">→</span></button>
 		</section>
 	</main>
 
