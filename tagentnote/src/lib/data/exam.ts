@@ -207,15 +207,17 @@ export type SavedFullExam = {
 const FULL_EXAM_KEY = 'tagent:full-exam';
 const FULL_EXAM_TTL_MS = 2 * 60 * 60 * 1000;
 
-export const loadFullExam = (): SavedFullExam | null => {
+const fullExamKey = (scope: string) => (scope ? `${FULL_EXAM_KEY}:${scope}` : FULL_EXAM_KEY);
+
+export const loadFullExam = (scope = ''): SavedFullExam | null => {
 	try {
-		const raw = sessionStorage.getItem(FULL_EXAM_KEY);
+		const raw = sessionStorage.getItem(fullExamKey(scope));
 		if (!raw) {
 			return null;
 		}
 		const saved = JSON.parse(raw) as SavedFullExam;
 		if (saved?.v !== 1 || !saved.exam?.exam_id || Date.now() - saved.startedAt > FULL_EXAM_TTL_MS) {
-			sessionStorage.removeItem(FULL_EXAM_KEY);
+			sessionStorage.removeItem(fullExamKey(scope));
 			return null;
 		}
 		return { ...saved, answerNotes: saved.answerNotes ?? {} };
@@ -224,17 +226,17 @@ export const loadFullExam = (): SavedFullExam | null => {
 	}
 };
 
-export const saveFullExam = (saved: Omit<SavedFullExam, 'v'>) => {
+export const saveFullExam = (saved: Omit<SavedFullExam, 'v'>, scope = '') => {
 	try {
-		sessionStorage.setItem(FULL_EXAM_KEY, JSON.stringify({ ...saved, v: 1 }));
+		sessionStorage.setItem(fullExamKey(scope), JSON.stringify({ ...saved, v: 1 }));
 	} catch {
 		// 隐私模式或存储满：照常答题，只是刷新后接不上
 	}
 };
 
-export const clearFullExam = () => {
+export const clearFullExam = (scope = '') => {
 	try {
-		sessionStorage.removeItem(FULL_EXAM_KEY);
+		sessionStorage.removeItem(fullExamKey(scope));
 	} catch {
 		// 同上
 	}

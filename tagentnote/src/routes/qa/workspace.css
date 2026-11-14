@@ -300,3 +300,28 @@ html.system .qa-workspace {
 		transition: none;
 	}
 }
+
+.qa-workspace.space-context {
+	isolation: isolate;
+	background:
+		linear-gradient(#14121860, #14121880),
+		url('$lib/assets/starfield.png') center top / cover;
+}
+.qa-workspace.space-context > section {
+	background: transparent;
+}
+.space-context-bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 16px;
+	padding: 8px 14px;
+	background: var(--m3-surface-low);
+	border-bottom: 1px solid var(--m3-outline-variant);
+	font-size: 13px;
+}
+.space-context-bar a {
+	color: var(--m3-primary);
+}
+.space-source-notice {
+	color: var(--m3-on-surface-variant);
+}

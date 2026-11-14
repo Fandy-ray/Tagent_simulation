@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '$lib/styles/space-theme.css';
+	import CosmicLayer from '$lib/components/space/CosmicLayer.svelte';
 	import OrbitMark from '$lib/components/icons/OrbitMark.svelte';
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
@@ -24,6 +25,8 @@
 
 	type Props = {
 		fullPage?: boolean;
+		spaceContext?: string;
+		onFullResult?: (score: number, examId: string) => void;
 		onClose?: (() => void) | null;
 		modelId?: string;
 		initialTopic?: string;
@@ -36,6 +39,8 @@
 
 	let {
 		fullPage = false,
+		spaceContext = '',
+		onFullResult,
 		onClose = null,
 		modelId = '',
 		initialTopic = '',
@@ -133,7 +138,7 @@
 	);
 
 	$effect(() => {
-		if (!initialTopic || notebooks.length === 0) {
+		if (!initialTopic) {
 			return;
 		}
 
@@ -176,8 +181,8 @@
 	const forgetSaved = () => {
 		resume = null;
 		resumeFlash = null;
-		clearFullExam();
-		clearFlashDeck();
+		clearFullExam(spaceContext);
+		if (!spaceContext) clearFlashDeck();
 	};
 
 	/**
@@ -258,8 +263,8 @@
 
 		// 整卷答到一半刷新了：接着做。这和「刷新不自动开跑」不冲突——那条是怕误刷新白花一轮
 		// 模型调用，这里只是把本地存档摆回来，一次调用都不花
-		const saved = loadFullExam();
-		const savedFlash = saved ? null : loadFlashDeck();
+		const saved = loadFullExam(spaceContext);
+		const savedFlash = saved || spaceContext ? null : loadFlashDeck();
 		if (saved) {
 			resume = saved;
 			mode = 'full';
@@ -320,6 +325,7 @@
 </script>
 
 <div bind:this={rootEl} class="space-theme exam-shell flex h-full min-h-0 flex-col text-gray-100">
+	{#if spaceContext}<CosmicLayer />{/if}
 	<!-- 顶栏照答疑页的样子：细边、胶囊、左边标题右边范围和模型 -->
 	<nav
 		class="exam-header flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-white/[0.04] px-3 py-2"
@@ -560,11 +566,14 @@
 					onError={(value) => (errorMsg = value)}
 					onExit={() => backToPicker(true)}
 					onLeavingCost={(cost) => (leavingCost = cost)}
-					onSwitchToFlash={() => switchRunningMode('flash')}
+					onSwitchToFlash={() => (spaceContext && onLeave ? onLeave() : switchRunningMode('flash'))}
+					onResult={onFullResult}
+					storageScope={spaceContext}
 				/>
 			{:else}
 				<ExamModePicker
 					bind:mode
+					fullOnly={Boolean(spaceContext)}
 					bind:topic
 					bind:selectedKeys={selectedSourceKeys}
 					bind:collections={notebooks}
@@ -619,5 +628,11 @@
 	.exam-shell :global(:is(button, a, select):focus-visible) {
 		outline: 2px solid var(--m3-primary);
 		outline-offset: 2px;
+	}
+	:global(.space-exam) .exam-shell {
+		isolation: isolate;
+		background:
+			linear-gradient(#14121860, #14121880),
+			url('$lib/assets/starfield.png') center top / cover;
 	}
 </style>

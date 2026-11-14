@@ -5,6 +5,7 @@
 
 	type Props = {
 		mode: ExamMode;
+		fullOnly?: boolean;
 		topic: string;
 		selectedKeys: string[];
 		collections: KnowledgeCollection[];
@@ -14,6 +15,7 @@
 
 	let {
 		mode = $bindable(),
+		fullOnly = false,
 		topic = $bindable(),
 		selectedKeys = $bindable(),
 		collections = $bindable(),
@@ -48,42 +50,43 @@
 <div class="picker-scroll">
 	<main class="picker">
 		<header>
-			<h1>选择测评模式</h1>
-			<p>选择练习方式，再设置出题范围。</p>
+			<h1>{fullOnly ? '专题整卷测评' : '选择测评模式'}</h1>
+			<p>{fullOnly ? '确认专题范围后，再生成试卷。' : '选择练习方式，再设置出题范围。'}</p>
 		</header>
 
-		<div class="mode-list" role="group" aria-label="测评模式">
-			<button
-				type="button"
-				class="mode-card"
-				onclick={() => pick('flash')}
-				aria-pressed={mode === 'flash'}
-			>
-				<div class="flex items-center gap-2.5">
-					<svg
-						class="mode-icon"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.5"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						aria-hidden="true"
-					>
-						<rect x="2.5" y="7.5" width="14" height="13" rx="2"></rect>
-						<path d="M6.5 7.5v-2a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"></path>
-					</svg>
+		<div class="mode-list" class:full-only={fullOnly} role="group" aria-label="测评模式">
+			{#if !fullOnly}
+				<button
+					type="button"
+					class="mode-card"
+					onclick={() => pick('flash')}
+					aria-pressed={mode === 'flash'}
+				>
+					<div class="flex items-center gap-2.5">
+						<svg
+							class="mode-icon"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.5"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<rect x="2.5" y="7.5" width="14" height="13" rx="2"></rect>
+							<path d="M6.5 7.5v-2a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"></path>
+						</svg>
 
-					<div class="mode-title">闪卡模式</div>
+						<div class="mode-title">闪卡模式</div>
 
-					<span class="ml-auto">{@render checkmark(mode === 'flash')}</span>
-				</div>
+						<span class="ml-auto">{@render checkmark(mode === 'flash')}</span>
+					</div>
 
-				<p class="mode-description">填空可翻面自评或输入答案，练习可随时暂停。</p>
+					<p class="mode-description">填空可翻面自评或输入答案，练习可随时暂停。</p>
 
-				<div class="mode-details"><strong>6–12 张</strong><span>填空与选择 · 即时判定</span></div>
-			</button>
-
+					<div class="mode-details"><strong>6–12 张</strong><span>填空与选择 · 即时判定</span></div>
+				</button>
+			{/if}
 			<button
 				type="button"
 				class="mode-card"
@@ -176,6 +179,9 @@
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 14px;
+	}
+	.mode-list.full-only {
+		grid-template-columns: 1fr;
 	}
 	.mode-card {
 		display: flex;

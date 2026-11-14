@@ -1,6 +1,9 @@
 <script lang="ts">
 	import '$lib/styles/space-theme.css';
 	import './workspace.css';
+	import CosmicLayer from '$lib/components/space/CosmicLayer.svelte';
+	import { learningContext, learningContextParams, spaceStages } from '$lib/data/spaceLearning';
+	import { saveSpaceRecord } from '$lib/data/spaceRecords';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	type SpeechRecognitionResultLike = { [index: number]: { transcript: string } };
 	type SpeechRecognitionEventLike = { results: ArrayLike<SpeechRecognitionResultLike> };
@@ -102,6 +105,14 @@
 		wouldCreateCycle,
 		type QaFolder
 	} from '$lib/data/qaFolders';
+
+	let exploration = $derived(learningContext($page.url.searchParams));
+	let explorationReturn = $derived.by(() => {
+		if (!exploration) return '';
+		const { stage, topic, lesson } = exploration;
+		return `${resolve('/space-exploration/learn/[stage]', { stage })}?topic=${topic.id}&lesson=${lesson?.id ?? 'review'}`;
+	});
+
 	import type { FolderFormValue } from '$lib/components/chat/FolderModal.svelte';
 	import {
 		applyHighContrast,
@@ -433,6 +444,7 @@
 		closeSidebarIfNarrow();
 		userSettings = loadUserSettings();
 		const sidebarAction = $page.url.searchParams.get('sidebar-action');
+		if (exploration?.lesson && assistMode === 'qa') prompt = exploration.lesson.title;
 		settingsOpen = sidebarAction === 'settings';
 		archivedOpen = sidebarAction === 'archived';
 		shortcutsOpen = sidebarAction === 'shortcuts';
@@ -869,6 +881,11 @@
 
 	const syncUrl = () => {
 		const params = new SvelteURLSearchParams();
+		if (exploration) {
+			for (const [key, value] of learningContextParams(exploration.stage, exploration.topic.id, exploration.lesson?.id)) {
+				params.set(key, value);
+			}
+		}
 
 		if (selectedModelId) {
 			params.set('model', selectedModelId);
@@ -980,7 +997,7 @@
 		bumpGeneration();
 		generating = false;
 		commitActive();
-		void goto(resolve('/agent-select'));
+		void goto(explorationReturn || resolve('/agent-select'));
 	};
 
 	const openSettings = () => {
@@ -1582,6 +1599,21 @@
 				.join('\n')
 				.trim();
 		}
+		if (exploration) {
+			try {
+				saveSpaceRecord({
+					id: `qa/${exploration.stage}/${exploration.topic.id}/${messageId}`,
+					kind: '问答',
+					context: `${spaceStages[exploration.stage].label} / ${exploration.topic.title}`,
+					title: saveTitle,
+					content: saveContent
+				});
+				toast('已存入航天学习笔记本');
+			} catch {
+				toast('无法保存笔记，请检查浏览器存储设置。');
+			}
+			return;
+		}
 		saveOpen = true;
 	};
 
@@ -1635,6 +1667,9 @@
 			custom?.system?.trim(),
 			...skills,
 			selectedFolder?.systemPrompt?.trim(),
+			exploration
+				? `面向${spaceStages[exploration.stage].label}学生。当前航天专题是「${exploration.topic.title}」。${spaceStages[exploration.stage].description} 资料不足时请明确说明，不要把无关的课程教材当作航天来源。`
+				: '',
 			baseOptions.system
 		]
 			.filter(Boolean)
@@ -2421,7 +2456,8 @@
 	}}
 />
 
-<main class="space-theme qa-workspace flex h-dvh overflow-hidden bg-gray-900 text-white">
+<main class:space-context={Boolean(exploration)} class="space-theme qa-workspace flex h-dvh overflow-hidden bg-gray-900 text-white">
+	{#if exploration}<CosmicLayer />{/if}
 	{#if sidebarOpen}
 		<MockSidebar
 			spaceBrand
@@ -2543,6 +2579,15 @@
 					handleMoveChatToFolder(activeChatId, folderId);
 				}}
 			/>
+
+			{#if exploration}
+				<div class="space-context-bar">
+					<a href={explorationReturn}>← 返回学习</a>
+					<span>{spaceStages[exploration.stage].label} · {exploration.topic.title}</span>
+					<span class="space-source-notice">当前使用原教学知识库，航天语料待接入。</span>
+					<a href={resolve('/space-exploration/learn/notebook')}>我的笔记本</a>
+				</div>
+			{/if}
 
 			{#if assistMode === 'paper'}
 				<div
