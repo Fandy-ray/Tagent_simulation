@@ -132,21 +132,48 @@
 	margin-top: 20px;
 }
 .learn-stage-card {
+	--stage-accent: var(--m3-primary);
+	--stage-inset: clamp(16px, 2vw, 22px);
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	padding: 20px;
+	padding: var(--stage-inset);
 	border: 1px solid var(--m3-outline-variant);
 	border-radius: 15px;
 	background: var(--m3-surface-low);
 }
+.learn-stage-card[data-stage='primary'] {
+	--stage-accent: var(--space-amber);
+}
+.learn-stage-card[data-stage='middle'] {
+	--stage-accent: var(--space-blue);
+}
 .learn-stage-card:hover {
-	border-color: var(--m3-primary);
-	background: var(--m3-surface-high);
+	border-color: var(--stage-accent);
+}
+.learn-stage-art {
+	position: relative;
+	height: clamp(118px, 14vw, 188px);
+	margin: calc(-1 * var(--stage-inset)) calc(-1 * var(--stage-inset)) 1px;
+	overflow: hidden;
+	border-radius: 14px 14px 0 0;
+	background: #111522;
+}
+.learn-stage-art img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	object-position: center 27%;
+}
+.learn-stage-art::after {
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(180deg, transparent 65%, var(--m3-surface-low));
+	content: '';
 }
 .learn-stage-card h2 {
 	margin: 0 0 3px;
-	font-size: 23px;
+	font-size: 26px;
 	font-weight: 600;
 }
 .learn-stage-card strong {
@@ -154,7 +181,7 @@
 	font-weight: 600;
 }
 .learn-stage-card p {
-	margin-bottom: 10px;
+	margin: 0 0 10px;
 	color: var(--m3-on-surface-variant);
 	font-size: 14px;
 }
@@ -164,7 +191,7 @@
 	margin-top: auto;
 	padding-top: 12px;
 	border-top: 1px solid var(--m3-outline-variant);
-	color: var(--m3-primary);
+	color: var(--stage-accent);
 	font-size: 14px;
 }
 .learn-workspace-heading {
@@ -382,6 +409,9 @@
 	.learn-workspace-grid {
 		grid-template-columns: 1fr;
 	}
+	.learn-stage-art {
+		height: clamp(145px, 42vw, 250px);
+	}
 	.learn-catalog {
 		grid-row: 2;
 	}
@@ -576,4 +606,69 @@
 
 .space-learning > main {
 	padding-bottom: 130px;
+}
+
+.orbit-story {
+	display: grid;
+	grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+	overflow: hidden;
+	border: 1px solid var(--m3-outline-variant);
+	border-radius: 12px;
+	background: var(--m3-background);
+}
+
+.orbit-story figure {
+	display: grid;
+	min-height: 195px;
+	align-items: center;
+	margin: 0;
+	overflow: hidden;
+	background: #121a2c;
+}
+
+.orbit-story-copy {
+	display: grid;
+	align-content: center;
+	gap: 9px;
+	padding: 17px 18px;
+}
+
+.orbit-story-copy p {
+	font-size: 14px;
+}
+
+.orbit-story-copy .orbit-story-question {
+	padding-top: 9px;
+	border-top: 1px solid var(--m3-outline-variant);
+	color: var(--m3-primary);
+}
+
+@media (max-width: 660px) {
+	.orbit-story {
+		grid-template-columns: 1fr;
+	}
+	.orbit-story figure {
+		min-height: 168px;
+	}
+}
+
+.learn-lesson-progress {
+	margin-top: 20px;
+	padding-top: 14px;
+	border-top: 1px solid var(--m3-outline-variant);
+}
+
+.learn-catalog-link.locked {
+	color: var(--m3-on-surface-variant);
+}
+
+.learn-catalog-link.locked:hover {
+	background: transparent;
+	color: var(--m3-on-surface-variant);
+}
+
+
+.flight-heading {
+	max-width: 660px;
+	margin-inline: auto;
 }

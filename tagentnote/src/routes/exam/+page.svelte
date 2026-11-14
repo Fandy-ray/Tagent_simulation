@@ -5,6 +5,7 @@
 
 	import ExamShell from '$lib/components/quiz/ExamShell.svelte';
 	import { learningContext, spaceStages } from '$lib/data/spaceLearning';
+	import { markSpaceComplete } from '$lib/data/spaceProgress';
 	import { saveSpaceRecord } from '$lib/data/spaceRecords';
 	import { type ExamMode } from '$lib/data/exam';
 
@@ -21,6 +22,7 @@
 				context: spaceStages[stage].label,
 				content: `整卷得分 ${score} 分。`
 			});
+			markSpaceComplete(`${stage}/${topic.id}/review`);
 			recordMessage = '整卷成绩已存入我的笔记本。';
 		} catch {
 			recordMessage = '无法保存整卷成绩，请检查浏览器存储设置。';

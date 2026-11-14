@@ -7,6 +7,8 @@
 		type SpaceStage
 	} from '$lib/data/spaceLearning';
 	import { saveSpaceRecord } from '$lib/data/spaceRecords';
+	import LessonScene from '$lib/components/space/LessonScene.svelte';
+	import { spaceScenes, type SceneKey } from '$lib/data/spaceScenes';
 	import OrbitExperiment from './OrbitExperiment.svelte';
 
 	type Topic = (typeof spaceTopics)[SpaceStage][number];
@@ -15,8 +17,21 @@
 		stage,
 		topic,
 		lesson,
-		assessment
-	}: { stage: SpaceStage; topic: Topic; lesson?: Lesson; assessment: boolean } = $props();
+		assessment,
+		completed,
+		onComplete
+	}: {
+		stage: SpaceStage;
+		topic: Topic;
+		lesson?: Lesson;
+		assessment: boolean;
+		completed: string[];
+		onComplete: (lessonId: string) => void;
+	} = $props();
+	const sceneKey = $derived(`${topic.id}/${lesson?.id}` as SceneKey);
+	const intro = $derived(spaceScenes[sceneKey]);
+	const lessonIndex = $derived(topic.lessons.findIndex(({ id }) => id === lesson?.id));
+	const nextId = $derived(topic.lessons[lessonIndex + 1]?.id ?? 'review');
 	let context = $derived(`${spaceStages[stage].label} / ${topic.title}`);
 	let id = $derived(`${stage}/${topic.id}/${lesson?.id ?? 'review'}`);
 	let panel = $state<'read' | 'observe'>('read');
@@ -71,8 +86,18 @@
 		queue = answeredWrong ? [...rest, current] : rest;
 		answerPending = false;
 		feedback = queue.length ? '' : '本专题的闪卡全部通过。';
-		if (!queue.length)
+		if (!queue.length) {
 			save('测评', topic.title, `完成 ${topic.lessons.length} 张闪卡，作答 ${checks} 次。`);
+			complete('review');
+		}
+	}
+
+	function complete(lessonId: string) {
+		try {
+			onComplete(lessonId);
+		} catch {
+			recordStatus = '无法保存闯关进度，请检查浏览器存储设置。';
+		}
 	}
 </script>
 
@@ -81,19 +106,27 @@
 	<ul>
 		{#each topic.lessons as item, index (item.id)}
 			<li>
-				<a
-					class="learn-catalog-link"
-					aria-current={lesson?.id === item.id ? 'page' : undefined}
-					href={hrefForLesson(item.id)}><span>{index + 1}</span>{item.title}</a
-				>
+				{#if topic.lessons.slice(0, index).every(({ id }) => completed.includes(id))}
+					<a
+						class="learn-catalog-link"
+						aria-current={lesson?.id === item.id ? 'page' : undefined}
+						href={hrefForLesson(item.id)}><span>{index + 1}</span>{item.title}</a
+					>
+				{:else}
+					<span class="learn-catalog-link locked">{index + 1} {item.title}（待解锁）</span>
+				{/if}
 			</li>
 		{/each}
 		<li>
-			<a
-				class="learn-catalog-link"
-				aria-current={assessment ? 'page' : undefined}
-				href={hrefForLesson('review')}>专题闯关测评</a
-			>
+			{#if topic.lessons.every(({ id }) => completed.includes(id))}
+				<a
+					class="learn-catalog-link"
+					aria-current={assessment ? 'page' : undefined}
+					href={hrefForLesson('review')}>专题闯关测评</a
+				>
+			{:else}
+				<span class="learn-catalog-link locked">专题闯关测评（待解锁）</span>
+			{/if}
 		</li>
 	</ul>
 </aside>
@@ -157,6 +190,18 @@
 		<div class="learn-body">
 			{#if panel === 'read'}
 				<div class="learn-reading">
+					{#if intro}
+						<div class="orbit-story">
+							<figure>
+								<LessonScene {sceneKey} label={intro.visual} />
+							</figure>
+							<div class="orbit-story-copy">
+								<h3>{intro.heading}</h3>
+								<p>{intro.story}</p>
+								<p class="orbit-story-question">{intro.prompt}</p>
+							</div>
+						</div>
+					{/if}
 					<details class="learn-answer learn-disclosure" bind:open={answerOpen}>
 						<summary>
 							<span>
@@ -214,6 +259,19 @@
 						else recordStatus = '先写下你的观察。';
 					}}>保存观察</button
 				>
+			{/if}
+		</div>
+		<div class="learn-lesson-progress">
+			{#if completed.includes(lesson.id)}
+				<a class="learn-button" href={hrefForLesson(nextId)}
+					>{nextId === 'review' ? '前往专题测评' : '继续下一关'} →</a
+				>
+			{:else if answerOpen}
+				<button class="learn-button" type="button" onclick={() => complete(lesson.id)}
+					>完成这一关</button
+				>
+			{:else}
+				<p class="learn-muted">查看讲解后，即可标记完成并解锁下一关。</p>
 			{/if}
 		</div>
 	{:else}

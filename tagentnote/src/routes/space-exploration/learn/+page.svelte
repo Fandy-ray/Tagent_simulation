@@ -16,7 +16,14 @@
 	<div class="learn-stage-grid">
 		{#each stageKeys as stage (stage)}
 			{@const level = spaceStages[stage]}
-			<a class="learn-stage-card" href={resolve('/space-exploration/learn/[stage]', { stage })}>
+			<a
+				class="learn-stage-card"
+				data-stage={stage}
+				href={resolve('/space-exploration/learn/[stage]', { stage })}
+			>
+				<div class="learn-stage-art">
+					<img src={resolve(`/images/learn-stage-${stage}.webp`)} alt="" />
+				</div>
 				<h2>{level.label}</h2>
 				<strong>{level.approach}</strong>
 				<p>{level.description}</p>
