@@ -66,7 +66,7 @@
 				{#if importLabel}
 					<button
 						type="button"
-						class="bg-gray-850 py-0.1 flex scale-90 items-center rounded-lg px-2 text-[1px] leading-none font-medium text-gray-200 transition hover:bg-gray-800"
+						class="bg-gray-850 flex min-h-9 items-center rounded-lg px-3 text-sm leading-none font-medium whitespace-nowrap text-gray-200 transition hover:bg-gray-800"
 						onclick={onImport}
 					>
 						{importLabel}
@@ -84,20 +84,20 @@
 				{#if primaryLabel}
 					{#if primaryHref}
 						<a
-							class="inline-flex items-center gap-0.5 rounded-lg bg-white px-2 py-1 text-xs leading-none font-medium text-black transition hover:bg-gray-200"
+							class="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-white px-3 text-sm leading-none font-medium whitespace-nowrap text-black transition hover:bg-gray-200"
 							href={resolve(primaryHref)}
 						>
 							<Plus className="size-3" />
-							<span class="hidden md:inline">{primaryLabel}</span>
+							<span>{primaryLabel}</span>
 						</a>
 					{:else}
 						<button
 							type="button"
-							class="inline-flex items-center gap-0.5 rounded-lg bg-white px-2 py-1 text-xs leading-none font-medium text-black transition hover:bg-gray-200"
+							class="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-white px-3 text-sm leading-none font-medium whitespace-nowrap text-black transition hover:bg-gray-200"
 							onclick={onPrimary}
 						>
 							<Plus className="size-3" />
-							<span class="hidden md:inline">{primaryLabel}</span>
+							<span>{primaryLabel}</span>
 						</button>
 					{/if}
 				{/if}
@@ -105,7 +105,7 @@
 		</div>
 	</div>
 
-	<div class="border-gray-850/30 rounded-3xl border bg-gray-900 py-2">
+	<div class="workspace-surface border-gray-850/30 rounded-3xl border bg-gray-900 py-2">
 		<div class="flex w-full items-center space-x-2 px-3.5 py-0.5 pb-2">
 			<div class="flex flex-1 items-center">
 				<div class="mr-3 ml-1 self-center">

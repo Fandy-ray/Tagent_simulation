@@ -76,18 +76,18 @@
 		{#each selected as note (note.key)}
 			<button
 				type="button"
-				class="inline-flex max-w-full items-center gap-1 rounded-md border border-amber-200/15 bg-amber-200/[0.08] px-2 py-1 text-[11px] text-amber-100 hover:bg-amber-200/[0.14]"
+				class="inline-flex max-w-full items-center gap-1 rounded-md border border-[color:var(--qa-active,var(--m3-primary))]/15 bg-[var(--qa-active,var(--m3-primary))]/[0.08] px-2 py-1 text-[11px] text-[color:var(--qa-active,var(--m3-primary))] hover:bg-[var(--qa-active,var(--m3-primary))]/[0.14]"
 				title={`${note.notebookName} · ${note.title}`}
 				onclick={() => removeNote(note.key)}
 			>
 				<span class="max-w-56 truncate">笔记 · {note.title}</span>
-				<span class="text-amber-200/60" aria-hidden="true">×</span>
+				<span class="text-[color:var(--qa-active,var(--m3-primary))]/60" aria-hidden="true">×</span>
 			</button>
 		{/each}
 
 		<button
 			type="button"
-			class="inline-flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-[11px] text-gray-400 transition hover:border-amber-200/30 hover:bg-white/[0.06] hover:text-amber-100"
+			class="inline-flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-[11px] text-gray-400 transition hover:border-[color:var(--qa-active,var(--m3-primary))]/30 hover:bg-white/[0.06] hover:text-[color:var(--qa-active,var(--m3-primary))]"
 			aria-expanded={open}
 			onclick={toggleOpen}
 		>
@@ -102,7 +102,7 @@
 		>
 			<div class="mb-2 flex items-center gap-2">
 				<input
-					class="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-gray-100 outline-none placeholder:text-gray-600 focus:border-amber-300/50"
+					class="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-gray-100 outline-none placeholder:text-gray-600 focus:border-[color:var(--qa-active,var(--m3-primary))]/50"
 					placeholder="搜索笔记"
 					bind:value={query}
 				/>
@@ -123,7 +123,7 @@
 				{:else}
 					{#each noteGroups as group (group.collection.id)}
 						<div class="mb-2 last:mb-0">
-							<div class="px-2 py-1 text-[11px] font-medium text-amber-200/80">
+							<div class="px-2 py-1 text-[11px] font-medium text-[color:var(--qa-active,var(--m3-primary))]/80">
 								{group.collection.name}
 							</div>
 							{#each group.notes as note (note.id)}
@@ -134,7 +134,7 @@
 									onclick={() => toggleNote(group.collection, note)}
 								>
 									<span
-										class={`flex size-4 shrink-0 items-center justify-center rounded border text-[10px] ${isSelected(key) ? 'border-amber-300 bg-amber-300 text-black' : 'border-white/25 text-transparent'}`}
+										class={`flex size-4 shrink-0 items-center justify-center rounded border text-[10px] ${isSelected(key) ? 'border-[color:var(--qa-active,var(--m3-primary))] bg-[var(--qa-active,var(--m3-primary))] text-[color:var(--qa-on-active,var(--m3-on-primary))]' : 'border-white/25 text-transparent'}`}
 									>
 										✓
 									</span>

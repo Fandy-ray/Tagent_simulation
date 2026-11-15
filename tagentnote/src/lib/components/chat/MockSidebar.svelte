@@ -269,6 +269,7 @@
 </script>
 
 <aside
+	class:space-branded={spaceBrand}
 	class="chat-sidebar fixed inset-y-0 left-0 z-40 flex h-dvh w-[260px] shrink-0 flex-col overflow-hidden border-r border-white/[0.04] bg-gray-900 text-sm text-gray-200 shadow-2xl shadow-black/50 select-none md:static md:z-auto md:shadow-none"
 >
 	<header class="chat-sidebar-header flex h-12 shrink-0 items-center gap-2 px-2">
@@ -643,7 +644,7 @@
 				<div class="flex w-full items-center text-left">
 					<div class="relative mr-3 shrink-0 self-center">
 						<div
-							class="flex size-7 items-center justify-center rounded-full bg-amber-500 text-[10px] font-semibold text-white"
+							class="sidebar-avatar flex size-7 items-center justify-center rounded-full bg-amber-500 text-[10px] font-semibold text-white"
 						>
 							{avatarText}
 						</div>

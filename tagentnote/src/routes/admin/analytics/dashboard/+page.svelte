@@ -23,7 +23,12 @@
 		{ id: '90d', label: '最近 90 天', days: 90 },
 		{ id: '365d', label: '最近一年', days: 365 }
 	];
-	const chartColors = ['#3b82f6', '#10b981', '#f59e0b', '#a78bfa'];
+	const chartColors = [
+		'var(--qa-active)',
+		'var(--admin-chart-green)',
+		'var(--qa-amber)',
+		'var(--admin-chart-violet)'
+	];
 	const series: Series[] = [
 		{ key: 'chat_turns', name: '答疑' },
 		{ key: 'essay_reviews', name: '论文批改' },
@@ -314,7 +319,7 @@
 			<h2 class="mb-1 px-0.5 text-xs font-medium text-gray-700 dark:text-gray-300">模型用量</h2>
 			<div class="overflow-x-auto whitespace-nowrap">
 				<table class="w-full min-w-[420px] text-left text-xs text-gray-500 dark:text-gray-400">
-					<thead class="text-[10px] text-gray-800 uppercase dark:text-gray-200">
+					<thead class="bg-[var(--qa-panel)] text-xs font-semibold text-[color:var(--qa-text)]">
 						<tr class="dark:border-gray-850/40 border-b border-gray-100">
 							<th class="w-8 px-2.5 py-2">#</th>
 							<th class="px-2.5 py-2"
@@ -387,7 +392,7 @@
 			<h2 class="mb-1 px-0.5 text-xs font-medium text-gray-700 dark:text-gray-300">用户活动</h2>
 			<div class="overflow-x-auto whitespace-nowrap">
 				<table class="w-full min-w-[360px] text-left text-xs text-gray-500 dark:text-gray-400">
-					<thead class="text-[10px] text-gray-800 uppercase dark:text-gray-200">
+					<thead class="bg-[var(--qa-panel)] text-xs font-semibold text-[color:var(--qa-text)]">
 						<tr class="dark:border-gray-850/40 border-b border-gray-100">
 							<th class="w-8 px-2.5 py-2">#</th>
 							<th class="px-2.5 py-2"

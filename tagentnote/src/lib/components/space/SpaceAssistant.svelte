@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { getAgentModels, streamAgentChat } from '$lib/apis/agent';
 	import { learningContextParams, spaceStages, type SpaceStage } from '$lib/data/spaceLearning';
 	import { saveSpaceRecord } from '$lib/data/spaceRecords';
 	import MarkdownContent from '$lib/components/chat/MarkdownContent.svelte';
 	import SatelliteFace from './SatelliteFace.svelte';
+	import Cog6 from '$lib/components/icons/Cog6.svelte';
 
 	let {
 		stage,
@@ -13,7 +14,9 @@
 		topicId,
 		lesson,
 		lessonId,
-		preferredModel
+		preferredModel,
+		resourceTitle,
+		autoOpen = false
 	}: {
 		stage?: SpaceStage;
 		topic?: string;
@@ -21,6 +24,8 @@
 		lesson?: string;
 		lessonId?: string;
 		preferredModel?: string;
+		resourceTitle?: string;
+		autoOpen?: boolean;
 	} = $props();
 
 	type Message = {
@@ -36,12 +41,17 @@
 	let failure = $state('');
 	let notice = $state('');
 	let opened = $state(false);
+	let showSettings = $state(false);
+	let showNotes = $state(false);
+	let noteTitle = $state('');
+	let noteText = $state('');
+	let noteError = $state('');
 	let input: HTMLTextAreaElement;
 	let dialog: HTMLDialogElement;
 	let thread: HTMLDivElement;
 	let request: AbortController | undefined;
 	const context = $derived(
-		[stage && spaceStages[stage].label, topic, lesson].filter(Boolean).join(' · ')
+		[stage && spaceStages[stage].label, topic, lesson, resourceTitle].filter(Boolean).join(' · ')
 	);
 	const qaHref = $derived(
 		stage && topicId
@@ -54,6 +64,20 @@
 		opened = true;
 		await tick();
 		input.focus();
+	}
+
+	onMount(() => {
+		if (!autoOpen) return;
+		void openChat().then(() => notifyEmbeddedHost('xiaogui-ready'));
+	});
+
+	function notifyEmbeddedHost(type: 'xiaogui-ready' | 'xiaogui-close') {
+		if (autoOpen && window.parent !== window) {
+			const origin = new URLSearchParams(window.location.search).get('parent_origin') ?? 'https://science.nasa.gov';
+			if (/^https:\/\/(?:science\.nasa\.gov|svs\.gsfc\.nasa\.gov|plus\.nasa\.gov|www\.nasa\.gov|www\.cmse\.gov\.cn|www\.usgs\.gov)$/.test(origin)) {
+				window.parent.postMessage({ type }, origin);
+			}
+		}
 	}
 
 	async function send(event: SubmitEvent) {
@@ -135,10 +159,32 @@
 		}
 	}
 
+	function saveNote(event: SubmitEvent) {
+		event.preventDefault();
+		const content = noteText.trim();
+		if (!content) return;
+		try {
+			saveSpaceRecord({
+				id: `mascot/note/${crypto.randomUUID()}`,
+				kind: '笔记',
+				context: context || '航天探索',
+				title: noteTitle.trim() || resourceTitle || lesson || '小轨学习笔记',
+				content
+			});
+			noteTitle = '';
+			noteText = '';
+			noteError = '';
+			showNotes = false;
+			notice = '学习笔记已保存。';
+		} catch {
+			noteError = '无法保存笔记，请检查浏览器存储设置。';
+		}
+	}
+
 	$effect(() => () => request?.abort());
 </script>
 
-<div class="space-theme assistant">
+<div class="space-theme assistant" class:standalone={autoOpen}>
 	<button
 		class="launcher"
 		type="button"
@@ -153,7 +199,12 @@
 	<dialog
 		bind:this={dialog}
 		aria-labelledby="space-assistant-title"
-		onclose={() => (opened = false)}
+		onclose={() => {
+			opened = false;
+			showSettings = false;
+			showNotes = false;
+			notifyEmbeddedHost('xiaogui-close');
+		}}
 	>
 		<div class="chat">
 			<header>
@@ -162,11 +213,51 @@
 					<h2 id="space-assistant-title">小轨</h2>
 					<p>{context || '航天学习助手'}</p>
 				</div>
-				<button class="close" type="button" aria-label="关闭小轨对话" onclick={() => dialog.close()}
+				<button
+					class="settings-button close"
+					type="button"
+					aria-label="小轨设置与扩展安装"
+					title="扩展安装"
+					aria-expanded={showSettings}
+					onclick={() => {
+						showNotes = false;
+						showSettings = !showSettings;
+					}}
+				><Cog6 className="size-5" /></button>
+				<button class="close" type="button" aria-label="关闭小轨对话" onclick={() => {
+					if (autoOpen && window.parent === window && window.opener === null) window.close();
+					dialog.close();
+				}}
 					>×</button
 				>
 			</header>
-			<div class="thread" bind:this={thread} role="log" aria-label="对话记录" aria-busy={pending}>
+			{#if showSettings}
+				<section class="extension-help" aria-labelledby="xiaogui-extension-title">
+					<h3 id="xiaogui-extension-title">安装浏览器扩展</h3>
+					<ol>
+						<li>在地址栏打开 Edge 的 <code>edge://extensions</code> 或 Chrome 的 <code>chrome://extensions</code>。</li>
+						<li>开启「开发者模式」，点「加载已解压的扩展」，选择项目根目录下的 <code>browser-extension</code> 文件夹。</li>
+						<li>保持本地 TAgent 和模型服务运行。从空天资料库打开支持的外部资料，点原站右下角的小轨开始问答。</li>
+					</ol>
+					<p>扩展更新后，在扩展管理页点「重新加载」，再从资料库重新打开原站。</p>
+					<button class="text-button" type="button" onclick={() => (showSettings = false)}>返回对话</button>
+				</section>
+			{/if}
+			{#if showNotes}
+				<section class="extension-help" aria-labelledby="xiaogui-note-title">
+					<h3 id="xiaogui-note-title">记学习笔记</h3>
+					<form class="note-form" onsubmit={saveNote}>
+						<label>标题（可选）<input bind:value={noteTitle} maxlength="100" /></label>
+						<label>笔记正文<textarea bind:value={noteText} rows="6" maxlength="5000" required placeholder="写下你的观察、疑问或收获…"></textarea></label>
+						{#if noteError}<p class="error" role="alert">{noteError}</p>{/if}
+						<div class="footer-actions">
+							<button class="text-button" type="button" onclick={() => (showNotes = false)}>返回对话</button>
+							<button class="send" type="submit" disabled={!noteText.trim()}>保存笔记</button>
+						</div>
+					</form>
+				</section>
+			{/if}
+			<div class="thread" class:settings-hidden={showSettings || showNotes} bind:this={thread} role="log" aria-label="对话记录" aria-busy={pending}>
 				{#if !messages.length}<p class="welcome">你好，我是小轨。你想了解什么航天问题？</p>{/if}
 				{#each messages as message, index (message.id)}
 					<div class="message" class:user-message={message.role === 'user'}>
@@ -183,7 +274,7 @@
 					</div>
 				{/each}
 			</div>
-			<form onsubmit={send}>
+			<form class:settings-hidden={showSettings || showNotes} onsubmit={send}>
 				{#if failure}<p class="error" role="alert">{failure}</p>{/if}
 				{#if notice}<p class="hint" role="status">{notice}</p>{/if}
 				<div class="compose">
@@ -196,7 +287,10 @@
 						placeholder={lesson || '输入你的航天问题…'}></textarea>
 					<button class="send" type="submit" disabled={pending || !draft.trim()}>发送</button>
 				</div>
-				<a class="text-button" href={qaHref} onclick={() => dialog.close()}>打开完整答疑 ↗</a>
+				<div class="footer-actions">
+					<a class="text-button" href={qaHref} onclick={() => dialog.close()}>打开完整答疑 ↗</a>
+					<button class="text-button" type="button" onclick={() => (showNotes = true)}>记笔记</button>
+				</div>
 			</form>
 		</div>
 	</dialog>
@@ -243,13 +337,25 @@
 		border-radius: 16px;
 		background: var(--m3-background);
 		color: var(--m3-on-surface);
-		color-scheme: dark;
+		color-scheme: inherit;
 	}
 	dialog::backdrop {
 		background: #08061255;
 	}
+	.standalone dialog {
+		inset: 0;
+		width: 100%;
+		max-width: none;
+		max-height: none;
+		border: 0;
+		border-radius: 0;
+	}
+	.standalone .chat {
+		height: 100dvh;
+	}
 	.chat {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		grid-template-rows: auto minmax(0, 1fr) auto;
 		height: min(620px, calc(100dvh - 28px));
 	}
@@ -287,6 +393,41 @@
 		border-radius: 10px;
 		font-size: 22px;
 	}
+	.settings-button {
+		display: grid;
+		place-items: center;
+	}
+	.settings-button:hover,
+	.settings-button[aria-expanded='true'] {
+		background: var(--m3-surface-high);
+		color: var(--m3-primary);
+	}
+	.thread.settings-hidden,
+	form.settings-hidden {
+		display: none;
+	}
+	.extension-help {
+		grid-row: 2 / span 2;
+		overflow: auto;
+		padding: 16px;
+		font-size: 14px;
+		line-height: 1.65;
+	}
+	.extension-help h3 {
+		font-weight: 650;
+	}
+	.extension-help ol {
+		margin: 12px 0;
+		padding-inline-start: 22px;
+		list-style: decimal;
+	}
+	.extension-help li + li {
+		margin-top: 8px;
+	}
+	.extension-help code {
+		color: var(--m3-primary);
+		overflow-wrap: anywhere;
+	}
 	.thread {
 		display: flex;
 		flex-direction: column;
@@ -306,7 +447,7 @@
 	}
 	.user-message {
 		align-self: end;
-		background: #342844;
+		background: var(--space-selected);
 		white-space: pre-wrap;
 	}
 	form {
@@ -317,11 +458,13 @@
 		background: var(--m3-surface-low);
 	}
 	.compose {
-		display: flex;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: end;
 		gap: 8px;
 	}
-	textarea {
+	textarea,
+	.note-form input {
 		width: 100%;
 		min-width: 0;
 		padding: 8px;
@@ -331,10 +474,28 @@
 		background: var(--m3-background);
 		font-size: 16px;
 	}
+	.note-form {
+		gap: 12px;
+		margin-top: 12px;
+		padding: 0;
+		border: 0;
+		background: transparent;
+	}
+	.note-form label {
+		display: grid;
+		gap: 4px;
+	}
+	.footer-actions {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 4px 12px;
+	}
 	.send {
 		min-height: 42px;
-		flex: none;
 		padding-inline: 12px;
+		white-space: nowrap;
 		border-radius: 9px;
 		background: var(--m3-primary);
 		color: var(--m3-on-primary);
@@ -355,7 +516,7 @@
 		cursor: default;
 	}
 	.error {
-		color: #ffb4ab;
+		color: var(--space-error);
 		font-size: 13px;
 	}
 	:is(button, a, textarea):focus-visible {

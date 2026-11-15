@@ -142,7 +142,7 @@
 		gap: 6px 16px;
 		padding: 13px 16px;
 		border-block: 1px solid var(--m3-outline-variant);
-		background: #1d1b20e8;
+		background: color-mix(in srgb, var(--m3-surface-low) 92%, transparent);
 	}
 	.flight-header h2 {
 		font-size: 19px;
@@ -152,6 +152,30 @@
 		color: var(--m3-on-surface-variant);
 		font-size: 13px;
 		font-variant-numeric: tabular-nums;
+	}
+	:global(html.light) .flight {
+		overflow: hidden;
+		border: 1px solid #d8e0e8;
+		border-radius: 16px;
+		background: var(--m3-surface-low);
+		box-shadow: 0 6px 18px #162d4510;
+	}
+	:global(html.light) .flight-header {
+		border-top: 0;
+		border-bottom-color: #d8e0e8;
+		background: #edf3fa;
+	}
+	:global(html.light) .flight-course {
+		background: radial-gradient(ellipse at 26% 40%, #ebf3fd, transparent 75%);
+	}
+	:global(html.light) .next .flight-emblem {
+		color: var(--space-amber);
+	}
+	:global(html.light) .locked .flight-emblem {
+		color: #758398;
+	}
+	:global(html.light) .flight-node-text {
+		text-shadow: none;
 	}
 	.flight-course {
 		position: relative;
@@ -165,7 +189,7 @@
 	}
 	.flight-line path {
 		fill: none;
-		stroke: #a996d2;
+		stroke: color-mix(in srgb, var(--m3-primary) 75%, transparent);
 		stroke-opacity: 0.7;
 		stroke-width: 1.5;
 		stroke-dasharray: 3 6;
@@ -231,7 +255,7 @@
 		min-width: 0;
 		display: grid;
 		gap: 2px;
-		text-shadow: 0 2px 5px #090711;
+		text-shadow: 0 2px 5px var(--m3-background);
 	}
 	.flight-node-text small {
 		color: var(--m3-on-surface-variant);

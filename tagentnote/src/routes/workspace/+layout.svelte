@@ -178,9 +178,10 @@
 	<title>工作空间 | TAgent</title>
 </svelte:head>
 
-<main class="flex h-screen overflow-hidden bg-gray-900 text-white">
+<main class="space-theme workspace-palette workspace-page flex h-dvh overflow-hidden">
 	{#if sidebarOpen}
 		<MockSidebar
+			spaceBrand
 			{activeChatId}
 			{selectedFolderId}
 			{chats}
@@ -233,8 +234,8 @@
 		></button>
 	{/if}
 
-	<section class="relative flex min-w-0 flex-1 flex-col bg-gray-900">
-		<nav class="shrink-0 px-2.5 pt-1.5 select-none">
+	<section class="relative flex min-w-0 flex-1 flex-col">
+		<nav class="workspace-nav shrink-0 px-2.5 pt-1.5 select-none">
 			<div class="flex items-center gap-1">
 				{#if !sidebarOpen}
 					<button
@@ -266,9 +267,7 @@
 						<a
 							draggable="false"
 							aria-current={isActiveTab(tab.href) ? 'page' : undefined}
-							class={`min-w-fit p-1.5 transition select-none ${
-								isActiveTab(tab.href) ? 'text-white' : 'text-gray-600 hover:text-white'
-							}`}
+							class="workspace-tab min-w-fit rounded-lg px-2 py-1.5 transition select-none"
 							href={resolve(withParams(tab.href))}
 						>
 							{tab.label}
@@ -283,3 +282,74 @@
 		</div>
 	</section>
 </main>
+
+<style>
+	.workspace-page {
+		background: var(--qa-surface);
+		color: var(--qa-text);
+	}
+
+	.workspace-page :global(.chat-sidebar),
+	.workspace-nav {
+		background: var(--qa-panel) !important;
+		border-color: var(--qa-line) !important;
+	}
+
+	.workspace-nav {
+		border-bottom: 1px solid var(--qa-line);
+	}
+
+	.workspace-tab {
+		color: var(--qa-muted);
+	}
+
+	.workspace-tab:hover,
+	.workspace-tab:focus-visible {
+		background: var(--qa-raised);
+		color: var(--qa-text);
+	}
+
+	.workspace-tab[aria-current='page'] {
+		background: var(--qa-tint);
+		color: var(--qa-active);
+	}
+
+	.workspace-page :global(.workspace-surface) {
+		background: var(--qa-panel) !important;
+		border-color: var(--qa-line);
+	}
+
+	.workspace-page :global(#workspace-container :is(a, button).bg-white.text-black:not([role='checkbox'])) {
+		background: var(--qa-active);
+		color: var(--qa-on-active);
+	}
+
+	.workspace-page :global(#workspace-container :is(a, button).bg-white.text-black:not([role='checkbox']):hover:not(:disabled)) {
+		filter: brightness(1.12);
+	}
+
+	:global(html.light) .workspace-page :global(.bg-gray-850) {
+		background-color: var(--qa-panel) !important;
+	}
+
+	:global(html.light) .workspace-page :global(.bg-gray-800),
+	:global(html.light) .workspace-page :global(.hover\:bg-gray-800:hover) {
+		background-color: var(--qa-raised) !important;
+	}
+
+	:global(html.light) .workspace-page :global(.bg-gray-900:not(.workspace-surface)) {
+		background-color: var(--qa-surface) !important;
+	}
+
+	:global(html.light) .workspace-page :global(.bg-gray-950) {
+		background-color: var(--qa-surface) !important;
+	}
+
+	:global(html.light) .workspace-page :global(:is(.text-white, .text-gray-100, .text-gray-200)) {
+		color: var(--qa-text) !important;
+	}
+
+	:global(html.light) .workspace-page :global(:is(.text-gray-300, .text-gray-400, .text-gray-500)) {
+		color: var(--qa-muted) !important;
+	}
+</style>

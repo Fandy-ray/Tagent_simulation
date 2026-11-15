@@ -50,7 +50,7 @@ export type MemoryItem = {
 };
 
 export type UserSettings = {
-	theme: 'system' | 'dark' | 'oled-dark' | 'light';
+	theme: 'dark' | 'light';
 	language: string;
 	notificationEnabled: boolean;
 	system: string;
@@ -224,11 +224,12 @@ export function loadUserSettings(): UserSettings {
 	if (!browser) return defaults;
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
-		if (!raw) return defaults;
+		if (!raw) return { ...defaults, theme: localStorage.getItem('theme') === 'light' ? 'light' : 'dark' };
 		const parsed = JSON.parse(raw) as Partial<UserSettings>;
 		return {
 			...defaults,
 			...parsed,
+			theme: (localStorage.getItem('theme') ?? parsed.theme) === 'light' ? 'light' : 'dark',
 			textScale:
 				typeof parsed.textScale === 'number' && Number.isFinite(parsed.textScale)
 					? Math.min(1.5, Math.max(1, parsed.textScale))
@@ -268,36 +269,15 @@ export function applyTheme(theme: UserSettings['theme']) {
 	if (!browser) return;
 
 	const root = document.documentElement;
-	const themes = ['dark', 'light', 'oled-dark', 'system'];
-
-	// 移除所有主题类
-	themes.forEach((t) => root.classList.remove(t));
-
-	// 重置 CSS 变量
-	root.style.removeProperty('--color-gray-800');
-	root.style.removeProperty('--color-gray-850');
-	root.style.removeProperty('--color-gray-900');
-	root.style.removeProperty('--color-gray-950');
-
-	let themeToApply = theme;
-
-	if (theme === 'oled-dark') {
-		root.style.setProperty('--color-gray-800', '#101010');
-		root.style.setProperty('--color-gray-850', '#050505');
-		root.style.setProperty('--color-gray-900', '#000000');
-		root.style.setProperty('--color-gray-950', '#000000');
-		themeToApply = 'dark';
-	} else if (theme === 'dark') {
-		root.style.setProperty('--color-gray-800', '#333');
-		root.style.setProperty('--color-gray-850', '#262626');
-		root.style.setProperty('--color-gray-900', '#171717');
-		root.style.setProperty('--color-gray-950', '#0d0d0d');
-		themeToApply = 'dark';
+	root.classList.toggle('light', theme === 'light');
+	root.classList.toggle('dark', theme === 'dark');
+	document.querySelector('meta[name="theme-color"]')
+		?.setAttribute('content', theme === 'light' ? '#f7f5ef' : '#141218');
+	try {
+		localStorage.setItem('theme', theme);
+	} catch {
+		// The current page can still switch themes when storage is unavailable.
 	}
-
-	root.classList.add(themeToApply);
-
-	localStorage.setItem('theme', theme);
 }
 
 export function applyTextScale(scale: number | null) {

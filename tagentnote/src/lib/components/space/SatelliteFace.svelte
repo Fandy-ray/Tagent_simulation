@@ -186,6 +186,50 @@
 		border-bottom: 1px solid #f6b45f;
 		border-radius: 50%;
 	}
+	:global(html.light) .shadow {
+		background: #274e8130;
+	}
+	:global(html.light) .pack {
+		border-color: #7393b2;
+		background: #48698d;
+	}
+	:global(html.light) .suit {
+		border-color: #aabbd0;
+		background: linear-gradient(148deg, #fffef8, #dbe6f2);
+		box-shadow: inset 0 -3px #9eb5d0;
+	}
+	:global(html.light) .badge {
+		border-color: #b8cbe0;
+		background: #235488;
+	}
+	:global(html.light) :is(.arm, .arm i, .boot) {
+		border-color: #8ca5c0;
+	}
+	:global(html.light) .arm {
+		background: linear-gradient(#fbfcfb 53%, #4874a1 53% 70%, #dbe6f2 70%);
+	}
+	:global(html.light) .arm i {
+		background: #edf4fb;
+	}
+	:global(html.light) .boot {
+		background: #315e8e;
+	}
+	:global(html.light) .helmet {
+		border-color: #aabbd0;
+		background: linear-gradient(145deg, #fffefa, #c9dced 76%);
+		box-shadow: inset 0 -3px #8aaac8;
+	}
+	:global(html.light) .antenna {
+		background: #7198bd;
+	}
+	:global(html.light) .visor {
+		border-color: #719dc5;
+		background: #142a44;
+	}
+	:global(html.light) .eye {
+		background: #e0f4ff;
+	}
+
 	.thinking .helmet {
 		animation: wonder 1.8s ease-in-out infinite;
 	}

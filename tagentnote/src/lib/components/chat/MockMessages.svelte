@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { readBrowserVoice } from '$lib/data/adminAudio';
 	import MarkdownContent from '$lib/components/chat/MarkdownContent.svelte';
 	import PaperReviewCard from '$lib/components/chat/PaperReviewCard.svelte';
 	import PaperTopicCard from '$lib/components/chat/PaperTopicCard.svelte';
@@ -147,7 +148,9 @@
 			return;
 		}
 		const utter = new SpeechSynthesisUtterance(text);
-		utter.lang = 'zh-CN';
+		const voice = readBrowserVoice();
+		if (voice) utter.voice = voice;
+		utter.lang = voice?.lang ?? 'zh-CN';
 		utter.onend = () => {
 			if (speakingId === messageId) speakingId = null;
 		};

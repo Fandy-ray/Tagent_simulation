@@ -7,7 +7,8 @@
 
 <main class="learn-frame learn-selection">
 	<section class="learn-intro">
-		<img src={resolve('/images/hubble-orbit.jpg')} alt="" />
+		<img class="learn-intro-deep-space" src={resolve('/images/hubble-orbit.jpg')} alt="" />
+		<img class="learn-intro-station" src={resolve('/images/flight-deck-hero-light.png')} alt="" />
 		<div>
 			<h1>选择你的学段</h1>
 			<p>从适合你的讲解开始，边观察、边动手。进入后可以随时切换学段。</p>

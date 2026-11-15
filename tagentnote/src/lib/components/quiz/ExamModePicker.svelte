@@ -202,7 +202,7 @@
 	}
 	.mode-card[aria-pressed='true'] {
 		border-color: var(--m3-primary);
-		background: #282135;
+		background: color-mix(in srgb, var(--space-selected) 75%, var(--m3-surface-low));
 	}
 	.mode-title {
 		font-size: 17px;
@@ -219,7 +219,7 @@
 		color: var(--m3-on-surface-variant);
 	}
 	.mode-card[aria-pressed='true'] .mode-icon {
-		background: #342844;
+		background: var(--space-selected);
 		color: var(--m3-primary);
 	}
 	.mode-check {
@@ -290,7 +290,7 @@
 		font-weight: 600;
 	}
 	.start-button:hover {
-		background: #e1d1ff;
+		background: color-mix(in srgb, var(--m3-primary) 88%, var(--m3-on-primary));
 	}
 	.start-button svg {
 		width: 17px;

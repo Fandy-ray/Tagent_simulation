@@ -597,7 +597,7 @@
 		--color-gray-600: #a69caf;
 		background: var(--m3-background);
 		color: var(--m3-on-surface);
-		color-scheme: dark;
+		color-scheme: inherit;
 		font-family: var(--space-font);
 	}
 	.exam-header {
@@ -634,5 +634,8 @@
 		background:
 			linear-gradient(#14121860, #14121880),
 			url('$lib/assets/starfield.png') center top / cover;
+	}
+	:global(html.light .space-exam) .exam-shell {
+		background: var(--m3-background);
 	}
 </style>

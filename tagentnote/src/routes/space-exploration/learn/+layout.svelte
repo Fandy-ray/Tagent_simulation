@@ -4,7 +4,11 @@
 	import CosmicLayer from '$lib/components/space/CosmicLayer.svelte';
 	import OrbitMark from '$lib/components/icons/OrbitMark.svelte';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
+	import { stageKeys } from '$lib/data/spaceLearning';
 	let { children } = $props();
+	const stage = $derived(stageKeys.find((key) => key === page.params.stage));
+	const libraryRoute = '/space-exploration/learn/[stage]/resources';
 </script>
 
 <div class="space-theme space-learning">
@@ -20,6 +24,13 @@
 					>我的笔记本</a
 				>
 				<a class="learn-button secondary" href={resolve('/space-exploration/learn')}>选择学段</a>
+				{#if stage}
+					<a
+						class="learn-button secondary"
+						aria-current={page.route.id === libraryRoute ? 'page' : undefined}
+						href={resolve(libraryRoute, { stage }) + page.url.search}
+					>空天资料库</a>
+				{/if}
 			</nav>
 		</div>
 	</header>

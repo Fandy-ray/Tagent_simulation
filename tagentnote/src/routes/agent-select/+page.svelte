@@ -73,7 +73,7 @@
 </script>
 
 <svelte:head>
-	<title>选择智能体 | 系统建模与仿真智能教学平台</title>
+	<title>选择智能体 | 航空航天探索实验室</title>
 </svelte:head>
 
 <div class="space-theme learning-page">
@@ -100,11 +100,12 @@
 
 	<main class="frame">
 		<section class="course" aria-labelledby="course-title">
-			<img class="course-image" src={resolve('/images/hubble-orbit.jpg')} alt="" />
 			<div class="course-copy">
-				<h1 id="course-title">系统建模与仿真</h1>
+				<h1 id="course-title">航空航天探索实验室</h1>
 				<p>课程答疑、论文辅助、笔记整理与测评</p>
 			</div>
+			<img class="course-image deep-space-image" src={resolve('/images/hubble-orbit.jpg')} alt="" />
+			<img class="course-image station-image" src={resolve('/images/flight-deck-hero-light.png')} alt="" />
 		</section>
 
 		<section class="workspace" aria-labelledby="agent-mode-title">
@@ -294,40 +295,63 @@
 	.course {
 		position: relative;
 		isolation: isolate;
-		display: flex;
-		min-height: 238px;
+		display: grid;
+		min-height: clamp(280px, 30vw, 400px);
 		align-items: center;
 		overflow: hidden;
-		border: 1px solid var(--m3-outline-variant);
+		border: 1px solid #425265;
 		border-radius: 16px;
-		background: #191724;
+		background: #0c1521;
+		color: #f3f7ff;
+		box-shadow: 0 12px 26px #14243a28;
+	}
+
+	.course-image,
+	.course::after {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
 	}
 
 	.course-image {
-		position: absolute;
 		z-index: -2;
-		inset: 0 0 0 auto;
-		width: 68%;
-		height: 100%;
 		object-fit: cover;
-		object-position: center 56%;
+		object-position: 63% center;
 	}
 
 	.course::after {
-		position: absolute;
 		z-index: -1;
-		inset: 0;
-		background: linear-gradient(
-			90deg,
-			#191724 30%,
-			rgb(25 23 36 / 88%) 42%,
-			rgb(25 23 36 / 12%) 78%
-		);
+		background: linear-gradient(90deg, #0c1521 40%, #0c1521a8 48%, transparent 65%);
 		content: '';
 	}
 
+	.station-image,
+	:global(html.light) .deep-space-image {
+		display: none;
+	}
+
+	:global(html.light) .station-image {
+		display: block;
+	}
+
+	:global(html.light) .course {
+		border-color: var(--m3-outline-variant);
+		background: #f7f5ef;
+		color: #17263a;
+	}
+
+	:global(html.light) .course::after {
+		background: linear-gradient(90deg, #f7f5eff5, #f7f5efda 37%, #f7f5ef00 68%);
+	}
+
+	:global(html.light) .course p {
+		color: #35465c;
+	}
+
 	.course-copy {
-		padding: 36px clamp(24px, 5vw, 64px);
+		max-width: 54%;
+		padding: 30px clamp(20px, 4vw, 56px);
 	}
 
 	h1 {
@@ -340,7 +364,7 @@
 
 	.course p {
 		margin: 15px 0 0;
-		color: var(--m3-on-surface-variant);
+		color: #c7d8e8;
 		font-size: 15px;
 		line-height: 1.6;
 	}
@@ -549,18 +573,21 @@
 			padding-top: 20px;
 		}
 		.course {
-			min-height: 196px;
+			min-height: 300px;
+			align-items: end;
+		}
+		.course-copy {
+			max-width: 100%;
+			padding: 20px;
 		}
 		.course-image {
-			width: 100%;
+			object-position: 70% center;
 		}
 		.course::after {
-			background: linear-gradient(
-				90deg,
-				rgb(25 23 36 / 98%),
-				rgb(25 23 36 / 82%) 50%,
-				rgb(25 23 36 / 34%)
-			);
+			background: linear-gradient(0deg, #060c16f2, #060c1640 62%, transparent);
+		}
+		:global(html.light) .course::after {
+			background: linear-gradient(0deg, #f7f5efff, #f7f5efed 25%, #f7f5ef00 65%);
 		}
 		.workspace {
 			margin-top: 27px;
@@ -604,6 +631,18 @@
 		.agent-card,
 		.card-action svg {
 			transition: none;
+		}
+	}
+
+	@media (min-width: 651px) {
+		.course {
+			min-height: clamp(150px, 29dvh, 310px);
+		}
+
+		.deep-space-image {
+			inset-inline-start: auto;
+			width: 58%;
+			object-position: center 48%;
 		}
 	}
 </style>

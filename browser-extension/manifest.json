@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "空天资料库 · 小轨",
+  "version": "0.4.1",
+  "description": "从空天资料库打开指定资料时显示小轨入口。",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://science.nasa.gov/learn/basics-of-space-flight/chapter5-1/*",
+        "https://science.nasa.gov/eclips/videos/moon-phases/*",
+        "https://science.nasa.gov/moon/moon-phases/*",
+        "https://svs.gsfc.nasa.gov/3939/*",
+        "https://svs.gsfc.nasa.gov/11485/*",
+        "https://plus.nasa.gov/video/stemonstrations-orbits/*",
+        "https://www.nasa.gov/learning-resources/for-kids-and-students/what-is-a-satellite-grades-5-8/*",
+        "https://www.cmse.gov.cn/col/col1285/index.html",
+        "https://www.usgs.gov/faqs/what-are-band-designations-landsat-satellites*"
+      ],
+      "js": [
+        "xiaogui.js"
+      ]
+    }
+  ]
+}
