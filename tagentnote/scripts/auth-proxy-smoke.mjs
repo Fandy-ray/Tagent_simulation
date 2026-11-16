@@ -67,7 +67,8 @@ try {
 	assert.equal((await fetch(list)).status, 200);
 	authEnabled = true;
 	assert.equal((await fetch(list)).status, 404);
-	assert.equal((await fetch(list, { headers: { cookie: 'student=ok' } })).status, 200);
+	assert.equal((await fetch(list, { headers: { cookie: 'student=ok' } })).status, 404);
+	assert.equal((await fetch(list, { headers: { cookie: 'admin=ok' } })).status, 200);
 	const writeHeaders = {
 		cookie: 'student=ok',
 		origin: process.env.TAGENT_PUBLIC_ORIGIN,
@@ -75,7 +76,7 @@ try {
 	};
 	assert.equal(
 		(await fetch(`${prefix}/api/search`, { method: 'POST', headers: writeHeaders })).status,
-		200
+		404
 	);
 	assert.equal(
 		(await fetch(`${prefix}/api/notes`, { method: 'POST', headers: writeHeaders })).status,

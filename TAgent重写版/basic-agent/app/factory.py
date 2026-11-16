@@ -84,7 +84,8 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         settings,
         warm_up=not testing,
         learning_store=not testing,
-        include_notebook=not testing and not running_under_pytest(),
+        # 精简笔记本使用共享存储。账号模式只能接入已完成隔离的完整版服务。
+        include_notebook=not testing and not running_under_pytest() and not app.config["AUTH_ENABLED"],
         registry=app.extensions["model_provider_registry"],
     )
     if app.config["AUTH_ENABLED"] and not testing and app.extensions["services"].store is None:
@@ -163,6 +164,8 @@ def mount_notebook(app: Flask, notebook, *, respect_limit: bool = False) -> None
 
 def create_notebook_app(settings=None, *, services=None, warm_up: bool = True) -> Flask:
     """只含笔记本的应用。笔记本自己的测试用这个，不拉 tagent 的模型和图。"""
+    if AuthConfig.from_env().enabled:
+        raise ValueError("Shared Lite notebook cannot run in TAgent account mode")
     from app.api.notebook import register_blueprints as register_notebook_blueprints
     from app.api.notebook.error_handler import register_error_handlers as register_notebook_errors
     from app.api.notebook.security import install_security
