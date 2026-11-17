@@ -6,7 +6,8 @@ from unittest.mock import patch
 from app.config import AgentConfig, normalize_notebook_url
 from app.container import Services, build_knowledge_base
 from app.rag.composite_kb import CompositeKnowledgeBase
-from app.rag.opennotebook_kb import OpenNotebookKnowledgeBase
+from app.rag.opennotebook_kb import OpenNotebookError, OpenNotebookKnowledgeBase
+from app.infra.notebook_identity import NotebookIdentity, bind_notebook_identity, reset_notebook_identity
 
 
 class FakeResponse:
@@ -102,6 +103,55 @@ def test_opennotebook_retrieve_and_chunks():
     chunks = kb.chunks()
     assert [doc.metadata["h1"] for doc in chunks] == ["笔记A", "教材"]
     assert any("到达率" in text for text, _ in kb.sample_exam_pieces("排队"))
+
+
+def test_account_mode_forwards_only_current_verified_session_and_does_not_cache():
+    calls = []
+
+    class RecordingClient:
+        def request(self, method, path, **kwargs):
+            calls.append((method, path, kwargs.get("headers", {})))
+            return FakeResponse({"ok": True})
+
+    kb = OpenNotebookKnowledgeBase(
+        base_url="http://127.0.0.1:5055", token="legacy-shared-password",
+        account_mode=True, client=RecordingClient(),
+    )
+    with pytest.raises(OpenNotebookError, match="已验证"):
+        kb._request("GET", "/api/notebooks")
+
+    for name in ("account-a", "account-b"):
+        token = bind_notebook_identity(NotebookIdentity(
+            cookie=name, account_id=name, csrf=f"csrf-{name}",
+            public_origin="https://tagent.example.org",
+        ))
+        try:
+            kb._request("POST", "/api/search", json={"query": "test"})
+            kb._request("GET", "/api/notebooks")
+            kb._list_documents = lambda: [name]
+            assert kb.chunks() == [name]
+        finally:
+            reset_notebook_identity(token)
+    assert kb._chunks is None
+    assert calls[0][2] == {
+        "Cookie": "__Host-tagent_session=account-a",
+        "X-Tagent-Account-Id": "account-a",
+        "Origin": "https://tagent.example.org",
+        "X-Tagent-CSRF": "csrf-account-a",
+    }
+    assert calls[1][2] == {
+        "Cookie": "__Host-tagent_session=account-a",
+        "X-Tagent-Account-Id": "account-a",
+    }
+    assert calls[2][2]["Cookie"] == "__Host-tagent_session=account-b"
+    assert "legacy-shared-password" not in str(calls)
+
+
+def test_account_mode_refuses_to_forward_session_cookie_off_host():
+    with pytest.raises(ValueError, match="loopback HTTP"):
+        OpenNotebookKnowledgeBase(
+            base_url="https://notebook.example.org:5055", account_mode=True
+        )
 
 
 def test_opennotebook_falls_back_to_text_search():

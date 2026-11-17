@@ -4,7 +4,7 @@
 	import { page } from '$app/stores';
 	import { env } from '$env/dynamic/public';
 	import { onMount } from 'svelte';
-	import { authMode, currentAccount } from '$lib/apis/auth';
+	import { authMode } from '$lib/apis/auth';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 
 	import { listNotebookKnowledge } from '$lib/apis/opennotebook';
@@ -23,6 +23,16 @@
 	};
 
 	const openNotebookUrl = normalizeNotebookUrl(env.PUBLIC_OPENNOTEBOOK_URL || DEFAULT_NOTEBOOK_URL);
+	const accountNotebookUrl = $derived.by(() => {
+		if ($authMode !== 'enabled') return openNotebookUrl;
+		if (typeof window === 'undefined') return '';
+		try {
+			const url = new URL(openNotebookUrl, window.location.origin);
+			return url.protocol === 'https:' && url.hostname === window.location.hostname ? url.href : '';
+		} catch {
+			return '';
+		}
+	});
 
 	let iframeKey = $state(0);
 	let status = $state<'checking' | 'ready' | 'offline'>('checking');
@@ -131,18 +141,20 @@
 		<div class="flex h-full items-center justify-center p-6 text-white">
 			<div class="max-w-md rounded-2xl border border-white/15 bg-gray-900 p-8 text-center">
 				<h1 class="text-2xl font-semibold">知识笔记本</h1>
-				{#if $currentAccount?.role === 'admin'}
+				{#if accountNotebookUrl}
 					<p class="mt-3 text-sm text-gray-300">
-						旧笔记仅供管理员查看；OpenNotebook 使用独立登录。
+						使用当前账号进入完整笔记工作空间。已有的共享笔记仅管理员可见。
 					</p>
 					<a
-						href={openNotebookUrl}
+						href={accountNotebookUrl}
 						target="_blank"
 						rel="noopener noreferrer"
-						class="mt-6 inline-block rounded-lg bg-cyan-600 px-4 py-2">打开 OpenNotebook</a
+						class="mt-6 inline-block rounded-lg bg-cyan-600 px-4 py-2">打开个人笔记本</a
 					>
 				{:else}
-					<p class="mt-3 text-sm text-gray-300">个人笔记服务尚未启用，请稍后再试。</p>
+					<p class="mt-3 text-sm text-gray-300">
+						笔记本地址尚未配置为与 TAgent 同一主机的 HTTPS 地址，请联系管理员。
+					</p>
 				{/if}
 				<button
 					type="button"

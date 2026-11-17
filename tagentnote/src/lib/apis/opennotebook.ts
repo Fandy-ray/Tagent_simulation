@@ -50,6 +50,7 @@ const allowedNotebookIds = (): Set<string> | null => {
 };
 
 export function getOpenNotebookApiUrl() {
+	if (get(authMode) !== 'disabled') return '/opennotebook-api';
 	const explicit = env.PUBLIC_OPENNOTEBOOK_API_URL?.trim();
 
 	if (explicit) {
@@ -145,14 +146,16 @@ export type CreatedNote = {
 };
 
 const assertNotebookAccess = () => {
-	if (get(authMode) === 'enabled' && get(currentAccount)?.role !== 'admin') {
-		throw new Error('个人笔记服务尚未启用。');
-	}
+	if (get(authMode) !== 'disabled' && (get(authMode) !== 'enabled' || !get(currentAccount)))
+		throw new Error('请先登录，再访问个人笔记。');
 };
 
 const fetchJson = async <T>(path: string, signal?: AbortSignal): Promise<T> => {
 	assertNotebookAccess();
-	const response = await fetch(`${getOpenNotebookApiUrl()}${path}`, { signal });
+	const response = await fetch(`${getOpenNotebookApiUrl()}${path}`, {
+		headers: sessionHeaders('GET'),
+		signal
+	});
 
 	if (!response.ok) {
 		throw new Error(`OpenNoteBook ${path} ${response.status}`);

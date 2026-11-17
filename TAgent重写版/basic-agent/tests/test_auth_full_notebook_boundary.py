@@ -28,6 +28,7 @@ def test_account_mode_does_not_mount_shared_lite_notebook(monkeypatch):
     )
 
     assert captured["include_notebook"] is False
+    assert captured["account_mode"] is True
     assert "notebook_services" not in app.extensions
 
 

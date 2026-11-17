@@ -14,6 +14,24 @@ const notebookPassword =
 	process.env.NOTEBOOK_TOKEN ||
 	'';
 const agentTarget = process.env.AGENT_API_TARGET || 'http://127.0.0.1:5001';
+const notebookTarget = process.env.OPENNOTEBOOK_API_TARGET || 'http://127.0.0.1:5055';
+
+function loopbackHttpTarget(raw: string): boolean {
+	try {
+		const target = new URL(raw);
+		return (
+			target.protocol === 'http:' &&
+			(target.hostname === '127.0.0.1' || target.hostname === '[::1]') &&
+			!target.username &&
+			!target.password &&
+			(target.pathname === '/' || target.pathname === '') &&
+			!target.search &&
+			!target.hash
+		);
+	} catch {
+		return false;
+	}
+}
 let cachedIdentityMode: { enabled: boolean; until: number } | null = null;
 
 async function identityEnabled(): Promise<boolean> {
@@ -56,9 +74,10 @@ function clientIp(request: import('node:http').IncomingMessage): string {
 }
 
 async function notebookCallerAllowed(
-	request: import('node:http').IncomingMessage
+	request: import('node:http').IncomingMessage,
+	accountMode: boolean
 ): Promise<boolean> {
-	if (!(await identityEnabled())) return true;
+	if (!accountMode) return true;
 	const cookie = request.headers.cookie;
 	if (!cookie) return false;
 	try {
@@ -68,10 +87,6 @@ async function notebookCallerAllowed(
 		});
 		if (!response.ok) return false;
 		const session = (await response.json()) as { user?: { role?: string }; csrf?: string };
-		const path = new URL(request.url || '/', 'http://localhost').pathname.slice(
-			NOTEBOOK_PROXY_PREFIX.length
-		);
-		if (session.user?.role !== 'admin') return false;
 		if (request.method === 'GET' || request.method === 'HEAD') return true;
 		const origin = request.headers.origin;
 		const csrf = request.headers['x-tagent-csrf'];
@@ -83,7 +98,7 @@ async function notebookCallerAllowed(
 			!equalToken(csrf, session.csrf)
 		)
 			return false;
-		return path === '/api/search' || session.user?.role === 'admin';
+		return true;
 	} catch {
 		return false;
 	}
@@ -94,6 +109,9 @@ const agentProxy = (): ProxyOptions => ({
 	changeOrigin: true,
 	rewrite: (path) => path.replace(/^\/agent-api/, ''),
 	headers: { 'x-tagent-via-frontend': '1' },
+	bypass: loopbackHttpTarget(agentTarget)
+		? undefined
+		: async () => ((await identityEnabled()) ? false : undefined),
 	configure(proxy) {
 		proxy.on('proxyReq', (proxyReq, request) => {
 			// 只信 Vite 实际接入的 socket 地址，覆盖浏览器自带的同名头。
@@ -103,16 +121,20 @@ const agentProxy = (): ProxyOptions => ({
 });
 
 const notebookProxy = (): ProxyOptions => ({
-	target: process.env.OPENNOTEBOOK_API_TARGET || 'http://127.0.0.1:5055',
+	target: notebookTarget,
 	changeOrigin: true,
 	rewrite: (path) => path.slice(NOTEBOOK_PROXY_PREFIX.length),
-	headers: notebookPassword
-		? { authorization: `Bearer ${notebookPassword}`, 'x-password': notebookPassword }
-		: {},
-	bypass: async (req) =>
-		notebookRouteAllowed(req.method, req.url) && (await notebookCallerAllowed(req))
-			? undefined
-			: false
+	bypass: async (req) => {
+		if (!notebookRouteAllowed(req.method, req.url)) return false;
+		const accountMode = await identityEnabled();
+		if (accountMode && (!loopbackHttpTarget(notebookTarget) || !loopbackHttpTarget(agentTarget)))
+			return false;
+		if (!accountMode && notebookPassword) {
+			req.headers.authorization = `Bearer ${notebookPassword}`;
+			req.headers['x-password'] = notebookPassword;
+		}
+		return (await notebookCallerAllowed(req, accountMode)) ? undefined : false;
+	}
 });
 
 export default defineConfig({

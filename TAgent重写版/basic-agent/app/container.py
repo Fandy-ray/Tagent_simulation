@@ -108,6 +108,7 @@ def build_services(
     warm_up: bool = True,
     learning_store: bool = True,
     include_notebook: bool = False,
+    account_mode: bool = False,
     registry=None,
 ) -> Services:
     # 延迟 import：这几个模块会拉起 langchain/langgraph，
@@ -124,7 +125,8 @@ def build_services(
     client_factory = ModelClientFactory()
     notebook, shared_embedder = _build_notebook(settings, client_factory, registry, include_notebook)
     knowledge_base = build_knowledge_base(
-        settings, notebook_services=notebook, shared_embedder=shared_embedder
+        settings, notebook_services=notebook, shared_embedder=shared_embedder,
+        account_mode=account_mode,
     )
     # 闸门**必须**由出卷判卷与论文批改共用：它计的是"这台机器同时压着多少次
     # 上游调用"，各建一份就等于把容量悄悄翻倍，限流也就名存实亡了。
@@ -166,7 +168,8 @@ def build_services(
     return services
 
 
-def build_knowledge_base(settings: AgentConfig, notebook_services=None, shared_embedder=None):
+def build_knowledge_base(settings: AgentConfig, notebook_services=None, shared_embedder=None,
+                         account_mode: bool = False):
     """按配置装配知识来源。默认仍是本地教材，避免没开笔记本时启动失败。
 
     笔记本已经在本进程里时，本机地址不再绕一圈 HTTP（打到自己的 5055）。
@@ -204,7 +207,8 @@ def build_knowledge_base(settings: AgentConfig, notebook_services=None, shared_e
         )
         notebook = OpenNotebookKnowledgeBase(
             base_url=settings.notebook_url,
-            token=settings.notebook_token,
+            token="" if account_mode else settings.notebook_token,
+            account_mode=account_mode,
         )
     if settings.knowledge_source == "notebook":
         return notebook

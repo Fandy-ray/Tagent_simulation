@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from flask import Flask, request
+from flask import Flask, g, request
 
 from app.api import register_blueprints
 from app.api.error_handler import register_error_handlers
@@ -73,6 +73,14 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         )
         app.before_request(enforce_identity)
 
+        from app.infra.notebook_identity import reset_notebook_identity
+
+        @app.teardown_request
+        def clear_notebook_identity(_error):
+            token = getattr(g, "notebook_identity_token", None)
+            if token is not None:
+                reset_notebook_identity(token)
+
     app.extensions["settings"] = settings
     app.extensions["model_provider_registry"] = registry or build_registry(settings)
     # TESTING 时跳过预热：加载嵌入模型并建 FAISS 索引要几十秒。
@@ -86,6 +94,7 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         learning_store=not testing,
         # 精简笔记本使用共享存储。账号模式只能接入已完成隔离的完整版服务。
         include_notebook=not testing and not running_under_pytest() and not app.config["AUTH_ENABLED"],
+        account_mode=app.config["AUTH_ENABLED"],
         registry=app.extensions["model_provider_registry"],
     )
     if app.config["AUTH_ENABLED"] and not testing and app.extensions["services"].store is None:

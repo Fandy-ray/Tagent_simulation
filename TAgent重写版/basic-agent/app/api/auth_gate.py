@@ -7,6 +7,7 @@ from flask import current_app, g, request
 from app.api.auth import require_csrf
 from app.auth.service import Session
 from app.errors.api_errors import AgentAPIError
+from app.infra.notebook_identity import NotebookIdentity, bind_notebook_identity
 
 
 PUBLIC_PATHS = {
@@ -61,6 +62,12 @@ def enforce_identity() -> None:
         raise AgentAPIError("页面账号信息缺失，请刷新页面。", 409, "account_context_missing")
     g.auth_session = session
     g.account = session.account
+    g.notebook_identity_token = bind_notebook_identity(NotebookIdentity(
+        cookie=token,
+        account_id=session.account["uid"],
+        csrf=session.csrf,
+        public_origin=current_app.config["AUTH_PUBLIC_ORIGIN"],
+    ))
     g.course = None
     course_id = request.headers.get("X-Tagent-Course-Id", "").strip()
     if course_id and course_id != "general":
