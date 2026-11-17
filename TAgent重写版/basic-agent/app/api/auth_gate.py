@@ -36,7 +36,10 @@ def enforce_identity() -> None:
     path = request.path.rstrip("/") or "/"
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         origin = request.headers.get("Origin")
-        if origin and origin.rstrip("/") != current_app.config["AUTH_PUBLIC_ORIGIN"]:
+        allowed_origins = {current_app.config["AUTH_PUBLIC_ORIGIN"]}
+        if path.startswith("/auth/"):
+            allowed_origins.add(current_app.config.get("AUTH_NOTEBOOK_ORIGIN", ""))
+        if origin and origin.rstrip("/") not in allowed_origins:
             raise AgentAPIError("请求来源不受信任。", 403, "invalid_origin")
     if path in PUBLIC_PATHS:
         return

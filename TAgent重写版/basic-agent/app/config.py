@@ -579,6 +579,7 @@ class NotebookSettings:
 class AuthConfig:
     enabled: bool
     public_origin: str
+    notebook_origin: str
     cookie_secure: bool
     registration_open: bool
     mail_mode: str
@@ -599,6 +600,7 @@ class AuthConfig:
         return cls(
             enabled=os.getenv("TAGENT_AUTH_ENABLED", "0") == "1",
             public_origin=os.getenv("TAGENT_PUBLIC_ORIGIN", "").rstrip("/"),
+            notebook_origin=os.getenv("OPEN_NOTEBOOK_PUBLIC_ORIGIN", "").rstrip("/"),
             cookie_secure=os.getenv("TAGENT_AUTH_COOKIE_SECURE", "1") != "0",
             registration_open=os.getenv("TAGENT_REGISTRATION_OPEN", "0") == "1",
             mail_mode=os.getenv("TAGENT_MAIL_MODE", "disabled"),

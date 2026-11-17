@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from flask import Flask, g, request
 
 from app.api import register_blueprints
@@ -21,6 +23,7 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         MAX_CONTENT_LENGTH=settings.max_content_length,
         AUTH_ENABLED=auth_settings.enabled,
         AUTH_PUBLIC_ORIGIN=auth_settings.public_origin,
+        AUTH_NOTEBOOK_ORIGIN=auth_settings.notebook_origin,
         AUTH_COOKIE_SECURE=auth_settings.cookie_secure,
     )
     if config:
@@ -43,6 +46,23 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         origin = app.config["AUTH_PUBLIC_ORIGIN"]
         if not origin or (not app.config.get("TESTING") and not origin.startswith("https://")):
             raise ValueError("TAgent login requires a configured HTTPS public origin")
+        notebook_origin = app.config["AUTH_NOTEBOOK_ORIGIN"]
+        if notebook_origin:
+            notebook_url = urlsplit(notebook_origin)
+            main_url = urlsplit(origin)
+            if (
+                notebook_url.scheme != "https"
+                or not notebook_url.hostname
+                or notebook_url.hostname != main_url.hostname
+                or notebook_url.username is not None
+                or notebook_url.password is not None
+                or notebook_url.path
+                or notebook_url.query
+                or notebook_url.fragment
+            ):
+                raise ValueError(
+                    "OpenNotebook origin must be HTTPS on the TAgent hostname"
+                )
         if not app.config["AUTH_COOKIE_SECURE"] and not app.config.get("TESTING"):
             raise ValueError("TAgent login requires Secure session cookies")
         mail_mode = auth_settings.mail_mode
