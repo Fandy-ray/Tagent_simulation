@@ -203,6 +203,8 @@ def test_admin_course_membership_and_account_revocation(system):
     }, headers={"X-Tagent-CSRF": student_csrf}).status_code == 200
     response = student_client.get("/me/export")
     assert response.status_code == 200
+    response.close()
+    assert service._active_requests.get(student["id"], 0) == 0
     with ZipFile(BytesIO(response.data)) as archive:
         exported = json.loads(archive.read("tagent-personal-data.json"))["personal_data"]
         with ZipFile(BytesIO(archive.read("open-notebook.zip"))) as notebook:

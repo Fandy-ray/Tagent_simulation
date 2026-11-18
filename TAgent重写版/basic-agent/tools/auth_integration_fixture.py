@@ -7,6 +7,7 @@ must never be used as a production entry point.
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 from cryptography.fernet import Fernet
 from werkzeug.serving import make_server
@@ -18,6 +19,16 @@ from app.auth.service import AuthService
 from app.auth.store import IdentityStore
 from app.factory import create_app
 from tools.init_auth_db import SCHEMA
+
+
+class TestLearningStore:
+    """Disposable learning-record stand-in for the local lifecycle probe."""
+
+    def export_student(self, _uid):
+        return []
+
+    def delete_student(self, _uid):
+        return None
 
 
 def main() -> None:
@@ -48,7 +59,7 @@ def main() -> None:
             "PERSONAL_SERVICE": PersonalService(
                 store, Fernet.generate_key().decode()
             ),
-        })
+        }, services=SimpleNamespace(store=TestLearningStore(), notebook=None))
 
         normal_wsgi = app.wsgi_app
 

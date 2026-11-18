@@ -87,6 +87,10 @@ def export_personal():
         raise
     response = send_file(output, mimetype="application/zip", as_attachment=True,
                          download_name="tagent-account-data.zip")
+    # Werkzeug skips Response.close callbacks for direct-passthrough file
+    # wrappers. Keep the response iterable wrapped so the activity lease and
+    # temporary ZIP are both released when the WSGI server closes it.
+    response.direct_passthrough = False
     response.call_on_close(output.close)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
