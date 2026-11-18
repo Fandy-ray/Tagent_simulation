@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+from io import BytesIO
 from urllib.parse import parse_qs, urlsplit
+from zipfile import ZipFile
 
 import pytest
 from cryptography.fernet import Fernet
+from flask import Response, stream_with_context
 
 from app.auth.mail import DisabledMailer, MemoryMailer
 from app.auth.personal import PersonalService
@@ -24,12 +28,18 @@ def system():
     mailer = MemoryMailer()
     service = AuthService(store, mailer, "http://localhost:5173")
     personal = PersonalService(store, Fernet.generate_key().decode())
+    class FakeNotebookLifecycle:
+        def download(self, _uid, output):
+            with ZipFile(output, "w") as archive:
+                archive.writestr("manifest.json", '{"format":"test"}')
+
     app = create_app({
         "TESTING": True, "AUTH_ENABLED": True,
         "AUTH_PUBLIC_ORIGIN": "http://localhost:5173",
         "AUTH_COOKIE_SECURE": False,
         "AUTH_STORE": store, "AUTH_SERVICE": service,
         "PERSONAL_SERVICE": personal,
+        "NOTEBOOK_LIFECYCLE": FakeNotebookLifecycle(),
     })
     yield app.test_client(), store, mailer, service
     store.close()
@@ -46,6 +56,24 @@ def register_verified(client, mailer, email="student@example.org"):
     })
     assert response.status_code == 200
     return response.json["user"], response.json["csrf"]
+
+
+def test_stream_keeps_account_request_active_until_client_closes(system):
+    client, _, mailer, service = system
+
+    def chunks():
+        yield "first"
+        yield "second"
+
+    client.application.add_url_rule(
+        "/test-account-stream", "test_account_stream",
+        lambda: Response(stream_with_context(chunks())),
+    )
+    account, _ = register_verified(client, mailer)
+    response = client.get("/test-account-stream", buffered=False)
+    assert service._active_requests.get(account["id"]) == 1
+    response.close()
+    assert service._active_requests.get(account["id"], 0) == 0
 
 
 def test_public_and_protected_boundary(system):
@@ -173,7 +201,12 @@ def test_admin_course_membership_and_account_revocation(system):
     assert student_client.put("/me/data/settings", json={
         "data": {"apiKey": "test-secret", "theme": "dark"}, "version": 0
     }, headers={"X-Tagent-CSRF": student_csrf}).status_code == 200
-    exported = student_client.get("/me/export").json["personal_data"]
+    response = student_client.get("/me/export")
+    assert response.status_code == 200
+    with ZipFile(BytesIO(response.data)) as archive:
+        exported = json.loads(archive.read("tagent-personal-data.json"))["personal_data"]
+        with ZipFile(BytesIO(archive.read("open-notebook.zip"))) as notebook:
+            assert notebook.namelist() == ["manifest.json"]
     assert exported[0]["data"]["apiKey"] == "[已隐藏]"
     assert admin_client.patch(f"/admin/accounts/{student['id']}", json={"active": False},
                               headers={"X-Tagent-CSRF": admin_csrf}).status_code == 200

@@ -580,6 +580,8 @@ class AuthConfig:
     enabled: bool
     public_origin: str
     notebook_origin: str
+    notebook_lifecycle_url: str
+    notebook_lifecycle_key: str
     cookie_secure: bool
     registration_open: bool
     mail_mode: str
@@ -601,6 +603,8 @@ class AuthConfig:
             enabled=os.getenv("TAGENT_AUTH_ENABLED", "0") == "1",
             public_origin=os.getenv("TAGENT_PUBLIC_ORIGIN", "").rstrip("/"),
             notebook_origin=os.getenv("OPEN_NOTEBOOK_PUBLIC_ORIGIN", "").rstrip("/"),
+            notebook_lifecycle_url=os.getenv("TAGENT_NOTEBOOK_LIFECYCLE_URL", "").rstrip("/"),
+            notebook_lifecycle_key=os.getenv("TAGENT_NOTEBOOK_LIFECYCLE_KEY", ""),
             cookie_secure=os.getenv("TAGENT_AUTH_COOKIE_SECURE", "1") != "0",
             registration_open=os.getenv("TAGENT_REGISTRATION_OPEN", "0") == "1",
             mail_mode=os.getenv("TAGENT_MAIL_MODE", "disabled"),

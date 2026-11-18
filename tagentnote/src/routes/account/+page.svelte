@@ -50,7 +50,7 @@
 			const url = URL.createObjectURL(blob);
 			const anchor = document.createElement('a');
 			anchor.href = url;
-			anchor.download = 'tagent-personal-data.json';
+			anchor.download = 'tagent-account-data.zip';
 			anchor.click();
 			URL.revokeObjectURL(url);
 		} catch (cause) {
@@ -144,7 +144,7 @@
 		{/if}
 		<section class="mt-8 rounded-xl border border-white/15 p-6">
 			<h2 class="text-lg font-medium">个人数据</h2>
-			<p class="mt-2 text-sm text-slate-300">学习内容保存在账号中。导出文件会隐藏已保存的密钥。</p>
+			<p class="mt-2 text-sm text-slate-300">导出包包含学习内容、笔记和资料。模型密钥保留为加密数据，换服务器时需要重新配置。</p>
 			<button
 				type="button"
 				disabled={busy}
@@ -222,7 +222,7 @@
 		<section class="mt-5 rounded-xl border border-rose-500/30 p-6">
 			<h2 class="text-lg font-medium">注销账号</h2>
 			<p class="mt-2 text-sm text-slate-300">
-				注销会删除该账号的个人内容和学习记录。请先导出需要保留的数据。
+				注销会删除该账号的个人内容、笔记和学习记录。请先导出需要保留的数据。
 			</p>
 			<label for="account-password" class="mt-4 block text-sm">输入当前密码</label>
 			<input

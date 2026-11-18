@@ -22,9 +22,11 @@ def test_account_mode_does_not_mount_shared_lite_notebook(monkeypatch):
         config={
             "AUTH_ENABLED": True,
             "AUTH_PUBLIC_ORIGIN": "https://example.org",
+            "AUTH_NOTEBOOK_ORIGIN": "https://example.org:8502",
             "AUTH_COOKIE_SECURE": True,
             "AUTH_SERVICE": object(),
             "PERSONAL_SERVICE": object(),
+            "NOTEBOOK_LIFECYCLE": object(),
         },
         registry=object(),
     )

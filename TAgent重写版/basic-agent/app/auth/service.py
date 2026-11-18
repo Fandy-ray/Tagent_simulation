@@ -73,6 +73,8 @@ class AuthService:
         self.registration_open = registration_open
         self._event_count = 0
         self._event_lock = threading.Lock()
+        self._activity = threading.Condition()
+        self._active_requests: dict[str, int] = {}
 
     def _account_for_email(self, email: str):
         return self.store.first(
@@ -88,6 +90,42 @@ class AuthService:
 
     def account(self, uid: str):
         return self.store.first("SELECT * FROM auth_accounts WHERE uid = $uid LIMIT 1", {"uid": uid})
+
+    def begin_request(self, uid: str) -> None:
+        """Register an accepted request atomically with the active-account check."""
+        with self._activity:
+            account = self.account(uid)
+            if not account or account.get("active") is not True or account.get("deletion_pending"):
+                raise AgentAPIError("请先登录。", 401, "login_required")
+            self._active_requests[uid] = self._active_requests.get(uid, 0) + 1
+
+    def end_request(self, uid: str) -> None:
+        with self._activity:
+            count = self._active_requests.get(uid, 0)
+            if count <= 1:
+                self._active_requests.pop(uid, None)
+            else:
+                self._active_requests[uid] = count - 1
+            self._activity.notify_all()
+
+    def _wait_for_requests(self, uid: str, allowed: int) -> None:
+        with self._activity:
+            if not self._activity.wait_for(
+                lambda: self._active_requests.get(uid, 0) <= allowed, timeout=30
+            ):
+                raise AgentAPIError(
+                    "仍有正在处理的请求，账号保持待完成注销。", 503,
+                    "account_requests_pending",
+                )
+
+    def set_active(self, uid: str, active: bool) -> None:
+        with self._activity:
+            self.store.query(
+                "UPDATE auth_accounts SET active = $active WHERE uid = $uid",
+                {"active": active, "uid": uid},
+            )
+        if not active:
+            self.revoke_all(uid)
 
     def _event(self, kind: str, subject: str) -> None:
         self.store.query(
@@ -366,11 +404,14 @@ class AuthService:
             {"account": account_id, "course": course_id},
         ))
 
-    def delete_account(self, account: dict, password: str, personal, learning_store=None) -> None:
+    def delete_account(self, account: dict, password: str, personal, learning_store=None,
+                       notebook_lifecycle=None) -> None:
         if account["role"] == "admin":
             raise AgentAPIError("管理员账号不能自行注销。", 403, "admin_protected")
         if learning_store is None:
             raise AgentAPIError("学习记录库不可用，暂不能注销。", 503, "learning_store_unavailable")
+        if notebook_lifecycle is None:
+            raise AgentAPIError("笔记本服务未就绪，暂不能注销。", 503, "notebook_lifecycle_unavailable")
         try:
             with password_slot():
                 valid = _PASSWORD.verify(account["password_hash"], password)
@@ -380,20 +421,28 @@ class AuthService:
             raise AgentAPIError("密码不正确。", 403, "invalid_credentials")
         uid = account["uid"]
         # 先停用和撤销会话。之后任一步失败，账号仍不能被登录，管理员可重试清理。
-        self.store.query(
-            "UPDATE auth_accounts SET active = false, deletion_pending = true WHERE uid = $uid",
-            {"uid": uid},
-        )
+        with self._activity:
+            self.store.query(
+                "UPDATE auth_accounts SET active = false, deletion_pending = true WHERE uid = $uid",
+                {"uid": uid},
+            )
         self.revoke_all(uid)
-        self.complete_deletion(uid, personal, learning_store)
+        self.complete_deletion(uid, personal, learning_store, notebook_lifecycle,
+                               allowed_inflight=1)
 
-    def complete_deletion(self, uid: str, personal, learning_store=None) -> None:
+    def complete_deletion(self, uid: str, personal, learning_store=None,
+                          notebook_lifecycle=None, *, allowed_inflight: int = 0) -> None:
         """仅重试已停用的待注销账号；不会误删仍在使用的账号。"""
         account = self.account(uid)
         if not account or account.get("active", True) or not account.get("deletion_pending"):
             raise AgentAPIError("账号不在待注销状态。", 409, "not_pending_deletion")
         if learning_store is None:
             raise AgentAPIError("学习记录库不可用，暂不能完成注销。", 503, "learning_store_unavailable")
+        if notebook_lifecycle is None:
+            raise AgentAPIError("笔记本服务未就绪，暂不能完成注销。", 503, "notebook_lifecycle_unavailable")
+        self._wait_for_requests(uid, allowed_inflight)
+        notebook_lifecycle.disable(uid)
+        notebook_lifecycle.purge(uid)
         personal.delete(uid)
         self.store.query("DELETE auth_memberships WHERE account_id = $uid", {"uid": uid})
         self.store.query("DELETE auth_tokens WHERE account_id = $uid", {"uid": uid})

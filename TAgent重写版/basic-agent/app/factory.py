@@ -39,6 +39,7 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
     if app.config["AUTH_ENABLED"]:
         from app.api.auth_gate import enforce_identity
         from app.auth.mail import DisabledMailer, MemoryMailer, SMTPMailer
+        from app.auth.notebook_lifecycle import NotebookLifecycle
         from app.auth.personal import PersonalService
         from app.auth.service import AuthService
         from app.auth.store import IdentityStore
@@ -47,6 +48,8 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         if not origin or (not app.config.get("TESTING") and not origin.startswith("https://")):
             raise ValueError("TAgent login requires a configured HTTPS public origin")
         notebook_origin = app.config["AUTH_NOTEBOOK_ORIGIN"]
+        if not notebook_origin and not app.config.get("TESTING"):
+            raise ValueError("TAgent login requires the full OpenNotebook public origin")
         if notebook_origin:
             notebook_url = urlsplit(notebook_origin)
             main_url = urlsplit(origin)
@@ -91,15 +94,40 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         app.extensions["personal_service"] = app.config.get("PERSONAL_SERVICE") or PersonalService(
             store, auth_settings.data_keys
         )
+        lifecycle = app.config.get("NOTEBOOK_LIFECYCLE")
+        if lifecycle is None and auth_settings.notebook_lifecycle_url and auth_settings.notebook_lifecycle_key:
+            lifecycle = NotebookLifecycle(
+                auth_settings.notebook_lifecycle_url,
+                auth_settings.notebook_lifecycle_key,
+            )
+        if lifecycle is None and not app.config.get("TESTING"):
+            raise ValueError("TAgent login requires the full OpenNotebook lifecycle service")
+        app.extensions["notebook_lifecycle"] = lifecycle
         app.before_request(enforce_identity)
 
         from app.infra.notebook_identity import reset_notebook_identity
 
+        @app.after_request
+        def keep_streaming_request_active(response):
+            activity_uid = getattr(g, "auth_activity_uid", None)
+            if activity_uid is not None and response.is_streamed:
+                g.auth_activity_uid = None
+                response.call_on_close(
+                    lambda uid=activity_uid: app.extensions["auth_service"].end_request(uid)
+                )
+            return response
+
         @app.teardown_request
         def clear_notebook_identity(_error):
-            token = getattr(g, "notebook_identity_token", None)
-            if token is not None:
-                reset_notebook_identity(token)
+            try:
+                token = getattr(g, "notebook_identity_token", None)
+                if token is not None:
+                    reset_notebook_identity(token)
+            finally:
+                activity_uid = getattr(g, "auth_activity_uid", None)
+                if activity_uid is not None:
+                    g.auth_activity_uid = None
+                    app.extensions["auth_service"].end_request(activity_uid)
 
     app.extensions["settings"] = settings
     app.extensions["model_provider_registry"] = registry or build_registry(settings)

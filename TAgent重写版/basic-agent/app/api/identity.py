@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import uuid
+import tempfile
+from zipfile import ZIP_DEFLATED, ZipFile
 
-from flask import Blueprint, current_app, g, jsonify, make_response, request
+from flask import Blueprint, current_app, g, jsonify, make_response, request, send_file
 
 from app.api.deps import get_learning_store, get_registry
 from app.auth.service import public_account
@@ -65,20 +67,37 @@ def put_personal(kind: str):
 @blueprint.get("/me/export")
 def export_personal():
     _, personal = _services()
+    lifecycle = current_app.extensions.get("notebook_lifecycle")
+    if lifecycle is None:
+        raise AgentAPIError("笔记本服务未就绪，无法导出完整账号数据。", 503,
+                            "notebook_export_unavailable")
     payload = {"account": public_account(g.account), **personal.export(g.account["uid"])}
     learning_store = get_learning_store()
     if learning_store is not None:
         payload["learning_records"] = learning_store.export_student(g.account["uid"])
-    response = make_response(jsonify(payload))
-    response.headers["Content-Disposition"] = 'attachment; filename="tagent-personal-data.json"'
+    output = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
+    try:
+        with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
+            archive.writestr("tagent-personal-data.json", current_app.json.dumps(payload))
+            with archive.open("open-notebook.zip", "w") as notebook_file:
+                lifecycle.download(g.account["uid"], notebook_file)
+        output.seek(0)
+    except Exception:
+        output.close()
+        raise
+    response = send_file(output, mimetype="application/zip", as_attachment=True,
+                         download_name="tagent-account-data.zip")
+    response.call_on_close(output.close)
     response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
 
 @blueprint.delete("/me/account")
 def delete_account():
     service, personal = _services()
-    service.delete_account(g.account, _json().get("password"), personal, get_learning_store())
+    service.delete_account(g.account, _json().get("password"), personal,
+                           get_learning_store(), current_app.extensions.get("notebook_lifecycle"))
     response = make_response(jsonify({"deleted": True}))
     response.delete_cookie(current_app.config["AUTH_COOKIE_NAME"], path="/")
     return response
@@ -119,12 +138,7 @@ def set_account_state(uid: str):
         raise AgentAPIError("不能通过网页停用管理员。", 403, "admin_protected")
     if account.get("deletion_pending"):
         raise AgentAPIError("待注销账号只能完成清理，不能重新启用。", 409, "deletion_pending")
-    service.store.query(
-        "UPDATE auth_accounts SET active = $active WHERE uid = $uid",
-        {"active": body["active"], "uid": uid},
-    )
-    if not body["active"]:
-        service.revoke_all(uid)
+    service.set_active(uid, body["active"])
     return jsonify({"account": public_account(service.account(uid))})
 
 
@@ -132,7 +146,8 @@ def set_account_state(uid: str):
 def complete_account_deletion(uid: str):
     _admin()
     service, personal = _services()
-    service.complete_deletion(uid, personal, get_learning_store())
+    service.complete_deletion(uid, personal, get_learning_store(),
+                              current_app.extensions.get("notebook_lifecycle"))
     return jsonify({"deleted": True})
 
 

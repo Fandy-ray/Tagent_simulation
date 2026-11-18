@@ -63,6 +63,8 @@ def enforce_identity() -> None:
     if (request.headers.get("X-Tagent-Via-Frontend") == "1"
             and path != "/auth/me" and not claimed_account):
         raise AgentAPIError("页面账号信息缺失，请刷新页面。", 409, "account_context_missing")
+    service.begin_request(session.account["uid"])
+    g.auth_activity_uid = session.account["uid"]
     g.auth_session = session
     g.account = session.account
     g.notebook_identity_token = bind_notebook_identity(NotebookIdentity(

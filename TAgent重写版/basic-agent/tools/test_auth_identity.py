@@ -117,8 +117,21 @@ def test_deletion_failure_can_be_retried_without_reactivating(identity):
         def delete_student(self, _uid):
             raise OSError("temporary SQLite failure")
 
+    class NotebookLifecycle:
+        def __init__(self):
+            self.calls = []
+
+        def disable(self, uid):
+            self.calls.append(("disable", uid))
+
+        def purge(self, uid):
+            self.calls.append(("purge", uid))
+
+    lifecycle = NotebookLifecycle()
+
     with pytest.raises(OSError):
-        service.delete_account(account, "a long test password!", personal, FailingLearningStore())
+        service.delete_account(account, "a long test password!", personal,
+                               FailingLearningStore(), lifecycle)
     pending = service.account(account["uid"])
     assert pending["active"] is False and pending["deletion_pending"] is True
     assert personal.get(account["uid"], "qa_chats")["data"] is None
@@ -129,6 +142,10 @@ def test_deletion_failure_can_be_retried_without_reactivating(identity):
         def delete_student(self, uid):
             deleted.append(uid)
 
-    service.complete_deletion(account["uid"], personal, WorkingLearningStore())
+    service.complete_deletion(account["uid"], personal, WorkingLearningStore(), lifecycle)
     assert deleted == [account["uid"]]
+    assert lifecycle.calls == [
+        ("disable", account["uid"]), ("purge", account["uid"]),
+        ("disable", account["uid"]), ("purge", account["uid"]),
+    ]
     assert service.account(account["uid"]) is None
