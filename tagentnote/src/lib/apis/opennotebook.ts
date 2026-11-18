@@ -8,7 +8,7 @@ import {
 	sessionHeaders
 } from '$lib/apis/auth';
 
-import { createTtlCache } from '$lib/data/ttlCache';
+import { createScopedTtlCache } from '$lib/data/ttlCache';
 import {
 	type KnowledgeCollection,
 	type KnowledgeFile,
@@ -348,7 +348,9 @@ export async function getNoteText(noteId: string, signal?: AbortSignal) {
  * 答疑页每次挂载都会调，页面来回切时整轮重发——内容又不会秒秒钟变，缓存十几秒。
  * 新建/删除笔记本后调 invalidateNotebookKnowledge() 立刻见新的。
  */
-const knowledgeCache = createTtlCache<KnowledgeCollection[]>();
+const knowledgeScope = () =>
+	JSON.stringify([get(authMode), get(currentAccount)?.id ?? null, get(currentCourseId)]);
+const knowledgeCache = createScopedTtlCache<KnowledgeCollection[]>(knowledgeScope);
 
 export function invalidateNotebookKnowledge(): void {
 	knowledgeCache.invalidate();
