@@ -44,6 +44,8 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         from app.auth.service import AuthService
         from app.auth.store import IdentityStore
 
+        if not app.config.get("TESTING") and settings.host not in {"127.0.0.1", "::1"}:
+            raise ValueError("TAgent login requires a loopback backend bind address")
         origin = app.config["AUTH_PUBLIC_ORIGIN"]
         if not origin or (not app.config.get("TESTING") and not origin.startswith("https://")):
             raise ValueError("TAgent login requires a configured HTTPS public origin")

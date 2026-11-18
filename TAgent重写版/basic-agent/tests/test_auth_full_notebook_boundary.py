@@ -101,3 +101,17 @@ def test_factory_rejects_cross_host_notebook_origin():
             },
             registry=object(),
         )
+
+
+def test_factory_rejects_public_backend_bind_in_account_mode(monkeypatch):
+    monkeypatch.setenv("BASIC_AGENT_HOST", "0.0.0.0")
+    with pytest.raises(ValueError, match="loopback backend bind"):
+        factory.create_app(
+            config={
+                "AUTH_ENABLED": True,
+                "AUTH_PUBLIC_ORIGIN": "https://tagent.example.org",
+                "AUTH_NOTEBOOK_ORIGIN": "https://tagent.example.org:8502",
+                "AUTH_COOKIE_SECURE": True,
+            },
+            registry=object(),
+        )
