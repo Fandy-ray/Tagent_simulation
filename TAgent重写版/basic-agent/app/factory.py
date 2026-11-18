@@ -165,7 +165,9 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
             response.headers["Referrer-Policy"] = "no-referrer"
             response.headers["X-Content-Type-Options"] = "nosniff"
         origin = request.headers.get("Origin", "")
-        if origin in {"http://127.0.0.1:5173", "http://localhost:5173"}:
+        if not app.config["AUTH_ENABLED"] and origin in {
+            "http://127.0.0.1:5173", "http://localhost:5173"
+        }:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Headers"] = (
                 "Content-Type, X-Tagent-Client-Id, X-Tagent-Client-Name, X-Tagent-No-Record, "

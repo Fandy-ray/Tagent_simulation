@@ -79,6 +79,8 @@ def test_stream_keeps_account_request_active_until_client_closes(system):
 def test_public_and_protected_boundary(system):
     client, _, mailer, _ = system
     assert client.get("/health").status_code == 200
+    cors = client.get("/auth/status", headers={"Origin": "http://localhost:5173"})
+    assert "Access-Control-Allow-Origin" not in cors.headers
     assert client.get("/auth/status").json["enabled"] is True
     assert client.get("/v1/models").status_code == 401
     account, csrf = register_verified(client, mailer)
