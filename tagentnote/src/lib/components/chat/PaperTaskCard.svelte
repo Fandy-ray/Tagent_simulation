@@ -129,30 +129,30 @@
 </script>
 
 <section
-	class={`mx-auto w-full max-w-4xl rounded-2xl border border-amber-300/15 bg-amber-200/[0.04] text-left shadow-xl shadow-black/10 ${compact ? 'px-3 py-2' : 'px-4 py-4'}`}
+	class={`mx-auto w-full max-w-4xl rounded-2xl border border-[color:var(--qa-line)] bg-[var(--qa-panel)] text-left ${compact ? 'px-3 py-2' : 'px-4 py-4'}`}
 	aria-label="论文任务卡"
 >
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<div class="flex min-w-0 items-center gap-2">
 			<span
-				class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-amber-300/15 text-amber-200"
+				class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--qa-tint)] text-[color:var(--qa-active)]"
 				aria-hidden="true">✦</span
 			>
 			<div class="min-w-0">
-				<div class="text-xs font-medium tracking-[0.16em] text-amber-200/80 uppercase">
+				<div class="text-xs font-medium tracking-[0.16em] text-[color:var(--qa-active,var(--m3-primary))]/80 uppercase">
 					论文任务
 				</div>
 				<div class="truncate text-sm text-gray-200">
 					{title.trim() || '先填写题目，再开始分章节写作'}
 				</div>
-				<div class="mt-0.5 truncate text-[11px] text-gray-500">引用资料：{sourceName}</div>
+				<div class="mt-0.5 truncate text-[11px] text-[color:var(--qa-muted)]">引用资料：{sourceName}</div>
 			</div>
 		</div>
 
 		<div class="flex items-center gap-2">
 			<button
 				type="button"
-				class="rounded-lg px-2 py-1 text-xs text-gray-400 transition hover:bg-white/10 hover:text-white"
+				class="rounded-lg px-2 py-1 text-xs text-gray-400 transition hover:bg-[var(--qa-raised)] hover:text-[color:var(--qa-text)]"
 				onclick={() => (detailsOpen = !detailsOpen)}
 				aria-expanded={detailsOpen}
 			>
@@ -162,15 +162,15 @@
 	</div>
 
 	{#if detailsOpen}
-		<div class="mt-3 grid gap-3 md:grid-cols-[1.2fr_1fr]">
-			<div class="text-xs font-medium text-gray-400 md:col-span-2">第一步 · 论文基础</div>
+		<div class="mt-3 grid gap-3 @lg:grid-cols-[1.2fr_1fr]">
+			<div class="text-xs font-medium text-gray-400 @lg:col-span-2">第一步 · 论文基础</div>
 			<div class="block">
 				<div class="mb-1 flex items-center justify-between gap-2">
-					<label for="paper-task-title" class="block text-xs text-gray-500">论文题目</label>
+					<label for="paper-task-title" class="block text-xs text-[color:var(--qa-muted)]">论文题目</label>
 					{#if onProposeTopic}
 						<button
 							type="button"
-							class="text-xs text-amber-300/90 transition hover:text-amber-200"
+							class="text-xs text-[color:var(--qa-active,var(--m3-primary))]/90 transition hover:text-[color:var(--qa-active,var(--m3-primary))]"
 							onclick={onProposeTopic}
 							title="按课程材料出一道小论文题（选了笔记本就只用选中的）"
 						>
@@ -180,7 +180,7 @@
 				</div>
 				<input
 					id="paper-task-title"
-					class="h-9 w-full rounded-lg border border-white/10 bg-black/20 px-3 text-sm text-gray-100 outline-none placeholder:text-gray-600 focus:border-amber-300/50"
+					class="h-9 w-full rounded-lg border border-[color:var(--qa-line)] bg-[var(--qa-surface)] px-3 text-sm text-gray-100 outline-none placeholder:text-[color:var(--qa-muted)] focus:border-[color:var(--qa-active,var(--m3-primary))]/50"
 					placeholder="例如：基于排队系统的服务窗口仿真优化"
 					bind:value={title}
 					oninput={emitChange}
@@ -190,9 +190,9 @@
 				{/if}
 			</div>
 			<label class="block">
-				<span class="mb-1 block text-xs text-gray-500">关键词</span>
+				<span class="mb-1 block text-xs text-[color:var(--qa-muted)]">关键词</span>
 				<input
-					class="h-9 w-full rounded-lg border border-white/10 bg-black/20 px-3 text-sm text-gray-100 outline-none placeholder:text-gray-600 focus:border-amber-300/50"
+					class="h-9 w-full rounded-lg border border-[color:var(--qa-line)] bg-[var(--qa-surface)] px-3 text-sm text-gray-100 outline-none placeholder:text-[color:var(--qa-muted)] focus:border-[color:var(--qa-active,var(--m3-primary))]/50"
 					placeholder="排队系统、吞吐量、等待时间"
 					bind:value={keywords}
 					oninput={emitChange}
@@ -204,17 +204,17 @@
 	{#if detailsOpen}
 		<div class="mt-3">
 			<div class="mb-2 text-xs font-medium text-gray-400">第二步 · 当前章节</div>
-			<p class="mb-2 text-[11px] text-gray-500">
+			<p class="mb-2 text-[11px] text-[color:var(--qa-muted)]">
 				章节按钮是帮你写这一节，结果以对话回答给出；要打分和逐句批注，把整篇正文粘进下方输入框点「交稿批改」。
 			</p>
 			<div class="flex flex-wrap gap-2">
 				{#each PAPER_SECTIONS as item (item)}
 					<button
 						type="button"
-						class={`rounded-xl border px-3 py-2 text-left transition focus:ring-2 focus:ring-amber-300/40 focus:outline-none ${
+						class={`rounded-xl border px-3 py-2 text-left transition focus:ring-2 focus:ring-[color:var(--qa-active,var(--m3-primary))]/40 focus:outline-none ${
 							section === item
-								? 'border-amber-300/50 bg-amber-300/15 text-amber-100 shadow-sm shadow-amber-950/30'
-								: 'border-white/10 bg-white/[0.03] text-gray-400 hover:border-amber-200/30 hover:bg-white/[0.06] hover:text-gray-200'
+								? 'border-[color:var(--qa-active,var(--m3-primary))]/50 bg-[var(--qa-tint)] text-[color:var(--qa-active)] shadow-sm shadow-black/15'
+								: 'border-[color:var(--qa-line)] bg-[var(--qa-surface)] text-[color:var(--qa-text)] hover:border-[color:var(--qa-active,var(--m3-primary))]/30 hover:bg-[var(--qa-raised)] hover:text-gray-200'
 						}`}
 						onclick={() => {
 							section = item;
@@ -223,7 +223,7 @@
 						aria-pressed={section === item}
 					>
 						<span class="block text-xs font-medium">{item}</span>
-						<span class="mt-0.5 block text-[11px] text-gray-500">
+						<span class="mt-0.5 block text-[11px] text-[color:var(--qa-muted)]">
 							{section === item ? '当前工作章节' : '切换章节'}
 						</span>
 					</button>
@@ -231,17 +231,17 @@
 			</div>
 		</div>
 
-		<div class="mt-4 border-t border-white/10 pt-3">
+		<div class="mt-4 border-t border-[color:var(--qa-line)] pt-3">
 			<div class="mb-2 text-xs font-medium text-gray-400">第三步 · 撰写内容</div>
-			<p class="mb-3 text-[11px] text-gray-500">
+			<p class="mb-3 text-[11px] text-[color:var(--qa-muted)]">
 				根据“{section}”显示需要补充的信息，填写后再选择具体写作动作。
 			</p>
-			<div class="grid gap-2 md:grid-cols-2">
+			<div class="grid gap-2 @lg:grid-cols-2">
 				{#each contextFields as field (field.id)}
 					<label class="block">
-						<span class="mb-1 block text-[11px] text-gray-500">{field.label}</span>
+						<span class="mb-1 block text-[11px] text-[color:var(--qa-muted)]">{field.label}</span>
 						<textarea
-							class="min-h-14 w-full resize-y rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-gray-100 outline-none placeholder:text-gray-600 focus:border-amber-300/50"
+							class="min-h-14 w-full resize-y rounded-lg border border-[color:var(--qa-line)] bg-[var(--qa-surface)] px-3 py-2 text-xs text-gray-100 outline-none placeholder:text-[color:var(--qa-muted)] focus:border-[color:var(--qa-active,var(--m3-primary))]/50"
 							placeholder={field.placeholder}
 							value={context[field.id]}
 							oninput={(event) =>
@@ -256,7 +256,7 @@
 							<div class="mt-2">
 								<div class="flex flex-wrap items-center gap-2">
 									<label
-										class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-[11px] text-gray-400 transition hover:border-amber-200/30 hover:bg-white/[0.06] hover:text-amber-100"
+										class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-[color:var(--qa-line)] px-2 py-1 text-[11px] text-gray-400 transition hover:border-[color:var(--qa-active,var(--m3-primary))]/30 hover:bg-[var(--qa-raised)] hover:text-[color:var(--qa-active,var(--m3-primary))]"
 									>
 										<span aria-hidden="true">↑</span>
 										上传 CSV / TSV
@@ -275,7 +275,7 @@
 								{#if context.attachedFiles && context.attachedFiles.length > 0}
 									<div class="mt-1 space-y-1">
 										{#each context.attachedFiles as file (file.id)}
-											<div class="flex items-center gap-1 text-[11px] text-gray-500">
+											<div class="flex items-center gap-1 text-[11px] text-[color:var(--qa-muted)]">
 												<span class="min-w-0 flex-1 truncate">{file.name}</span>
 												<span class="max-w-48 truncate text-gray-600">{file.status}</span>
 												<button
@@ -300,15 +300,15 @@
 				{#each visibleIntents as intent (intent.id)}
 					<button
 						type="button"
-						class="rounded-xl border border-amber-200/15 bg-white/[0.04] px-3 py-2 text-left transition hover:-translate-y-0.5 hover:border-amber-200/40 hover:bg-amber-200/10 focus:ring-2 focus:ring-amber-300/40 focus:outline-none"
+						class="rounded-xl border border-[color:var(--qa-line)] bg-[var(--qa-surface)] px-3 py-2 text-left transition hover:-translate-y-0.5 hover:border-[color:var(--qa-active,var(--m3-primary))]/40 hover:bg-[var(--qa-active,var(--m3-primary))]/10 focus:ring-2 focus:ring-[color:var(--qa-active,var(--m3-primary))]/40 focus:outline-none"
 						onclick={() => {
 							// 提交后收起工作区，避免任务卡遮挡正在生成的正文。
 							detailsOpen = false;
 							onIntent(intent.id);
 						}}
 					>
-						<span class="block text-xs font-medium text-amber-100">{intent.title}</span>
-						<span class="mt-0.5 block text-[11px] text-gray-500">{intent.description}</span>
+						<span class="block text-xs font-medium text-[color:var(--qa-active,var(--m3-primary))]">{intent.title}</span>
+						<span class="mt-0.5 block text-[11px] text-[color:var(--qa-muted)]">{intent.description}</span>
 					</button>
 				{/each}
 			</div>

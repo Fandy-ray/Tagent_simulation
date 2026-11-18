@@ -167,6 +167,14 @@
 		font-weight: 600;
 	}
 
+	:global(html.light) .md-body :global(:is(strong, h1, h2, h3, h4, th)) {
+		color: var(--m3-on-surface, #202b3c);
+	}
+
+	:global(html.light) .md-body :global(a) {
+		color: var(--m3-primary, #174b9b);
+	}
+
 	.md-body :global(a) {
 		color: #7dd3fc;
 		text-decoration: underline;

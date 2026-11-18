@@ -2,11 +2,17 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
 	import { untrack } from 'svelte';
+	import { getAgentModels } from '$lib/apis/agent';
 	import AddConnectionModal from '$lib/components/chat/Settings/AddConnectionModal.svelte';
 	import AdminModels from '$lib/components/admin/Models.svelte';
 	import AdminAgentModels from '$lib/components/admin/AgentModels.svelte';
 	import AdminEvaluationSettings from '$lib/components/admin/EvaluationSettings.svelte';
 	import AdminIntegrations from '$lib/components/admin/Integrations.svelte';
+	import AdminPipelineSettings from '$lib/components/admin/PipelineSettings.svelte';
+	import AdminImageSettings from '$lib/components/admin/ImageSettings.svelte';
+	import AdminAudioSettings from '$lib/components/admin/AudioSettings.svelte';
+	import AdminCodeExecutionSettings from '$lib/components/admin/CodeExecutionSettings.svelte';
+	import AdminWebSearchSettings from '$lib/components/admin/WebSearchSettings.svelte';
 	import AdminDocumentsSettings from '$lib/components/admin/DocumentsSettings.svelte';
 	import AdminDatabase from '$lib/components/admin/Database.svelte';
 
@@ -409,65 +415,13 @@
 			id: 'web',
 			title: '网页搜索',
 			keywords: ['web search google bing duckduckgo serp searxng tavily exa firecrawl'],
-			items: [
-				{
-					key: 'webSearch',
-					label: '启用网页搜索',
-					description: '允许模型检索外部网页信息。',
-					kind: 'toggle',
-					value: true
-				},
-				{
-					key: 'searchProvider',
-					label: '搜索服务',
-					description: '用于检索网页的服务提供商。',
-					kind: 'select',
-					options: ['DuckDuckGo', 'Google', 'Bing', 'SearXNG', 'Tavily'],
-					value: 'DuckDuckGo'
-				},
-				{
-					key: 'searchKey',
-					label: '搜索服务 API Key',
-					description: '选定搜索服务的访问密钥（mock）。',
-					kind: 'text',
-					value: ''
-				},
-				{
-					key: 'searchTopK',
-					label: '结果数量',
-					description: '每次搜索返回的网页条数。',
-					kind: 'number',
-					value: 5
-				}
-			]
+			items: []
 		},
 		{
 			id: 'code-execution',
 			title: '代码执行',
 			keywords: ['code execution python sandbox compiler jupyter interpreter'],
-			items: [
-				{
-					key: 'codeExecution',
-					label: '启用代码执行',
-					description: '允许模型在隔离环境中运行代码。',
-					kind: 'toggle',
-					value: false
-				},
-				{
-					key: 'codeRuntime',
-					label: '执行环境',
-					description: '代码运行器服务地址。',
-					kind: 'text',
-					value: 'http://localhost:8080'
-				},
-				{
-					key: 'executionTimeout',
-					label: '执行超时（秒）',
-					description: '单次代码执行最长时间。',
-					kind: 'number',
-					value: 30
-				}
-			]
+			items: []
 		},
 		{
 			id: 'interface',
@@ -475,11 +429,118 @@
 			keywords: ['interface ui appearance banners tasks prompt suggestions title generation tags'],
 			items: [
 				{
+					key: 'taskModel',
+					label: '任务模型',
+					description: '本地任务模型。',
+					kind: 'select',
+					options: ['使用当前模型'],
+					value: '使用当前模型'
+				},
+				{
+					key: 'externalTaskModel',
+					label: '外部任务模型',
+					description: '外部任务模型。',
+					kind: 'select',
+					options: ['使用当前模型'],
+					value: '使用当前模型'
+				},
+				{
 					key: 'titleGeneration',
 					label: '自动生成标题',
-					description: '根据首轮对话内容生成会话标题。',
+					description: '',
 					kind: 'toggle',
 					value: true
+				},
+				{
+					key: 'titlePrompt',
+					label: '标题生成提示词模板',
+					description: '',
+					kind: 'textarea',
+					value: ''
+				},
+				{
+					key: 'voicePrompt',
+					label: '语音模式提示词模板',
+					description: '',
+					kind: 'textarea',
+					value: ''
+				},
+				{
+					key: 'followUpGeneration',
+					label: '自动生成追问建议',
+					description: '在当前浏览器的答疑页允许生成追问建议。',
+					kind: 'toggle',
+					value: true
+				},
+				{
+					key: 'followUpPrompt',
+					label: '追问建议提示词模板',
+					description: '',
+					kind: 'textarea',
+					value: ''
+				},
+				{
+					key: 'tagsGeneration',
+					label: '自动生成标签',
+					description: '在当前浏览器的答疑页允许生成标签。',
+					kind: 'toggle',
+					value: true
+				},
+				{
+					key: 'tagsPrompt',
+					label: '标签生成提示词模板',
+					description: '',
+					kind: 'textarea',
+					value: ''
+				},
+				{
+					key: 'retrievalQueryGeneration',
+					label: '生成知识检索查询',
+					description: '',
+					kind: 'toggle',
+					value: true
+				},
+				{
+					key: 'searchQueryGeneration',
+					label: '生成网页搜索查询',
+					description: '',
+					kind: 'toggle',
+					value: true
+				},
+				{
+					key: 'queryPrompt',
+					label: '查询生成提示词模板',
+					description: '用于检索或搜索查询。',
+					kind: 'textarea',
+					value: ''
+				},
+				{
+					key: 'autocompleteGeneration',
+					label: '启用自动补全生成',
+					description: '',
+					kind: 'toggle',
+					value: true
+				},
+				{
+					key: 'autocompleteMaxLength',
+					label: '自动补全输入长度上限',
+					description: '设为 -1 表示不限。',
+					kind: 'number',
+					value: -1
+				},
+				{
+					key: 'imagePrompt',
+					label: '图像提示词生成模板',
+					description: '',
+					kind: 'textarea',
+					value: ''
+				},
+				{
+					key: 'toolPrompt',
+					label: '工具调用提示词模板',
+					description: '',
+					kind: 'textarea',
+					value: ''
 				},
 				{
 					key: 'promptSuggestions',
@@ -508,101 +569,19 @@
 			id: 'audio',
 			title: '音频',
 			keywords: ['audio voice speech tts stt whisper deepgram azure elevenlabs'],
-			items: [
-				{
-					key: 'speechToText',
-					label: '语音转文字',
-					description: '允许用户通过语音输入消息。',
-					kind: 'toggle',
-					value: true
-				},
-				{
-					key: 'textToSpeech',
-					label: '文字转语音',
-					description: '支持将回复转换为语音播放。',
-					kind: 'toggle',
-					value: false
-				},
-				{
-					key: 'audioProvider',
-					label: '音频服务提供商',
-					description: '语音识别和合成服务。',
-					kind: 'select',
-					options: ['内置服务', 'OpenAI', 'Azure', 'ElevenLabs'],
-					value: '内置服务'
-				},
-				{
-					key: 'audioKey',
-					label: '音频服务 API Key',
-					description: '音频服务访问密钥（mock）。',
-					kind: 'text',
-					value: ''
-				}
-			]
+			items: []
 		},
 		{
 			id: 'images',
 			title: '图像',
 			keywords: ['images generation dalle stable diffusion comfyui gemini'],
-			items: [
-				{
-					key: 'imageGeneration',
-					label: '启用图像生成',
-					description: '允许用户通过提示词生成图片。',
-					kind: 'toggle',
-					value: true
-				},
-				{
-					key: 'imageProvider',
-					label: '图像生成服务',
-					description: '提供图像生成的模型服务。',
-					kind: 'select',
-					options: ['DALL·E', 'Stable Diffusion', 'ComfyUI', 'Gemini'],
-					value: 'DALL·E'
-				},
-				{
-					key: 'imageUrl',
-					label: '服务地址',
-					description: '图像生成 API 端点。',
-					kind: 'text',
-					value: ''
-				},
-				{
-					key: 'imageKey',
-					label: '服务 API Key',
-					description: '图像服务访问密钥（mock）。',
-					kind: 'text',
-					value: ''
-				}
-			]
+			items: []
 		},
 		{
 			id: 'pipelines',
 			title: '管道',
 			keywords: ['pipelines workflows filters valves middleware'],
-			items: [
-				{
-					key: 'pipelineUrl',
-					label: '管道服务地址',
-					description: '连接自定义管道服务的 URL。',
-					kind: 'text',
-					value: ''
-				},
-				{
-					key: 'pipelineKey',
-					label: '管道 API Key',
-					description: '管道服务的访问密钥（mock）。',
-					kind: 'text',
-					value: ''
-				},
-				{
-					key: 'pipelineEnabled',
-					label: '启用管道集成',
-					description: '允许加载管道提供的模型和过滤器。',
-					kind: 'toggle',
-					value: false
-				}
-			]
+			items: []
 		},
 		{
 			id: 'db',
@@ -724,6 +703,25 @@
 	let selectedTab = $derived(
 		settings.some((tab) => tab.id === $page.params.tab) ? $page.params.tab : 'general'
 	);
+	let taskModelOptions = $state<string[]>([]);
+	$effect(() => {
+		if (selectedTab !== 'interface') return;
+		let active = true;
+		void getAgentModels()
+			.then(({ data }) => {
+				if (active) taskModelOptions = data.map(({ id }) => id);
+			})
+			.catch(() => {
+				if (active) taskModelOptions = [];
+			});
+		return () => { active = false; };
+	});
+
+	function settingOptions(item: SettingItem) {
+		if (item.key !== 'taskModel' && item.key !== 'externalTaskModel') return item.options ?? [];
+		return [...new Set(['使用当前模型', String(item.value), ...taskModelOptions])];
+	}
+
 	let visibleTabs = $derived(
 		settings.filter(
 			(tab) =>
@@ -906,7 +904,7 @@
 		aria-label="管理员设置分类"
 	>
 		<label
-			class="dark:bg-gray-850/80 hidden w-full items-center gap-2 rounded-full bg-gray-100/80 px-3 py-1.5 text-sm text-gray-500 backdrop-blur md:flex"
+			class="admin-search hidden w-full items-center gap-2 rounded-full border px-3 py-1.5 text-sm md:flex"
 		>
 			<svg viewBox="0 0 20 20" fill="currentColor" class="size-4 shrink-0"
 				><path
@@ -916,7 +914,7 @@
 				/></svg
 			>
 			<input
-				class="w-full min-w-0 bg-transparent py-1 text-sm outline-none dark:text-gray-300"
+				class="w-full min-w-0 bg-transparent py-1 text-sm outline-none"
 				bind:value={search}
 				placeholder="搜索设置"
 				aria-label="搜索设置分类"
@@ -1022,6 +1020,16 @@
 				<AdminIntegrations />
 			{:else if selectedTab === 'documents'}
 				<AdminDocumentsSettings />
+			{:else if selectedTab === 'web'}
+				<AdminWebSearchSettings />
+			{:else if selectedTab === 'code-execution'}
+				<AdminCodeExecutionSettings />
+			{:else if selectedTab === 'audio'}
+				<AdminAudioSettings />
+			{:else if selectedTab === 'images'}
+				<AdminImageSettings />
+			{:else if selectedTab === 'pipelines'}
+				<AdminPipelineSettings connectionUrls={openAiConnections.filter(({ enabled, url }) => enabled && url).map(({ url }) => url)} />
 			{:else if selectedTab === 'db'}
 				<AdminDatabase />
 			{:else}
@@ -1033,7 +1041,7 @@
 					}}
 				>
 					<header
-						class="sticky top-0 z-10 flex items-center justify-between bg-white/95 py-2 backdrop-blur dark:bg-gray-900/95"
+						class="admin-settings-heading sticky top-0 z-10 flex items-center justify-between py-2"
 					>
 						<div>
 							<h1 class="text-lg font-medium">{currentTab.title}</h1>
@@ -1194,7 +1202,7 @@
 															id={`setting-${item.key}`}
 															class="w-fit min-w-16 rounded-sm bg-transparent px-1 py-0.5 text-right text-[10px] outline-none"
 															bind:value={item.value as string}
-															>{#each item.options ?? [] as option (option)}<option value={option}
+															>{#each settingOptions(item) as option (option)}<option value={option}
 																	>{option}</option
 																>{/each}</select
 														>
@@ -1357,7 +1365,7 @@
 												<div class="py-1">
 													<div class="flex items-center gap-2">
 														<input
-															class="min-w-0 flex-1 bg-transparent text-sm outline-none"
+															class="admin-connection-address min-w-0 flex-1 bg-transparent text-sm outline-none"
 															placeholder="API Base URL"
 															bind:value={connection.url}
 														/>
@@ -1444,7 +1452,7 @@
 												>
 													<div class="flex items-center gap-2">
 														<input
-															class="min-w-0 flex-1 bg-transparent text-sm outline-none"
+															class="admin-connection-address min-w-0 flex-1 bg-transparent text-sm outline-none"
 															placeholder="http://localhost:11434"
 															bind:value={connection.url}
 														/>
@@ -1550,6 +1558,11 @@
 								{/each}
 							</section>
 						{:else}
+							{#if selectedTab === 'interface'}
+								<p class="mb-4 rounded-lg border border-[var(--qa-line)] bg-[var(--qa-panel)] p-3 text-xs text-[color:var(--qa-muted)]">
+									配置保存在当前浏览器。追问建议和标签开关会作用于答疑页，任务模型与提示词模板尚未接入后端。
+								</p>
+							{/if}
 							{#each currentTab.items as item (item.key)}
 								<div
 									class="dark:border-gray-850/40 flex flex-col gap-3 border-b border-gray-100 py-3.5 sm:flex-row sm:items-center sm:justify-between"
@@ -1582,7 +1595,7 @@
 												id={`setting-${item.key}`}
 												class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-gray-900"
 												bind:value={item.value as string}
-												>{#each item.options ?? [] as option (option)}<option value={option}
+												>{#each settingOptions(item) as option (option)}<option value={option}
 														>{option}</option
 													>{/each}</select
 											>
@@ -1605,7 +1618,7 @@
 						{/if}
 					</div>
 					<footer
-						class="sticky bottom-0 flex items-center justify-between border-t border-gray-100 bg-white/95 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95"
+						class="sticky bottom-0 flex items-center justify-between border-t border-[color:var(--qa-line)] bg-[var(--qa-surface)] py-3"
 					>
 						<button
 							type="button"

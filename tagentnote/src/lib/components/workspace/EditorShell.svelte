@@ -47,7 +47,7 @@
 		</button>
 	</div>
 
-	<div class="border-gray-850/30 space-y-4 rounded-3xl border bg-gray-900 p-4 md:p-5">
+	<div class="workspace-surface border-gray-850/30 space-y-4 rounded-3xl border bg-gray-900 p-4 md:p-5">
 		{#if children}
 			{@render children()}
 		{/if}

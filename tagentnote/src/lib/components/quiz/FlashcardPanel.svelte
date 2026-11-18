@@ -620,13 +620,13 @@
 			<div class="relative flex h-full max-h-[400px] min-h-[300px] min-w-0 flex-1">
 				<!-- 卡后面露出的一道边：一叠卡的意思 -->
 				<div
-					class="pointer-events-none absolute inset-x-5 top-2.5 -bottom-2.5 rounded-3xl border border-white/[0.05] bg-[#191919]"
+					class="pointer-events-none absolute inset-x-5 top-2.5 -bottom-2.5 rounded-3xl border border-white/[0.05] bg-[var(--m3-surface-low)]"
 					aria-hidden="true"
 				></div>
 
 				{#if phase === 'generating'}
 					<div
-						class="relative flex w-full flex-col rounded-3xl border border-white/[0.08] bg-[#1d1d1d] p-6 shadow-[0_24px_48px_-24px_rgba(0,0,0,0.6)] sm:px-8 sm:py-7"
+						class="relative flex w-full flex-col rounded-3xl border border-white/[0.08] bg-[var(--m3-surface-low)] p-6 shadow-[0_24px_48px_-24px_rgba(0,0,0,0.6)] sm:px-8 sm:py-7"
 					>
 						<div class="flex items-center justify-between">
 							<div class="exam-shim h-5 w-11 rounded-full"></div>
@@ -694,7 +694,7 @@
 					{/key}
 				{:else if cut}
 					<div
-						class="relative flex w-full flex-col items-center justify-center gap-2.5 rounded-3xl border border-white/[0.08] bg-[#1d1d1d] p-8 text-center"
+						class="relative flex w-full flex-col items-center justify-center gap-2.5 rounded-3xl border border-white/[0.08] bg-[var(--m3-surface-low)] p-8 text-center"
 					>
 						<div class="mb-2 flex size-11 items-center justify-center rounded-2xl bg-amber-500/15">
 							<svg
@@ -741,7 +741,7 @@
 					>
 						<div class="exam-bob relative mb-3 h-[46px] w-16" aria-hidden="true">
 							<div
-								class="absolute inset-0 translate-x-[7px] translate-y-[5px] rotate-[8deg] rounded-[10px] border border-white/[0.06] bg-[#1b1b1b]"
+								class="absolute inset-0 translate-x-[7px] translate-y-[5px] rotate-[8deg] rounded-[10px] border border-white/[0.06] bg-[var(--m3-surface-low)]"
 							></div>
 							<div
 								class="absolute inset-0 flex items-center justify-center gap-1 rounded-[10px] border border-white/10 bg-[#222]"

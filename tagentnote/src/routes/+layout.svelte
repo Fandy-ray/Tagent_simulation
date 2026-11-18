@@ -2,6 +2,25 @@
 	import { onMount } from 'svelte';
 
 	import '../app.css';
+	import '$lib/styles/space-theme.css';
+	import { page } from '$app/state';
+	import SpaceAssistant from '$lib/components/space/SpaceAssistant.svelte';
+	import { learningContext, spaceTopics, stageKeys } from '$lib/data/spaceLearning';
+
+	const context = $derived.by(() => {
+		const params = page.url.searchParams;
+		if (page.route.id === '/space-assistant') return learningContext(params);
+		if (page.route.id === '/qa' || page.route.id === '/exam') return learningContext(params);
+		if (
+			page.route.id !== '/space-exploration/learn/[stage]' &&
+			page.route.id !== '/space-exploration/learn/[stage]/resources'
+		) return null;
+		const stage = stageKeys.find((key) => key === page.params.stage);
+		if (!stage) return null;
+		const topic = spaceTopics[stage].find(({ id }) => id === params.get('topic'));
+		return { stage, topic, lesson: topic?.lessons.find(({ id }) => id === params.get('lesson')) };
+	});
+
 	import { initI18n, setI18nContext } from '$lib/i18n';
 	import { loadUserSettings } from '$lib/data/userSettings';
 
@@ -42,3 +61,16 @@
 {/if}
 
 {@render children()}
+
+<SpaceAssistant
+	stage={context?.stage}
+	topic={context?.topic?.title}
+	topicId={context?.topic?.id}
+	lesson={context?.lesson?.title}
+	lessonId={context?.lesson?.id}
+	preferredModel={page.url.searchParams.get('model') ?? undefined}
+	resourceTitle={page.route.id === '/space-assistant' && context
+		? page.url.searchParams.get('resource')?.slice(0, 100) ?? '轨道参数与典型轨道'
+		: undefined}
+	autoOpen={page.route.id === '/space-assistant' && page.url.searchParams.get('document') !== 'usgs-1525'}
+/>

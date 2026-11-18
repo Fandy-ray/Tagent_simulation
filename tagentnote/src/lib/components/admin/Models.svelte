@@ -236,7 +236,7 @@
 			</div>
 			<div class="flex flex-wrap items-center justify-end gap-1.5">
 				<label
-					class="dark:bg-gray-850 inline-flex h-8 min-w-16 cursor-pointer items-center justify-center rounded-xl bg-gray-100 px-3 text-xs leading-none font-medium transition hover:bg-gray-200 dark:hover:bg-gray-800"
+					class="admin-secondary inline-flex h-8 min-w-16 cursor-pointer items-center justify-center rounded-xl border px-3 text-xs leading-none font-medium transition"
 					>导入<input
 						class="hidden"
 						type="file"
@@ -245,17 +245,17 @@
 					/></label
 				>
 				<button
-					class="dark:bg-gray-850 inline-flex h-8 min-w-16 items-center justify-center rounded-xl bg-gray-100 px-3 text-xs leading-none font-medium transition hover:bg-gray-200 dark:hover:bg-gray-800"
+					class="admin-secondary inline-flex h-8 min-w-16 items-center justify-center rounded-xl border px-3 text-xs leading-none font-medium transition"
 					type="button"
 					onclick={exportModels}>导出</button
 				>
 				<button
-					class="dark:bg-gray-850 inline-flex h-8 min-w-16 items-center justify-center rounded-xl bg-gray-100 px-3 text-xs leading-none font-medium transition hover:bg-gray-200 dark:hover:bg-gray-800"
+					class="admin-secondary inline-flex h-8 min-w-16 items-center justify-center rounded-xl border px-3 text-xs leading-none font-medium transition"
 					type="button"
 					onclick={() => (showManageModal = true)}>管理</button
 				>
 				<button
-					class="dark:bg-gray-850 inline-flex h-8 min-w-16 items-center justify-center rounded-xl bg-gray-100 px-3 text-xs leading-none font-medium transition hover:bg-gray-200 dark:hover:bg-gray-800"
+					class="admin-secondary inline-flex h-8 min-w-16 items-center justify-center rounded-xl border px-3 text-xs leading-none font-medium transition"
 					type="button"
 					onclick={() => (showSettingsModal = true)}>设置</button
 				>
@@ -431,7 +431,7 @@
 		}}
 	>
 		<div
-			class="my-auto max-h-[95dvh] w-full max-w-3xl overflow-y-auto rounded-[1.75rem] border border-white/10 bg-[#171717] text-gray-200 shadow-2xl"
+			class="my-auto max-h-[95dvh] w-full max-w-3xl overflow-y-auto rounded-[1.75rem] border border-white/10 bg-[var(--qa-panel)] text-gray-200 shadow-2xl"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="manage-models-title"
@@ -450,7 +450,7 @@
 			<div class="flex flex-col gap-4 px-4 pt-2 pb-5">
 				<h3 class="text-sm font-medium">Ollama</h3>
 				<select
-					class="w-full rounded-xl bg-[#262626] px-4 py-3 text-sm outline-none"
+					class="w-full rounded-xl bg-[var(--qa-raised)] px-4 py-3 text-sm outline-none"
 					bind:value={manageUrl}
 					aria-label="选择 Ollama 实例"
 					>{#each availableOllamaUrls as url (url)}<option value={url}>{url}</option>{/each}</select
@@ -461,7 +461,7 @@
 					</div>
 					<div class="flex gap-2">
 						<input
-							class="min-w-0 flex-1 rounded-xl bg-[#262626] px-4 py-3 text-sm outline-none placeholder:text-gray-400"
+							class="min-w-0 flex-1 rounded-xl bg-[var(--qa-raised)] px-4 py-3 text-sm outline-none placeholder:text-gray-400"
 							bind:value={downloadTag}
 							placeholder="输入模型标签（例如：mistral:7b）"
 							onkeydown={(event) => event.key === 'Enter' && mockPullModel()}
@@ -469,7 +469,7 @@
 							type="button"
 							aria-label="下载模型"
 							disabled={!downloadTag.trim()}
-							class="rounded-xl bg-[#262626] px-4 text-lg disabled:opacity-40"
+							class="rounded-xl bg-[var(--qa-raised)] px-4 text-lg disabled:opacity-40"
 							onclick={mockPullModel}>⇩</button
 						>
 					</div>
@@ -487,7 +487,7 @@
 					<div class="flex gap-2">
 						<select
 							id="delete-model"
-							class="min-w-0 flex-1 rounded-xl bg-[#262626] px-4 py-3 text-sm outline-none"
+							class="min-w-0 flex-1 rounded-xl bg-[var(--qa-raised)] px-4 py-3 text-sm outline-none"
 							bind:value={deleteTag}
 							><option value="">选择模型</option>{#each ollamaModels as tag (tag)}<option
 									value={tag}>{tag}</option
@@ -496,7 +496,7 @@
 							type="button"
 							aria-label="删除模型"
 							disabled={!deleteTag}
-							class="rounded-xl bg-[#262626] px-4 text-lg disabled:opacity-40"
+							class="rounded-xl bg-[var(--qa-raised)] px-4 text-lg disabled:opacity-40"
 							onclick={mockDeleteModel}>▤</button
 						>
 					</div>
@@ -507,11 +507,11 @@
 						<div class="flex min-w-0 flex-1 flex-col gap-2">
 							<input
 								id="create-model-name"
-								class="w-full rounded-xl bg-[#262626] px-4 py-3 text-sm outline-none placeholder:text-gray-400"
+								class="w-full rounded-xl bg-[var(--qa-raised)] px-4 py-3 text-sm outline-none placeholder:text-gray-400"
 								bind:value={createTag}
 								placeholder="输入模型标签（例如：my-modelfile）"
 							/><textarea
-								class="min-h-36 w-full resize-y rounded-xl bg-[#262626] px-4 py-3 text-sm outline-none placeholder:text-gray-400"
+								class="min-h-36 w-full resize-y rounded-xl bg-[var(--qa-raised)] px-4 py-3 text-sm outline-none placeholder:text-gray-400"
 								bind:value={createJson}
 								placeholder="填写模型 JSON 配置"></textarea>
 						</div>
@@ -519,7 +519,7 @@
 							type="button"
 							aria-label="创建模型"
 							disabled={!createTag.trim() || !createJson.trim()}
-							class="h-12 rounded-xl bg-[#262626] px-4 text-lg disabled:opacity-40"
+							class="h-12 rounded-xl bg-[var(--qa-raised)] px-4 text-lg disabled:opacity-40"
 							onclick={mockCreateModel}>⇧</button
 						>
 					</div>
@@ -532,7 +532,7 @@
 						><span>实验性</span><span class="text-gray-400"
 							>{showExperimental ? '隐藏' : '显示'}</span
 						></button
-					>{#if showExperimental}<p class="mt-3 rounded-xl bg-[#262626] p-3 text-xs text-gray-400">
+					>{#if showExperimental}<p class="mt-3 rounded-xl bg-[var(--qa-raised)] p-3 text-xs text-gray-400">
 							实验性模型上传与 GGUF 管理（mock）
 						</p>{/if}
 				</section>
@@ -550,7 +550,7 @@
 		}}
 	>
 		<div
-			class="my-auto flex max-h-[95dvh] w-full max-w-4xl flex-col rounded-[1.75rem] border border-white/10 bg-[#171717] text-gray-200 shadow-2xl"
+			class="my-auto flex max-h-[95dvh] w-full max-w-4xl flex-col rounded-[1.75rem] border border-white/10 bg-[var(--qa-panel)] text-gray-200 shadow-2xl"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="model-settings-title"
@@ -600,7 +600,7 @@
 									>{/each}</select
 							>{#if selectedDefaultModels.length}<div class="mt-2 space-y-1">
 									{#each selectedDefaultModels as id (id)}<div
-											class="flex items-center justify-between rounded-lg bg-[#222] px-2 py-1 text-sm"
+											class="flex items-center justify-between rounded-lg bg-[var(--qa-surface)] px-2 py-1 text-sm"
 										>
 											{models.find((model) => model.id === id)?.name ?? id}<button
 												type="button"
@@ -632,7 +632,7 @@
 									>{/each}</select
 							>{#if pinnedModels.length}<div class="mt-2 space-y-1">
 									{#each pinnedModels as id (id)}<div
-											class="flex items-center justify-between rounded-lg bg-[#222] px-2 py-1 text-sm"
+											class="flex items-center justify-between rounded-lg bg-[var(--qa-surface)] px-2 py-1 text-sm"
 										>
 											{models.find((model) => model.id === id)?.name ?? id}<button
 												type="button"
@@ -655,11 +655,11 @@
 							>{#if promptSuggestionsOpen}<div class="mt-3 space-y-2">
 									{#each promptSuggestions as prompt, index (index)}<div class="flex gap-2">
 											<input
-												class="min-w-0 flex-1 rounded-lg bg-[#262626] px-3 py-2 text-xs"
+												class="min-w-0 flex-1 rounded-lg bg-[var(--qa-raised)] px-3 py-2 text-xs"
 												bind:value={prompt.title}
 												placeholder="标题"
 											/><input
-												class="min-w-0 flex-[2] rounded-lg bg-[#262626] px-3 py-2 text-xs"
+												class="min-w-0 flex-[2] rounded-lg bg-[var(--qa-raised)] px-3 py-2 text-xs"
 												bind:value={prompt.content}
 												placeholder="提示词内容"
 											/><button
@@ -671,7 +671,7 @@
 											>
 										</div>{/each}<button
 										type="button"
-										class="rounded-lg bg-[#262626] px-3 py-2 text-xs"
+										class="rounded-lg bg-[var(--qa-raised)] px-3 py-2 text-xs"
 										onclick={() =>
 											(promptSuggestions = [...promptSuggestions, { title: '', content: '' }])}
 										>＋ 添加提示词</button
@@ -700,7 +700,7 @@
 							>{#if paramsOpen}<div class="mt-3 grid gap-3 sm:grid-cols-2">
 									{#each Object.keys(modelParams) as key (key)}<label class="text-xs text-gray-400"
 											>{key}<input
-												class="mt-1 w-full rounded-lg bg-[#262626] px-3 py-2 text-sm text-gray-200"
+												class="mt-1 w-full rounded-lg bg-[var(--qa-raised)] px-3 py-2 text-sm text-gray-200"
 												bind:value={modelParams[key]}
 												placeholder="默认"
 											/></label
@@ -712,7 +712,7 @@
 							<div class="mb-2 flex items-center justify-between text-xs text-gray-400">
 								重新排序模型<button
 									type="button"
-									class="rounded-lg bg-[#262626] px-2 py-1"
+									class="rounded-lg bg-[var(--qa-raised)] px-2 py-1"
 									onclick={() =>
 										(orderedModelIds = [...models]
 											.sort((a, b) => a.name.localeCompare(b.name))
@@ -721,7 +721,7 @@
 							</div>
 							<div class="space-y-1">
 								{#each orderedModelIds as id, index (id)}<div
-										class="flex items-center justify-between rounded-lg bg-[#222] px-3 py-2 text-sm"
+										class="flex items-center justify-between rounded-lg bg-[var(--qa-surface)] px-3 py-2 text-sm"
 									>
 										<span>{models.find((model) => model.id === id)?.name ?? id}</span>
 										<div class="flex gap-2">

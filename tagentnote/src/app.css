@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 /*
-  dark: 跟着页面自己的主题走（app.html 按设置给 <html> 加 dark / light / system），不跟操作系统。
+  dark: 跟着页面自己的主题走（app.html 按设置给 <html> 加 dark / light），不跟操作系统。
   Tailwind v4 默认按 prefers-color-scheme 判断：系统是浅色、页面是默认的暗色时，管理员面板、设置弹窗这些
   写了 dark: 的地方会变成浅色，和写死暗色的侧栏拼在一起一半黑一半白。
 */
@@ -124,6 +124,7 @@ body {
 
 /* ========== 浅色主题 ========== */
 html.light {
+	color-scheme: light;
 	background: #f8f8f8;
 	color: #1a1a1a;
 }
@@ -198,7 +199,7 @@ html.light .hover\:bg-gray-800:hover {
 }
 
 /* 浅色主题下的头像黑色边框 */
-html.light .rounded-full {
+html.light .rounded-full:not(.workspace-page *, .admin-workspace *, .space-branded *) {
 	border: 1px solid #d0d0d0 !important;
 }
 
@@ -210,92 +211,6 @@ html.light .rounded-full {
 :root.dark body,
 :root.dark html {
 	background: #171717;
-	color: #ffffff;
-}
-
-/* ========== 系统主题 ========== */
-html.system body,
-html.system html {
-	background: #aeb8c4;
-	color: #1a1a1a;
-}
-
-html.system .bg-gray-900 {
-	background-color: #3c4a5e !important;
-}
-
-html.system .bg-gray-850 {
-	background-color: #364c5a !important;
-}
-
-html.system .bg-gray-800 {
-	background-color: #2e4352 !important;
-}
-
-html.system .bg-gray-950 {
-	background-color: #aeb8c4 !important;
-}
-
-html.system .bg-gray-900\/90 {
-	background-color: rgba(60, 74, 94, 0.9) !important;
-}
-
-html.system .text-white {
-	color: #aeb8c4 !important;
-}
-
-html.system .text-gray-100 {
-	color: #d4d4d4 !important;
-}
-
-html.system .text-gray-200 {
-	color: #b0b0b0 !important;
-}
-
-html.system .text-gray-300 {
-	color: #8a8a8a !important;
-}
-
-html.system .text-gray-400 {
-	color: #707070 !important;
-}
-
-html.system .text-gray-500 {
-	color: #606060 !important;
-}
-
-html.system .border-white\/\[0\.06\] {
-	border-color: rgba(255, 255, 255, 0.08) !important;
-}
-
-html.system .border-white\/10 {
-	border-color: rgba(255, 255, 255, 0.12) !important;
-}
-
-html.system .border-r {
-	border-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-html.system .hover\:bg-gray-900:hover {
-	background-color: #4a5e75 !important;
-}
-
-html.system .hover\:bg-gray-800:hover {
-	background-color: #3c4a5e !important;
-}
-
-/* ========== 纯黑主题 ========== */
-:root.oled-dark {
-	color-scheme: dark;
-	--color-gray-800: #101010;
-	--color-gray-850: #050505;
-	--color-gray-900: #000000;
-	--color-gray-950: #000000;
-}
-
-:root.oled-dark body,
-:root.oled-dark html {
-	background: #000000;
 	color: #ffffff;
 }
 

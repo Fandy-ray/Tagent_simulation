@@ -65,7 +65,7 @@
 	<div class="flip-inner" class:is-flipped={flipped}>
 		<!-- 正面 -->
 		<section
-			class="flip-face rounded-3xl border border-white/[0.08] bg-[#1d1d1d] shadow-[0_24px_48px_-24px_rgba(0,0,0,0.6)]"
+			class="flip-face rounded-3xl border border-white/[0.08] bg-[var(--m3-surface-low)] shadow-[0_24px_48px_-24px_rgba(0,0,0,0.6)]"
 			aria-hidden={flipped}
 		>
 			{#if coverClickable}
@@ -185,7 +185,7 @@
 
 		<!-- 反面 -->
 		<section
-			class="flip-face flip-back rounded-3xl border border-white/[0.08] bg-[#1d1d1d] shadow-[0_24px_48px_-24px_rgba(0,0,0,0.6)]"
+			class="flip-face flip-back rounded-3xl border border-white/[0.08] bg-[var(--m3-surface-low)] shadow-[0_24px_48px_-24px_rgba(0,0,0,0.6)]"
 			aria-hidden={!flipped}
 		>
 			<div

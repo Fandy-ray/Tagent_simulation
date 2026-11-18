@@ -164,11 +164,11 @@
 							</div>
 							<div class="flex h-full shrink-0 items-start justify-end space-x-1 text-xs">
 								{#each item.keys as key (key)}
-									<div
+									<kbd
 										class="flex h-fit items-start justify-center rounded-sm border border-white/10 px-1 py-0.5 text-gray-300 capitalize"
 									>
 										{formatKey(key)}
-									</div>
+									</kbd>
 								{/each}
 							</div>
 						</div>
