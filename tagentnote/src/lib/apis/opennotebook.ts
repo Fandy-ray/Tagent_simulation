@@ -45,6 +45,8 @@ const DEFAULT_API_URL = 'http://localhost:5055';
 
 const allowedNotebookIds = (): Set<string> | null => {
 	if (get(authMode) !== 'enabled' || get(currentCourseId) === 'general') return null;
+	// 课程资料映射由管理员管理；学生的完整笔记本是个人内容，归属由服务端校验。
+	if (get(currentAccount)?.role === 'student') return null;
 	const course = get(availableCourses).find((item) => item.id === get(currentCourseId));
 	return new Set(course?.notebook_ids ?? []);
 };

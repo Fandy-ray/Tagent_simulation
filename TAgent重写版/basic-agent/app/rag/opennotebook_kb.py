@@ -285,6 +285,8 @@ class OpenNotebookKnowledgeBase:
     def _list_documents(self, notebook_ids: list[str] | None = None) -> list[Document]:
         documents: list[Document] = []
         names = self._notebook_names()
+        if self.account_mode and notebook_ids and any(item not in names for item in notebook_ids):
+            raise OpenNotebookError("选中的笔记本不属于当前账号或已被删除。")
         for path, fallback_title, notebook_id in _list_paths(notebook_ids):
             try:
                 payload = self._json("GET", path)
@@ -304,6 +306,8 @@ class OpenNotebookKnowledgeBase:
 
     def _membership(self, notebook_ids: list[str]) -> dict[str, dict[str, str]]:
         names = self._notebook_names()
+        if self.account_mode and any(item not in names for item in notebook_ids):
+            raise OpenNotebookError("选中的笔记本不属于当前账号或已被删除。")
         members: dict[str, dict[str, str]] = {}
         for notebook_id in notebook_ids:
             info = {

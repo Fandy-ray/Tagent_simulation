@@ -1,6 +1,7 @@
 import json
 import pytest
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.config import AgentConfig, normalize_notebook_url
@@ -342,7 +343,7 @@ def test_composite_skips_local_when_notebook_selected():
     assert "本地教材" not in context
 
 
-def test_empty_notebook_scope_never_reads_the_shared_notebook_store():
+def test_student_notebook_scope_is_explicit_and_requires_account_mode_source():
     from flask import Flask, g
 
     from app.api.validators import optional_notebook_ids
@@ -354,8 +355,15 @@ def test_empty_notebook_scope_never_reads_the_shared_notebook_store():
         g.account = {"role": "student"}
         assert optional_notebook_ids({}) == []
         with pytest.raises(AgentAPIError) as denied:
-            optional_notebook_ids({"notebook_ids": ["notebook:someone-else"]})
-        assert denied.value.code == "notebook_scope_unavailable"
+            optional_notebook_ids({"notebook_ids": ["notebook:mine"]})
+        assert denied.value.code == "notebook_source_unavailable"
+        app.extensions["settings"] = SimpleNamespace(
+            knowledge_source="composite", notebook_url="http://127.0.0.1:5055"
+        )
+        assert optional_notebook_ids({"notebook_ids": ["notebook:mine"]}) == ["notebook:mine"]
+        with pytest.raises(AgentAPIError) as invalid:
+            optional_notebook_ids({"notebook_ids": [f"notebook:{index}" for index in range(21)]})
+        assert invalid.value.code == "validation_error"
 
     client = FakeClient({})
     notebook = OpenNotebookKnowledgeBase(base_url="http://127.0.0.1:5055", client=client)
@@ -371,6 +379,41 @@ def test_empty_notebook_scope_never_reads_the_shared_notebook_store():
     context, _ = composite.retrieve("延迟", notebook_ids=[])
     assert "公共教材" in context
     assert "私人笔记" not in context
+
+
+def test_account_mode_rejects_foreign_notebook_before_search_or_document_reads():
+    client = FakeClient({
+        ("GET", "/api/notebooks"): FakeResponse([
+            {"id": "notebook:mine", "name": "我的笔记本"}
+        ]),
+        ("GET", "/api/notes?notebook_id=notebook:mine"): FakeResponse([
+            {"id": "note:mine", "title": "个人笔记", "content": "本人内容"}
+        ]),
+        ("GET", "/api/notes/note:mine"): FakeResponse(
+            {"id": "note:mine", "title": "个人笔记", "content": "本人内容"}
+        ),
+        ("GET", "/api/sources?notebook_id=notebook:mine&limit=100"): FakeResponse([]),
+        ("POST", "/api/search"): FakeResponse({"results": []}),
+    })
+    notebook = OpenNotebookKnowledgeBase(
+        base_url="http://127.0.0.1:5055", client=client, account_mode=True
+    )
+    token = bind_notebook_identity(NotebookIdentity(
+        cookie="student-session", account_id="student", csrf="csrf",
+        public_origin="https://tagent.example.org",
+    ))
+    try:
+        context, documents = notebook.retrieve("个人笔记", notebook_ids=["notebook:mine"])
+        assert "本人内容" in context and len(documents) == 1
+        calls_before = len(client.calls)
+        with pytest.raises(OpenNotebookError, match="不属于当前账号"):
+            notebook.retrieve("个人笔记", notebook_ids=["notebook:foreign"])
+        assert client.calls[calls_before:] == [("GET", "/api/notebooks", None)]
+        with pytest.raises(OpenNotebookError, match="不属于当前账号"):
+            notebook.chunks(notebook_ids=["notebook:foreign"])
+        assert all("notebook:foreign" not in path for _, path, _ in client.calls)
+    finally:
+        reset_notebook_identity(token)
 
 
 def test_config_stays_local_without_notebook_url():
