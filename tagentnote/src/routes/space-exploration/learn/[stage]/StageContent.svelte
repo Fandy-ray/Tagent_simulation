@@ -101,6 +101,7 @@
 	}
 </script>
 
+<!-- eslint-disable svelte/no-navigation-without-resolve -- hrefForLesson() and toolHref() resolve every internal route. -->
 <aside class="learn-catalog" aria-labelledby="lessons-heading">
 	<h2 id="lessons-heading">专题小节</h2>
 	<ul>

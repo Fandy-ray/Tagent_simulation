@@ -56,6 +56,7 @@
 		<section class="learn-panel">
 			<h2>这一关还未解锁</h2>
 			<p>沿航线完成前面的小节，就能到达这里。</p>
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- stagePath is resolved above. -->
 			<a class="learn-button" href={`${stagePath}#${data.topic.id}`}>返回航线</a>
 		</section>
 	{:else if data.topic && ready}

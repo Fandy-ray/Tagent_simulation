@@ -6,18 +6,55 @@
 	const key: Field = { label: 'API Key', type: 'password' };
 	const endpoint: Field = { label: '服务地址', type: 'url' };
 	const searchEngines: Record<string, Field[]> = {
-		DDGS: [{ label: '搜索后端', options: ['auto', 'bing', 'brave', 'duckduckgo', 'google', 'grokipedia', 'mojeek', 'wikipedia', 'yahoo', 'yandex'] }],
+		DDGS: [
+			{
+				label: '搜索后端',
+				options: [
+					'auto',
+					'bing',
+					'brave',
+					'duckduckgo',
+					'google',
+					'grokipedia',
+					'mojeek',
+					'wikipedia',
+					'yahoo',
+					'yandex'
+				]
+			}
+		],
 		SearXNG: [{ label: '查询 URL 模板' }, { label: '搜索语言' }],
 		YaCy: [endpoint, { label: '用户名' }, { label: '密码', type: 'password' }],
 		'Google PSE': [key, { label: '搜索引擎 ID' }],
-		Brave: [key], Kagi: [key], Mojeek: [key], Bocha: [key],
-		Serpstack: [key], Serper: [key], Serply: [key],
+		Brave: [key],
+		Kagi: [key],
+		Mojeek: [key],
+		Bocha: [key],
+		Serpstack: [key],
+		Serper: [key],
+		Serply: [key],
 		SearchAPI: [key, { label: '搜索引擎参数' }],
 		SerpAPI: [key, { label: '搜索引擎参数' }],
-		Tavily: [key], Jina: [endpoint, key], Bing: [endpoint, key], Exa: [key],
+		Tavily: [key],
+		Jina: [endpoint, key],
+		Bing: [endpoint, key],
+		Exa: [key],
 		'Ollama Cloud': [key],
 		'Perplexity Search': [endpoint, key],
-		Perplexity: [key, { label: '模型', options: ['sonar', 'sonar-pro', 'sonar-reasoning', 'sonar-reasoning-pro', 'sonar-deep-research'] }, { label: '搜索上下文大小', options: ['low', 'medium', 'high'] }],
+		Perplexity: [
+			key,
+			{
+				label: '模型',
+				options: [
+					'sonar',
+					'sonar-pro',
+					'sonar-reasoning',
+					'sonar-reasoning-pro',
+					'sonar-deep-research'
+				]
+			},
+			{ label: '搜索上下文大小', options: ['low', 'medium', 'high'] }
+		],
 		搜狗: [{ label: 'API SID' }, { label: 'API SK', type: 'password' }],
 		Firecrawl: [endpoint, key, { label: '请求超时（秒）', type: 'number' }],
 		外部搜索: [endpoint, key],
@@ -26,19 +63,34 @@
 	};
 	const loaderEngines: Record<string, Field[]> = {
 		默认: [],
-		Playwright: [{ label: 'WebSocket 地址', type: 'url' }, { label: '请求超时（秒）', type: 'number' }],
+		Playwright: [
+			{ label: 'WebSocket 地址', type: 'url' },
+			{ label: '请求超时（秒）', type: 'number' }
+		],
 		Firecrawl: [endpoint, key, { label: '请求超时（秒）', type: 'number' }],
 		Tavily: [key, { label: '提取深度', options: ['basic', 'advanced'] }],
 		外部加载器: [endpoint, key]
 	};
 
 	const storageKey = 'admin-web-search-settings';
-	const inputClass = 'w-full rounded-lg border border-[var(--qa-line)] bg-[var(--qa-raised)] px-3 py-2 text-sm text-[color:var(--qa-text)]';
+	const inputClass =
+		'w-full rounded-lg border border-[var(--qa-line)] bg-[var(--qa-raised)] px-3 py-2 text-sm text-[color:var(--qa-text)]';
 	const defaults = {
-		enabled: false, engine: 'DDGS', resultCount: 5, searchConcurrency: 4,
-		domains: '', maxContentLength: 0, bypassRetrieval: false, bypassLoader: false,
-		trustEnvironment: false, loader: '默认', loaderTimeout: 10, verifySsl: true,
-		loaderConcurrency: 4, youtubeLanguage: '', youtubeProxy: ''
+		enabled: false,
+		engine: 'DDGS',
+		resultCount: 5,
+		searchConcurrency: 4,
+		domains: '',
+		maxContentLength: 0,
+		bypassRetrieval: false,
+		bypassLoader: false,
+		trustEnvironment: false,
+		loader: '默认',
+		loaderTimeout: 10,
+		verifySsl: true,
+		loaderConcurrency: 4,
+		youtubeLanguage: '',
+		youtubeProxy: ''
 	};
 	let config = $state({ ...defaults });
 	let options = $state<Record<string, string>>({});
@@ -111,15 +163,48 @@
 			</label>
 			{@render engineFields(searchEngines[config.engine] ?? [], 'search:' + config.engine)}
 			<div class="grid gap-3 sm:grid-cols-2">
-				<label class="grid gap-1">搜索结果数量<input class={inputClass} type="number" min="1" required bind:value={config.resultCount} /></label>
-				<label class="grid gap-1">搜索并发请求数<input class={inputClass} type="number" min="1" required bind:value={config.searchConcurrency} /></label>
-				<label class="grid gap-1">网页内容长度上限（0 表示不限）<input class={inputClass} type="number" min="0" required bind:value={config.maxContentLength} /></label>
-				<label class="grid gap-1">域名过滤列表<input class={inputClass} placeholder="多个域名用逗号分隔" bind:value={config.domains} /></label>
+				<label class="grid gap-1"
+					>搜索结果数量<input
+						class={inputClass}
+						type="number"
+						min="1"
+						required
+						bind:value={config.resultCount}
+					/></label
+				>
+				<label class="grid gap-1"
+					>搜索并发请求数<input
+						class={inputClass}
+						type="number"
+						min="1"
+						required
+						bind:value={config.searchConcurrency}
+					/></label
+				>
+				<label class="grid gap-1"
+					>网页内容长度上限（0 表示不限）<input
+						class={inputClass}
+						type="number"
+						min="0"
+						required
+						bind:value={config.maxContentLength}
+					/></label
+				>
+				<label class="grid gap-1"
+					>域名过滤列表<input
+						class={inputClass}
+						placeholder="多个域名用逗号分隔"
+						bind:value={config.domains}
+					/></label
+				>
 			</div>
-			{#each Object.entries({ bypassRetrieval: '跳过嵌入与检索', bypassLoader: '跳过网页加载器', trustEnvironment: '使用环境代理配置' } as const) as [field, label] (field)}
+			{#each Object.entries( { bypassRetrieval: '跳过嵌入与检索', bypassLoader: '跳过网页加载器', trustEnvironment: '使用环境代理配置' } as const ) as [field, label] (field)}
 				<div class="flex items-center justify-between gap-3">
 					<span id={'web-search-' + field}>{label}</span>
-					<Switch ariaLabelledbyId={'web-search-' + field} bind:state={config[field as 'bypassRetrieval' | 'bypassLoader' | 'trustEnvironment']} />
+					<Switch
+						ariaLabelledbyId={'web-search-' + field}
+						bind:state={config[field as 'bypassRetrieval' | 'bypassLoader' | 'trustEnvironment']}
+					/>
 				</div>
 			{/each}
 		{/if}
@@ -137,8 +222,24 @@
 		</label>
 		{@render engineFields(loaderEngines[config.loader] ?? [], 'loader:' + config.loader)}
 		<div class="grid gap-3 sm:grid-cols-2">
-			<label class="grid gap-1">加载超时（秒）<input class={inputClass} type="number" min="1" required bind:value={config.loaderTimeout} /></label>
-			<label class="grid gap-1">加载并发请求数<input class={inputClass} type="number" min="1" required bind:value={config.loaderConcurrency} /></label>
+			<label class="grid gap-1"
+				>加载超时（秒）<input
+					class={inputClass}
+					type="number"
+					min="1"
+					required
+					bind:value={config.loaderTimeout}
+				/></label
+			>
+			<label class="grid gap-1"
+				>加载并发请求数<input
+					class={inputClass}
+					type="number"
+					min="1"
+					required
+					bind:value={config.loaderConcurrency}
+				/></label
+			>
 		</div>
 		<div class="flex items-center justify-between gap-3">
 			<span id="web-loader-ssl">验证 SSL 证书</span>
@@ -148,12 +249,24 @@
 
 	<section class="space-y-4 rounded-xl border border-[var(--qa-line)] bg-[var(--qa-panel)] p-4">
 		<h3 class="font-medium">YouTube 加载器</h3>
-		<label class="grid gap-1">字幕语言<input class={inputClass} placeholder="例如 zh,en" bind:value={config.youtubeLanguage} /></label>
-		<label class="grid gap-1">代理 URL<input class={inputClass} type="url" bind:value={config.youtubeProxy} /></label>
+		<label class="grid gap-1"
+			>字幕语言<input
+				class={inputClass}
+				placeholder="例如 zh,en"
+				bind:value={config.youtubeLanguage}
+			/></label
+		>
+		<label class="grid gap-1"
+			>代理 URL<input class={inputClass} type="url" bind:value={config.youtubeProxy} /></label
+		>
 	</section>
 
 	<div class="flex flex-wrap items-center justify-end gap-3">
 		<p role="status" class="text-xs text-gray-400">{notice}</p>
-		<button type="submit" class="rounded-lg bg-[var(--qa-active)] px-4 py-2 font-medium text-[color:var(--qa-on-active)]">保存</button>
+		<button
+			type="submit"
+			class="rounded-lg bg-[var(--qa-active)] px-4 py-2 font-medium text-[color:var(--qa-on-active)]"
+			>保存</button
+		>
 	</div>
 </form>

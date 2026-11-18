@@ -105,7 +105,11 @@
 				<p>课程答疑、论文辅助、笔记整理与测评</p>
 			</div>
 			<img class="course-image deep-space-image" src={resolve('/images/hubble-orbit.jpg')} alt="" />
-			<img class="course-image station-image" src={resolve('/images/flight-deck-hero-light.png')} alt="" />
+			<img
+				class="course-image station-image"
+				src={resolve('/images/flight-deck-hero-light.png')}
+				alt=""
+			/>
 		</section>
 
 		<section class="workspace" aria-labelledby="agent-mode-title">
@@ -146,6 +150,7 @@
 
 			<div class="agent-list">
 				{#each agents as agent (agent.type)}
+					<!-- eslint-disable svelte/no-navigation-without-resolve -- agentHref() resolves every internal route. -->
 					<a
 						class="agent-card"
 						href={agentHref(agent.type)}

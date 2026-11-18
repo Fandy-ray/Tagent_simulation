@@ -25,11 +25,12 @@
 				>
 				<a class="learn-button secondary" href={resolve('/space-exploration/learn')}>选择学段</a>
 				{#if stage}
+					<!-- eslint-disable svelte/no-navigation-without-resolve -- the route is resolved and then retains the learning query. -->
 					<a
 						class="learn-button secondary"
 						aria-current={page.route.id === libraryRoute ? 'page' : undefined}
-						href={resolve(libraryRoute, { stage }) + page.url.search}
-					>空天资料库</a>
+						href={resolve(libraryRoute, { stage }) + page.url.search}>空天资料库</a
+					>
 				{/if}
 			</nav>
 		</div>

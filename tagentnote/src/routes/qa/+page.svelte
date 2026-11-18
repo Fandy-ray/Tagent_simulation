@@ -2,7 +2,7 @@
 	import '$lib/styles/space-theme.css';
 	import './workspace.css';
 	import CosmicLayer from '$lib/components/space/CosmicLayer.svelte';
-	import { learningContext, learningContextParams, spaceStages } from '$lib/data/spaceLearning';
+	import { appendLearningContext, learningContext, spaceStages } from '$lib/data/spaceLearning';
 	import { saveSpaceRecord } from '$lib/data/spaceRecords';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	type SpeechRecognitionResultLike = { [index: number]: { transcript: string } };
@@ -912,11 +912,7 @@
 
 	const syncUrl = () => {
 		const params = new SvelteURLSearchParams();
-		if (exploration) {
-			for (const [key, value] of learningContextParams(exploration.stage, exploration.topic.id, exploration.lesson?.id)) {
-				params.set(key, value);
-			}
-		}
+		appendLearningContext(params, exploration);
 
 		if (selectedModelId) {
 			params.set('model', selectedModelId);
@@ -1028,7 +1024,13 @@
 		bumpGeneration();
 		generating = false;
 		commitActive();
-		void goto(explorationReturn || resolve('/agent-select'));
+		if (explorationReturn) {
+			// explorationReturn is built with resolve() above and includes the learning query.
+			// eslint-disable-next-line svelte/no-navigation-without-resolve
+			void goto(explorationReturn);
+		} else {
+			void goto(resolve('/agent-select'));
+		}
 	};
 
 	const openSettings = () => {
@@ -1388,11 +1390,12 @@
 	};
 
 	const openExam = () => {
-		void goto(
-			resolve(
-				`/exam?model=${encodeURIComponent(servedModelId)}&from=qa&topic=${encodeURIComponent(collectionId)}`
-			)
-		);
+		const params = new SvelteURLSearchParams({ from: 'qa' });
+		if (servedModelId) params.set('model', servedModelId);
+		const topic = exploration?.topic.title ?? collectionId;
+		if (topic) params.set('topic', topic);
+		appendLearningContext(params, exploration);
+		void goto(resolve(`/exam?${params.toString()}`));
 	};
 
 	const openNotes = () => {
@@ -1405,6 +1408,7 @@
 			params.set('collection', collectionId);
 		}
 		if (activeChatId) params.set('chat', activeChatId);
+		appendLearningContext(params, exploration);
 		void goto(resolve(`/notebook?${params.toString()}`));
 	};
 
@@ -2494,7 +2498,10 @@
 	}}
 />
 
-<main class:space-context={Boolean(exploration)} class="space-theme workspace-palette qa-workspace flex h-dvh overflow-hidden bg-gray-900 text-white">
+<main
+	class:space-context={Boolean(exploration)}
+	class="space-theme workspace-palette qa-workspace flex h-dvh overflow-hidden bg-gray-900 text-white"
+>
 	{#if exploration}<CosmicLayer />{/if}
 	{#if sidebarOpen}
 		<MockSidebar
@@ -2544,9 +2551,7 @@
 			onMoveFolder={handleMoveFolder}
 			onExportFolder={handleExportFolder}
 			knowledgeOptions={notebooks.map((item) => ({ id: item.id, name: item.name }))}
-			onOpenWorkspaceKnowledge={() => {
-				void goto(resolve('/notebook?from=qa'));
-			}}
+			onOpenWorkspaceKnowledge={openNotes}
 			onClose={() => {
 				sidebarOpen = false;
 			}}
@@ -2620,6 +2625,7 @@
 
 			{#if exploration}
 				<div class="space-context-bar">
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- explorationReturn is resolved above. -->
 					<a href={explorationReturn}>← 返回学习</a>
 					<span>{spaceStages[exploration.stage].label} · {exploration.topic.title}</span>
 					<span class="space-source-notice">当前使用原教学知识库，航天语料待接入。</span>
@@ -2819,7 +2825,9 @@
 						{/if}
 
 						{#if userSettings.webSearchAlways}
-							<div class="px-4 pb-1 text-center text-[11px] text-sky-400/80">联网搜索：始终开启</div>
+							<div class="px-4 pb-1 text-center text-[11px] text-sky-400/80">
+								联网搜索：始终开启
+							</div>
 						{/if}
 
 						<div class="relative z-10 shrink-0 px-4 pt-4 pb-2">

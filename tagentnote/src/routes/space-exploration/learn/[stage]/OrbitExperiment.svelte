@@ -87,6 +87,7 @@
 				`圆轨道高度 ${height} km，周期约 ${Math.round(period)} 分钟，速度约 ${speed.toFixed(2)} km/s。`
 			)}>记录当前观测</button
 	>
+	<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- external reference URL. -->
 	<a class="learn-button secondary" href={orbitSource.href} target="_blank" rel="noreferrer"
 		>查看轨道参考资料</a
 	>

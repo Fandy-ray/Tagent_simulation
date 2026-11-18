@@ -532,7 +532,9 @@
 						><span>实验性</span><span class="text-gray-400"
 							>{showExperimental ? '隐藏' : '显示'}</span
 						></button
-					>{#if showExperimental}<p class="mt-3 rounded-xl bg-[var(--qa-raised)] p-3 text-xs text-gray-400">
+					>{#if showExperimental}<p
+							class="mt-3 rounded-xl bg-[var(--qa-raised)] p-3 text-xs text-gray-400"
+						>
 							实验性模型上传与 GGUF 管理（mock）
 						</p>{/if}
 				</section>

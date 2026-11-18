@@ -288,11 +288,15 @@
 		--admin-field-focus: #77736c;
 	}
 
-	.admin-workspace :global(:is(.border-gray-100, .border-gray-200, .dark\:border-gray-800, .dark\:border-gray-700)) {
+	.admin-workspace
+		:global(
+			:is(.border-gray-100, .border-gray-200, .dark\:border-gray-800, .dark\:border-gray-700)
+		) {
 		border-color: var(--qa-line);
 	}
 
-	.admin-workspace :global(:is(div, section, header, footer, input, select, textarea).bg-white.dark\:bg-gray-900),
+	.admin-workspace
+		:global(:is(div, section, header, footer, input, select, textarea).bg-white.dark\:bg-gray-900),
 	.admin-workspace :global(:is(div, section, header).bg-white.dark\:bg-gray-850),
 	.admin-workspace :global(.bg-white\/95.dark\:bg-gray-900\/95) {
 		background: var(--qa-panel) !important;
@@ -318,11 +322,15 @@
 		background-color: var(--qa-raised) !important;
 	}
 
-	:global(html.light) .admin-workspace :global(:is(.text-white, .text-gray-50, .text-gray-100, .text-gray-200, .text-gray-900)) {
+	:global(html.light)
+		.admin-workspace
+		:global(:is(.text-white, .text-gray-50, .text-gray-100, .text-gray-200, .text-gray-900)) {
 		color: var(--qa-text) !important;
 	}
 
-	:global(html.light) .admin-workspace :global(:is(.text-gray-300, .text-gray-400, .text-gray-500, .text-gray-600, .text-gray-700)) {
+	:global(html.light)
+		.admin-workspace
+		:global(:is(.text-gray-300, .text-gray-400, .text-gray-500, .text-gray-600, .text-gray-700)) {
 		color: var(--qa-muted) !important;
 	}
 
@@ -331,7 +339,8 @@
 		color: var(--qa-on-active) !important;
 	}
 
-	.admin-workspace :global(:is(a, button).bg-gray-900.text-white.dark\:bg-white:hover:not(:disabled)) {
+	.admin-workspace
+		:global(:is(a, button).bg-gray-900.text-white.dark\:bg-white:hover:not(:disabled)) {
 		filter: brightness(1.12);
 	}
 
@@ -380,7 +389,20 @@
 		filter: brightness(1.12);
 	}
 
-	.admin-workspace :global(:is(input:not([type]), input[type='text'], input[type='search'], input[type='number'], input[type='password'], input[type='url'], input[type='email'], select, textarea)) {
+	.admin-workspace
+		:global(
+			:is(
+				input:not([type]),
+				input[type='text'],
+				input[type='search'],
+				input[type='number'],
+				input[type='password'],
+				input[type='url'],
+				input[type='email'],
+				select,
+				textarea
+			)
+		) {
 		background: var(--admin-field-background) !important;
 		border-color: var(--qa-line);
 		color: var(--qa-text) !important;
@@ -406,7 +428,8 @@
 		opacity: 1;
 	}
 
-	.admin-workspace :global(:is(input:not([type='checkbox'], [type='radio']), select, textarea):focus-visible) {
+	.admin-workspace
+		:global(:is(input:not([type='checkbox'], [type='radio']), select, textarea):focus-visible) {
 		border-color: var(--admin-field-focus);
 		outline: 2px solid var(--admin-field-focus);
 		outline-offset: 1px;

@@ -224,7 +224,8 @@ export function loadUserSettings(): UserSettings {
 	if (!browser) return defaults;
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
-		if (!raw) return { ...defaults, theme: localStorage.getItem('theme') === 'light' ? 'light' : 'dark' };
+		if (!raw)
+			return { ...defaults, theme: localStorage.getItem('theme') === 'light' ? 'light' : 'dark' };
 		const parsed = JSON.parse(raw) as Partial<UserSettings>;
 		return {
 			...defaults,
@@ -271,7 +272,8 @@ export function applyTheme(theme: UserSettings['theme']) {
 	const root = document.documentElement;
 	root.classList.toggle('light', theme === 'light');
 	root.classList.toggle('dark', theme === 'dark');
-	document.querySelector('meta[name="theme-color"]')
+	document
+		.querySelector('meta[name="theme-color"]')
 		?.setAttribute('content', theme === 'light' ? '#f7f5ef' : '#141218');
 	try {
 		localStorage.setItem('theme', theme);

@@ -139,13 +139,17 @@
 				aria-hidden="true">✦</span
 			>
 			<div class="min-w-0">
-				<div class="text-xs font-medium tracking-[0.16em] text-[color:var(--qa-active,var(--m3-primary))]/80 uppercase">
+				<div
+					class="text-xs font-medium tracking-[0.16em] text-[color:var(--qa-active,var(--m3-primary))]/80 uppercase"
+				>
 					论文任务
 				</div>
 				<div class="truncate text-sm text-gray-200">
 					{title.trim() || '先填写题目，再开始分章节写作'}
 				</div>
-				<div class="mt-0.5 truncate text-[11px] text-[color:var(--qa-muted)]">引用资料：{sourceName}</div>
+				<div class="mt-0.5 truncate text-[11px] text-[color:var(--qa-muted)]">
+					引用资料：{sourceName}
+				</div>
 			</div>
 		</div>
 
@@ -166,7 +170,9 @@
 			<div class="text-xs font-medium text-gray-400 @lg:col-span-2">第一步 · 论文基础</div>
 			<div class="block">
 				<div class="mb-1 flex items-center justify-between gap-2">
-					<label for="paper-task-title" class="block text-xs text-[color:var(--qa-muted)]">论文题目</label>
+					<label for="paper-task-title" class="block text-xs text-[color:var(--qa-muted)]"
+						>论文题目</label
+					>
 					{#if onProposeTopic}
 						<button
 							type="button"
@@ -307,8 +313,12 @@
 							onIntent(intent.id);
 						}}
 					>
-						<span class="block text-xs font-medium text-[color:var(--qa-active,var(--m3-primary))]">{intent.title}</span>
-						<span class="mt-0.5 block text-[11px] text-[color:var(--qa-muted)]">{intent.description}</span>
+						<span class="block text-xs font-medium text-[color:var(--qa-active,var(--m3-primary))]"
+							>{intent.title}</span
+						>
+						<span class="mt-0.5 block text-[11px] text-[color:var(--qa-muted)]"
+							>{intent.description}</span
+						>
 					</button>
 				{/each}
 			</div>

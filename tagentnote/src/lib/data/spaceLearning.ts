@@ -210,3 +210,18 @@ export function learningContextParams(stage: SpaceStage, topic: string, lesson?:
 	if (lesson) params.set('space_lesson', lesson);
 	return params;
 }
+
+/** Preserve a validated learning context while navigating between QA, exams and notebooks. */
+export function appendLearningContext(
+	params: Pick<URLSearchParams, 'set'>,
+	context: ReturnType<typeof learningContext>
+) {
+	if (!context) return;
+	for (const [key, value] of learningContextParams(
+		context.stage,
+		context.topic.id,
+		context.lesson?.id
+	)) {
+		params.set(key, value);
+	}
+}

@@ -714,7 +714,9 @@
 			.catch(() => {
 				if (active) taskModelOptions = [];
 			});
-		return () => { active = false; };
+		return () => {
+			active = false;
+		};
 	});
 
 	function settingOptions(item: SettingItem) {
@@ -1029,7 +1031,11 @@
 			{:else if selectedTab === 'images'}
 				<AdminImageSettings />
 			{:else if selectedTab === 'pipelines'}
-				<AdminPipelineSettings connectionUrls={openAiConnections.filter(({ enabled, url }) => enabled && url).map(({ url }) => url)} />
+				<AdminPipelineSettings
+					connectionUrls={openAiConnections
+						.filter(({ enabled, url }) => enabled && url)
+						.map(({ url }) => url)}
+				/>
 			{:else if selectedTab === 'db'}
 				<AdminDatabase />
 			{:else}
@@ -1559,7 +1565,9 @@
 							</section>
 						{:else}
 							{#if selectedTab === 'interface'}
-								<p class="mb-4 rounded-lg border border-[var(--qa-line)] bg-[var(--qa-panel)] p-3 text-xs text-[color:var(--qa-muted)]">
+								<p
+									class="mb-4 rounded-lg border border-[var(--qa-line)] bg-[var(--qa-panel)] p-3 text-xs text-[color:var(--qa-muted)]"
+								>
 									配置保存在当前浏览器。追问建议和标签开关会作用于答疑页，任务模型与提示词模板尚未接入后端。
 								</p>
 							{/if}

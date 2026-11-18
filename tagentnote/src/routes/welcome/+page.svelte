@@ -109,7 +109,11 @@
 		inset: 0;
 		background-image:
 			linear-gradient(color-mix(in srgb, var(--m3-primary) 10%, transparent) 1px, transparent 1px),
-			linear-gradient(90deg, color-mix(in srgb, var(--m3-primary) 10%, transparent) 1px, transparent 1px);
+			linear-gradient(
+				90deg,
+				color-mix(in srgb, var(--m3-primary) 10%, transparent) 1px,
+				transparent 1px
+			);
 		background-size: 52px 52px;
 		animation: grid-drift 18s linear infinite;
 		pointer-events: none;

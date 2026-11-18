@@ -115,6 +115,7 @@
 					{#if state === 'locked'}
 						<span class="flight-node">{@render emblem()}</span>
 					{:else}
+						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- stagePath is resolved by the parent route. -->
 						<a class="flight-node" href={`${stagePath}?topic=${topic.id}&lesson=${node.id}`}
 							>{@render emblem()}</a
 						>

@@ -255,13 +255,24 @@
   if (!['primary', 'middle', 'high'].includes(stage) || !topic || !/^[a-z0-9-]+$/.test(topic)) return;
 
   const platform = context.get('platform') ?? 'http://127.0.0.1:5173';
-  if (!/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/.test(platform)) return;
   let assistant;
   try {
-    assistant = new URL('/space-assistant', platform);
+    const platformUrl = new URL(platform);
+    if (!['http:', 'https:'].includes(platformUrl.protocol) || platformUrl.href !== `${platformUrl.origin}/`) return;
+    assistant = new URL('/space-assistant', platformUrl.origin);
   } catch {
     return;
   }
+  const hostname = assistant.hostname.toLowerCase();
+  const privateIpv4 =
+    /^(?:10|127)\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^169\.254\./.test(hostname) ||
+    /^172\.(?:1[6-9]|2\d|3[01])\./.test(hostname);
+  const privateIpv6 = /^\[(?:fc|fd|fe80:)/.test(hostname);
+  const localPlatform =
+    hostname === 'localhost' || hostname === '[::1]' || hostname.endsWith('.local') || privateIpv4 || privateIpv6;
+  const trustedPlatforms = new Set();
   assistant.searchParams.set('space_stage', stage);
   assistant.searchParams.set('space_topic', topic);
   assistant.searchParams.set('parent_origin', location.origin);
@@ -389,6 +400,19 @@
   });
   link.addEventListener('click', (event) => {
     if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    if (!localPlatform) {
+      // Public deployments open in a new tab by default. HTTPS origins may be
+      // embedded only after an explicit user gesture; plain public HTTP would
+      // be blocked as mixed content by the HTTPS resource page anyway.
+      if (assistant.protocol !== 'https:') return;
+      if (!trustedPlatforms.has(assistant.origin)) {
+        const allow = window.confirm(
+          `是否允许 ${assistant.origin} 在此页面嵌入小轨？\n选择“取消”将在新标签页打开。`
+        );
+        if (!allow) return;
+        trustedPlatforms.add(assistant.origin);
+      }
+    }
     event.preventDefault();
     panel.hidden = false;
     link.hidden = true;

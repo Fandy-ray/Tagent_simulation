@@ -5,10 +5,11 @@
 	import { page } from '$app/stores';
 	import { env } from '$env/dynamic/public';
 	import { onMount } from 'svelte';
-	import { SvelteURLSearchParams } from 'svelte/reactivity';
+	import { SvelteURL, SvelteURLSearchParams } from 'svelte/reactivity';
 
 	import { listNotebookKnowledge, listNotebooks } from '$lib/apis/opennotebook';
 	import { findCollection, type KnowledgeCollection } from '$lib/data/knowledge';
+	import { appendLearningContext, learningContext } from '$lib/data/spaceLearning';
 
 	const DEFAULT_NOTEBOOK_URL = 'http://localhost:8502/notebooks';
 
@@ -29,9 +30,10 @@
 	let serviceUp = $state(false);
 	let section = $state<'notebooks' | 'sources'>('notebooks');
 	let collections = $state<KnowledgeCollection[]>([]);
+	const exploration = $derived(learningContext($page.url.searchParams));
 
 	const sourcesUrl = $derived.by(() => {
-		const url = new URL(openNotebookUrl, $page.url);
+		const url = new SvelteURL(openNotebookUrl, $page.url);
 		const path = url.pathname.replace(/\/$/, '');
 		if (path && !path.endsWith('/notebooks')) return null;
 		url.pathname = path ? path.slice(0, -'notebooks'.length) + 'sources' : '/sources';
@@ -62,6 +64,7 @@
 			if (notebook) params.set('notebook', notebook);
 			if (chat) params.set('chat', chat);
 			if (mode === 'paper') params.set('mode', 'paper');
+			appendLearningContext(params, exploration);
 			const search = params.toString();
 			return search ? `/qa?${search}` : '/qa';
 		}
@@ -75,7 +78,11 @@
 		}
 
 		if (from === 'exam') {
-			return `/exam?model=${encodeURIComponent(model)}`;
+			const params = new SvelteURLSearchParams();
+			if (model) params.set('model', model);
+			appendLearningContext(params, exploration);
+			const search = params.toString();
+			return search ? `/exam?${search}` : '/exam';
 		}
 
 		return '/agent-select';

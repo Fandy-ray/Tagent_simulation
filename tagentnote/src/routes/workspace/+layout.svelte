@@ -319,12 +319,17 @@
 		border-color: var(--qa-line);
 	}
 
-	.workspace-page :global(#workspace-container :is(a, button).bg-white.text-black:not([role='checkbox'])) {
+	.workspace-page
+		:global(#workspace-container :is(a, button).bg-white.text-black:not([role='checkbox'])) {
 		background: var(--qa-active);
 		color: var(--qa-on-active);
 	}
 
-	.workspace-page :global(#workspace-container :is(a, button).bg-white.text-black:not([role='checkbox']):hover:not(:disabled)) {
+	.workspace-page
+		:global(
+			#workspace-container
+				:is(a, button).bg-white.text-black:not([role='checkbox']):hover:not(:disabled)
+		) {
 		filter: brightness(1.12);
 	}
 

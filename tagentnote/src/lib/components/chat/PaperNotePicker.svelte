@@ -123,7 +123,9 @@
 				{:else}
 					{#each noteGroups as group (group.collection.id)}
 						<div class="mb-2 last:mb-0">
-							<div class="px-2 py-1 text-[11px] font-medium text-[color:var(--qa-active,var(--m3-primary))]/80">
+							<div
+								class="px-2 py-1 text-[11px] font-medium text-[color:var(--qa-active,var(--m3-primary))]/80"
+							>
 								{group.collection.name}
 							</div>
 							{#each group.notes as note (note.id)}

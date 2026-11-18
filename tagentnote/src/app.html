@@ -6,7 +6,6 @@
 		<meta name="text-scale" content="scale" />
 		<meta name="theme-color" content="#171717" />
 		<link rel="icon" href="/favicon.svg" />
-		<script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
 
 		<script>
 			(function () {
@@ -15,7 +14,8 @@
 					if (localStorage.getItem('theme') === 'light') theme = 'light';
 				} catch {}
 				document.documentElement.classList.add(theme);
-				document.querySelector('meta[name="theme-color"]')
+				document
+					.querySelector('meta[name="theme-color"]')
 					.setAttribute('content', theme === 'light' ? '#f7f5ef' : '#141218');
 			})();
 		</script>

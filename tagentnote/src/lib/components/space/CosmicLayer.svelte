@@ -36,14 +36,14 @@
 </script>
 
 <div class="cosmic-layer" aria-hidden="true">
-	{#each backgroundStars as star}
+	{#each backgroundStars as star (star)}
 		<span
 			class="twinkle-star"
 			class:bright={star.bright}
 			style={`--star-x:${star.x}%;--star-y:${star.y}%;--star-delay:${star.delay}s;--star-duration:${star.duration}s`}
 		></span>
 	{/each}
-	{#each meteorTrails as meteor}
+	{#each meteorTrails as meteor (meteor)}
 		<span
 			class="meteor"
 			style={`--meteor-x:${meteor.x}%;--meteor-y:${meteor.y}%;--meteor-width:${meteor.width}px;--meteor-dx:${meteor.dx}px;--meteor-dy:${meteor.dy}px;--meteor-angle:${meteor.angle}deg;--meteor-delay:${meteor.delay}s`}

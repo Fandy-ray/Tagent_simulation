@@ -20,27 +20,41 @@
 			case 'openai':
 				return generation ? [address, key, version, params] : [address, key, version];
 			case 'automatic1111':
-				return [address, { id: 'auth', label: 'API 认证（用户名:密码）', type: 'password' }, params];
+				return [
+					address,
+					{ id: 'auth', label: 'API 认证（用户名:密码）', type: 'password' },
+					params
+				];
 			case 'comfyui':
 				return [
-					address, key,
+					address,
+					key,
 					{ id: 'workflow', label: 'ComfyUI 工作流（API 格式 JSON）', type: 'textarea' },
 					{ id: 'nodes', label: '工作流节点映射（字段与节点 ID，JSON）', type: 'textarea' }
 				];
 			case 'gemini':
 				return generation
-					? [address, key, { id: 'method', label: '端点方法', options: ['predict', 'generateContent'] }]
+					? [
+							address,
+							key,
+							{ id: 'method', label: '端点方法', options: ['predict', 'generateContent'] }
+						]
 					: [address, key];
 		}
 	}
 
 	const sections = [
-		{ id: 'generation', label: '图像生成', engines: ['openai', 'comfyui', 'automatic1111', 'gemini'] },
+		{
+			id: 'generation',
+			label: '图像生成',
+			engines: ['openai', 'comfyui', 'automatic1111', 'gemini']
+		},
 		{ id: 'edit', label: '图像编辑', engines: ['openai', 'comfyui', 'gemini'] }
 	] as const;
 	const defaults = { enabled: false, engine: 'openai' as Engine, model: '', size: '1024x1024' };
 	const storageKey = 'admin-image-settings';
-	const inputClass = 'w-full rounded-lg border border-[var(--qa-line)] bg-[var(--qa-raised)] px-3 py-2 text-sm text-[color:var(--qa-text)]';
+	const inputClass =
+		'w-full rounded-lg border border-[var(--qa-line)] bg-[var(--qa-raised)] px-3 py-2 text-sm text-[color:var(--qa-text)]';
 	let generation = $state({ ...defaults });
 	let edit = $state({ ...defaults });
 	let steps = $state(20);
@@ -54,7 +68,8 @@
 			const saved = JSON.parse(localStorage.getItem(storageKey) ?? '{}');
 			generation = { ...defaults, ...saved.generation };
 			edit = { ...defaults, ...saved.edit };
-			if (!sections[0].engines.some((engine) => engine === generation.engine)) generation.engine = 'openai';
+			if (!sections[0].engines.some((engine) => engine === generation.engine))
+				generation.engine = 'openai';
 			if (!sections[1].engines.some((engine) => engine === edit.engine)) edit.engine = 'openai';
 			steps = saved.steps ?? 20;
 			generatePrompt = saved.generatePrompt ?? false;
@@ -82,7 +97,10 @@
 			}
 		}
 		try {
-			localStorage.setItem(storageKey, JSON.stringify({ generation, edit, steps, generatePrompt, options }));
+			localStorage.setItem(
+				storageKey,
+				JSON.stringify({ generation, edit, steps, generatePrompt, options })
+			);
 			notice = '图像配置已保存。密钥和认证信息仅保留在当前页面。';
 		} catch {
 			notice = '无法保存配置，请检查浏览器存储设置。';
@@ -116,12 +134,32 @@
 					</select>
 				</label>
 				<div class="grid gap-3 sm:grid-cols-2">
-					<label class="grid gap-1">模型<input class={inputClass} placeholder="输入模型名称或 ID" bind:value={config.model} /></label>
-					<label class="grid gap-1">图像尺寸<input class={inputClass} placeholder="例如 1024x1024" bind:value={config.size} /></label>
+					<label class="grid gap-1"
+						>模型<input
+							class={inputClass}
+							placeholder="输入模型名称或 ID"
+							bind:value={config.model}
+						/></label
+					>
+					<label class="grid gap-1"
+						>图像尺寸<input
+							class={inputClass}
+							placeholder="例如 1024x1024"
+							bind:value={config.size}
+						/></label
+					>
 				</div>
 				{#if isGeneration}
 					{#if config.engine === 'comfyui' || config.engine === 'automatic1111'}
-						<label class="grid gap-1">生成步数<input class={inputClass} type="number" min="1" required bind:value={steps} /></label>
+						<label class="grid gap-1"
+							>生成步数<input
+								class={inputClass}
+								type="number"
+								min="1"
+								required
+								bind:value={steps}
+							/></label
+						>
 					{/if}
 					<div class="flex items-center justify-between">
 						<span id="image-generate-prompt">自动生成图像提示词</span>
@@ -133,7 +171,11 @@
 					<label class="grid gap-1">
 						<span>{field.label}</span>
 						{#if field.options}
-							<select class={inputClass} value={options[id] ?? field.options[0]} onchange={(event) => (options[id] = event.currentTarget.value)}>
+							<select
+								class={inputClass}
+								value={options[id] ?? field.options[0]}
+								onchange={(event) => (options[id] = event.currentTarget.value)}
+							>
 								{#each field.options as option (option)}
 									<option value={option}>{option}</option>
 								{/each}
@@ -141,7 +183,12 @@
 						{:else if field.type === 'textarea'}
 							<textarea class={inputClass} rows="4" bind:value={options[id]}></textarea>
 						{:else if field.type === 'password'}
-							<input class={inputClass} type="password" autocomplete="off" bind:value={secrets[id]} />
+							<input
+								class={inputClass}
+								type="password"
+								autocomplete="off"
+								bind:value={secrets[id]}
+							/>
 						{:else}
 							<input class={inputClass} bind:value={options[id]} />
 						{/if}
@@ -153,6 +200,10 @@
 
 	<div class="flex flex-wrap items-center justify-end gap-3">
 		<p role="status" class="text-xs text-gray-400">{notice}</p>
-		<button type="submit" class="rounded-lg bg-[var(--qa-active)] px-4 py-2 font-medium text-[color:var(--qa-on-active)]">保存</button>
+		<button
+			type="submit"
+			class="rounded-lg bg-[var(--qa-active)] px-4 py-2 font-medium text-[color:var(--qa-on-active)]"
+			>保存</button
+		>
 	</div>
 </form>
