@@ -73,6 +73,19 @@ function clientIp(request: import('node:http').IncomingMessage): string {
 	return socket || 'unknown';
 }
 
+async function notebookUsesAccounts(): Promise<boolean> {
+	try {
+		const response = await fetch(new URL('/api/auth/status', notebookTarget), {
+			signal: AbortSignal.timeout(3000)
+		});
+		if (!response.ok) return false;
+		const status = (await response.json()) as { mode?: string };
+		return status.mode === 'tagent';
+	} catch {
+		return false;
+	}
+}
+
 async function notebookCallerAllowed(
 	request: import('node:http').IncomingMessage,
 	accountMode: boolean
@@ -87,6 +100,8 @@ async function notebookCallerAllowed(
 		});
 		if (!response.ok) return false;
 		const session = (await response.json()) as { user?: { role?: string }; csrf?: string };
+		// A student must never reach a leftover shared Lite notebook on port 5055.
+		if (session.user?.role !== 'admin' && !(await notebookUsesAccounts())) return false;
 		if (request.method === 'GET' || request.method === 'HEAD') return true;
 		const origin = request.headers.origin;
 		const csrf = request.headers['x-tagent-csrf'];

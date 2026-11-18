@@ -94,6 +94,8 @@
 		onTitle: (title: string) => void;
 		onError: (message: string) => void;
 		onExit: () => void;
+		storageScope?: string;
+		onResult?: (score: number, examId: string) => void;
 		onSwitchToFlash: () => void;
 		/** 报给外壳：现在结束这一轮会丢掉什么。空字符串＝没有进度，可以直接走。 */
 		onLeavingCost?: (cost: string) => void;
@@ -109,6 +111,8 @@
 		onTitle,
 		onError,
 		onExit,
+		onResult,
+		storageScope = '',
 		onSwitchToFlash,
 		onLeavingCost,
 		resume = null
@@ -328,7 +332,7 @@
 
 		failure = '';
 		paperGone = false;
-		clearFullExam();
+		clearFullExam(storageScope);
 		exam = null;
 		review = null;
 		answers = {};
@@ -464,6 +468,7 @@
 				review = data;
 				resultIndex = 0;
 				phase = 'result';
+				if (exam) onResult?.(data.total_score, exam.exam_id);
 				// 上一次交卷失败留下的红条，这次判成功了就收掉
 				onError('');
 			})
@@ -475,7 +480,7 @@
 				// 410：这张卷在服务端已经没有了（超过 2 小时，或出卷模型被删了）。再点交卷也一样，
 				// 刷新又会把它从本标签页的存档里摆回来——所以清掉存档，直接给「重新出卷」
 				if (error instanceof AgentRequestError && error.status === 410) {
-					clearFullExam();
+					clearFullExam(storageScope);
 					paperGone = true;
 					failure = error.message;
 					exam = null;
@@ -557,18 +562,21 @@
 		) {
 			return;
 		}
-		saveFullExam({
-			startedAt,
-			modelId,
-			topic,
-			notebookIds,
-			exam,
-			answers: $state.snapshot(answers),
-			pageIndex,
-			review,
-			resultIndex,
-			answerNotes: completedAnswerNotes($state.snapshot(answerNotes))
-		});
+		saveFullExam(
+			{
+				startedAt,
+				modelId,
+				topic,
+				notebookIds,
+				exam,
+				answers: $state.snapshot(answers),
+				pageIndex,
+				review,
+				resultIndex,
+				answerNotes: completedAnswerNotes($state.snapshot(answerNotes))
+			},
+			storageScope
+		);
 	});
 
 	onMount(() => {
@@ -841,14 +849,16 @@
 						>
 							<div class="text-sm font-medium text-white">不想再等了？</div>
 							<p class="text-[13px] leading-relaxed text-gray-500">
-								换成闪卡，几乎不用等。这张卷子会停掉，不再出了。
+								{storageScope
+									? '返回本专题，使用本地闪卡复习。'
+									: '换成闪卡，几乎不用等。这张卷子会停掉，不再出了。'}
 							</p>
 							<button
 								type="button"
 								class="mt-3 inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full bg-white px-5 text-sm font-medium text-black transition hover:bg-gray-200"
 								onclick={onSwitchToFlash}
 							>
-								改用闪卡，马上开刷
+								{storageScope ? '返回专题闪卡' : '改用闪卡，马上开刷'}
 								<svg
 									class="size-3.5"
 									viewBox="0 0 24 24"
@@ -930,14 +940,16 @@
 						>
 							<div class="text-sm font-medium text-white">想先刷几道？</div>
 							<p class="text-[13px] leading-relaxed text-gray-500">
-								闪卡只有填空和选择，几乎不用等，答完当场知道对错。
+								{storageScope
+									? '专题闪卡在本机判定，立即显示反馈。'
+									: '闪卡只有填空和选择，几乎不用等，答完当场知道对错。'}
 							</p>
 							<button
 								type="button"
 								class="mt-2.5 inline-flex min-h-9 items-center gap-1.5 self-start rounded-full border border-white/10 bg-white/[0.03] px-4 text-[13px] text-gray-200 transition hover:bg-white/[0.08] hover:text-white"
 								onclick={onSwitchToFlash}
 							>
-								改用闪卡
+								{storageScope ? '返回专题闪卡' : '改用闪卡'}
 								<svg
 									class="size-3.5"
 									viewBox="0 0 24 24"

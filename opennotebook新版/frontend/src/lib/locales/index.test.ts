@@ -155,6 +155,7 @@ describe('Unused Key Detection', () => {
         `Found ${unused.length} unused i18n key(s):\n${unused.join('\n')}`,
       ).toEqual([])
     },
-    30_000,
+    // Recursive source scans can exceed 30s on cold CI or sandboxed filesystems.
+    120_000,
   )
 })

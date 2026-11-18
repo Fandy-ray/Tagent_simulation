@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { readBrowserVoice } from '$lib/data/adminAudio';
 	import MarkdownContent from '$lib/components/chat/MarkdownContent.svelte';
 	import PaperReviewCard from '$lib/components/chat/PaperReviewCard.svelte';
 	import PaperTopicCard from '$lib/components/chat/PaperTopicCard.svelte';
+	import OrbitMark from '$lib/components/icons/OrbitMark.svelte';
 	import CitationLinks from '$lib/components/sources/CitationLinks.svelte';
 	import type { EssayTopic } from '$lib/data/essay';
 	import type { QaMessage } from '$lib/data/qaConversations';
@@ -148,7 +150,9 @@
 			return;
 		}
 		const utter = new SpeechSynthesisUtterance(text);
-		utter.lang = 'zh-CN';
+		const voice = readBrowserVoice();
+		if (voice) utter.voice = voice;
+		utter.lang = voice?.lang ?? 'zh-CN';
 		utter.onend = () => {
 			if (speakingId === messageId) speakingId = null;
 		};
@@ -283,7 +287,7 @@
 						{/if}
 						<div
 							class={`px-4 py-2 text-sm leading-6 text-gray-100 ${
-								chatBubble ? 'rounded-3xl bg-gray-800' : 'bg-transparent'
+								chatBubble ? 'qa-question rounded-3xl bg-gray-800' : 'bg-transparent'
 							}`}
 						>
 							{#if message.content.startsWith('▎')}
@@ -328,15 +332,15 @@
 				</article>
 			{:else}
 				<article
-					class="group flex w-full"
+					class="qa-answer group flex w-full"
 					data-message-id={message.id}
 					id={`message-${message.id}`}
 				>
 					<div class="mt-1 mr-3 hidden shrink-0 sm:flex">
 						<div
-							class="flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
+							class="qa-orbit-mark flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
 						>
-							T
+							<OrbitMark />
 						</div>
 					</div>
 
@@ -718,9 +722,9 @@
 			<article class="flex w-full">
 				<div class="mt-1 mr-3 hidden shrink-0 sm:flex">
 					<div
-						class="flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
+						class="qa-orbit-mark flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
 					>
-						T
+						<OrbitMark />
 					</div>
 				</div>
 

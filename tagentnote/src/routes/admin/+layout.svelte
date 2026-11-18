@@ -165,10 +165,11 @@
 </svelte:head>
 
 <div
-	class="flex h-screen max-h-[100dvh] w-full min-w-0 flex-1 overflow-hidden bg-white text-gray-900 selection:bg-blue-500/20 dark:bg-gray-900 dark:text-white"
+	class="space-theme workspace-palette admin-workspace flex h-screen max-h-[100dvh] w-full min-w-0 flex-1 overflow-hidden"
 >
 	{#if sidebarOpen}
 		<MockSidebar
+			spaceBrand
 			{activeChatId}
 			{selectedFolderId}
 			chats={sidebarChats}
@@ -195,7 +196,7 @@
 			onShortcuts={() => goto(resolve('/qa?sidebar-action=shortcuts'))}
 			onSignOut={async () => {
 				if ($authMode === 'enabled') await logout();
-				await goto(resolve('/welcome'));
+				await goto(resolve($authMode === 'enabled' ? '/welcome' : '/space-exploration'));
 			}}
 			onCreateFolder={createFolder}
 			onUpdateFolder={updateFolder}
@@ -211,6 +212,12 @@
 			onExportFolder={exportFolder}
 			onClose={() => (sidebarOpen = false)}
 		/>
+		<button
+			type="button"
+			class="fixed inset-0 z-30 bg-black/50 md:hidden"
+			aria-label="收起侧栏"
+			onclick={() => (sidebarOpen = false)}
+		></button>
 	{/if}
 
 	<section class="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -242,9 +249,8 @@
 						{#each tabs as tab (tab.href)}
 							<a
 								draggable="false"
-								class="min-w-fit p-1.5 transition select-none {isActive(tab.match)
-									? ''
-									: 'text-gray-300 hover:text-gray-700 dark:text-gray-600 dark:hover:text-white'}"
+								class="admin-tab min-w-fit rounded-lg p-1.5 transition select-none"
+								aria-current={isActive(tab.match) ? 'page' : undefined}
 								href={resolve(tab.href)}>{tab.label}</a
 							>
 						{/each}
@@ -272,6 +278,195 @@
 </div>
 
 <style>
+	.admin-workspace {
+		--admin-chart-green: #65d5ae;
+		--admin-chart-violet: #b9a4e6;
+		--admin-field-background: #1b191e;
+		--admin-field-focus: #aea7b2;
+		background: var(--qa-surface);
+		color: var(--qa-text);
+	}
+
+	:global(html.light) .admin-workspace {
+		--admin-chart-green: #26725a;
+		--admin-chart-violet: #69509c;
+		--admin-field-background: #fffefa;
+		--admin-field-focus: #77736c;
+	}
+
+	.admin-workspace
+		:global(
+			:is(.border-gray-100, .border-gray-200, .dark\:border-gray-800, .dark\:border-gray-700)
+		) {
+		border-color: var(--qa-line);
+	}
+
+	.admin-workspace
+		:global(:is(div, section, header, footer, input, select, textarea).bg-white.dark\:bg-gray-900),
+	.admin-workspace :global(:is(div, section, header).bg-white.dark\:bg-gray-850),
+	.admin-workspace :global(.bg-white\/95.dark\:bg-gray-900\/95) {
+		background: var(--qa-panel) !important;
+	}
+
+	.admin-workspace :global(.space-branded),
+	.admin-workspace .drag-region {
+		background: var(--qa-panel) !important;
+		border-color: var(--qa-line) !important;
+	}
+
+	:global(html.light) .admin-workspace :global(.bg-gray-900),
+	:global(html.light) .admin-workspace :global(.bg-gray-950) {
+		background-color: var(--qa-surface) !important;
+	}
+
+	:global(html.light) .admin-workspace :global(.bg-gray-850) {
+		background-color: var(--qa-panel) !important;
+	}
+
+	:global(html.light) .admin-workspace :global(.bg-gray-800),
+	:global(html.light) .admin-workspace :global(.hover\:bg-gray-800:hover) {
+		background-color: var(--qa-raised) !important;
+	}
+
+	:global(html.light)
+		.admin-workspace
+		:global(:is(.text-white, .text-gray-50, .text-gray-100, .text-gray-200, .text-gray-900)) {
+		color: var(--qa-text) !important;
+	}
+
+	:global(html.light)
+		.admin-workspace
+		:global(:is(.text-gray-300, .text-gray-400, .text-gray-500, .text-gray-600, .text-gray-700)) {
+		color: var(--qa-muted) !important;
+	}
+
+	.admin-workspace :global(.bg-gray-900.text-white.dark\:bg-white) {
+		background: var(--qa-active) !important;
+		color: var(--qa-on-active) !important;
+	}
+
+	.admin-workspace
+		:global(:is(a, button).bg-gray-900.text-white.dark\:bg-white:hover:not(:disabled)) {
+		filter: brightness(1.12);
+	}
+
+	:global(html.light) .admin-workspace :global(:is(.bg-red-600, .bg-sky-700).text-white) {
+		color: #fff !important;
+	}
+
+	:global(html.light) .admin-workspace :global(.bg-amber-500.text-white:not(.sidebar-avatar)) {
+		background: var(--qa-tint);
+		color: var(--qa-active) !important;
+	}
+
+	.admin-workspace :global(:is(a, button, input, select, textarea):focus-visible) {
+		outline: 2px solid var(--qa-active);
+		outline-offset: 2px;
+	}
+
+	.admin-workspace :global(:is(.admin-secondary, .admin-search)) {
+		background: var(--qa-panel);
+		border-color: var(--qa-line);
+		color: var(--qa-text);
+	}
+
+	.admin-workspace :global(.admin-secondary:hover),
+	.admin-workspace :global(.admin-filter:hover) {
+		background: var(--qa-raised);
+		color: var(--qa-text);
+	}
+
+	.admin-workspace :global(.admin-filter) {
+		color: var(--qa-muted);
+	}
+
+	.admin-workspace :global(.admin-filter[aria-pressed='true']) {
+		background: var(--qa-tint);
+		color: var(--qa-active);
+		font-weight: 600;
+	}
+
+	.admin-workspace :global(.admin-primary) {
+		background: var(--qa-active);
+		color: var(--qa-on-active);
+	}
+
+	.admin-workspace :global(.admin-primary:hover:not(:disabled)) {
+		filter: brightness(1.12);
+	}
+
+	.admin-workspace
+		:global(
+			:is(
+				input:not([type]),
+				input[type='text'],
+				input[type='search'],
+				input[type='number'],
+				input[type='password'],
+				input[type='url'],
+				input[type='email'],
+				select,
+				textarea
+			)
+		) {
+		background: var(--admin-field-background) !important;
+		border-color: var(--qa-line);
+		color: var(--qa-text) !important;
+		caret-color: var(--qa-text);
+	}
+
+	.admin-workspace :global(.admin-search input) {
+		background: transparent !important;
+	}
+
+	.admin-workspace :global(.admin-settings-heading) {
+		background: var(--qa-surface);
+	}
+
+	:global(html.light) .admin-workspace .drag-region,
+	:global(html.light) .admin-workspace :global(.admin-search),
+	:global(html.light) .admin-workspace :global(input.admin-connection-address) {
+		background: var(--qa-surface) !important;
+	}
+
+	.admin-workspace :global(:is(input, textarea)::placeholder) {
+		color: var(--qa-muted);
+		opacity: 1;
+	}
+
+	.admin-workspace
+		:global(:is(input:not([type='checkbox'], [type='radio']), select, textarea):focus-visible) {
+		border-color: var(--admin-field-focus);
+		outline: 2px solid var(--admin-field-focus);
+		outline-offset: 1px;
+		box-shadow: none;
+	}
+
+	.admin-workspace :global(.admin-search:focus-within) {
+		border-color: var(--admin-field-focus);
+		outline: 2px solid var(--admin-field-focus);
+		outline-offset: 1px;
+	}
+
+	.admin-workspace :global(.admin-search input:focus-visible) {
+		outline: none;
+	}
+
+	.admin-tab {
+		color: var(--qa-muted);
+	}
+
+	.admin-tab:hover,
+	.admin-tab:focus-visible {
+		background: var(--qa-raised);
+		color: var(--qa-text);
+	}
+
+	.admin-tab[aria-current='page'] {
+		background: var(--qa-tint);
+		color: var(--qa-active);
+	}
+
 	.scrollbar-none {
 		scrollbar-width: none;
 	}

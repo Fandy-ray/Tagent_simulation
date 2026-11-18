@@ -5,6 +5,26 @@
 	import { page } from '$app/stores';
 
 	import '../app.css';
+	import '$lib/styles/space-theme.css';
+	import { page as statePage } from '$app/state';
+	import SpaceAssistant from '$lib/components/space/SpaceAssistant.svelte';
+	import { learningContext, spaceTopics, stageKeys } from '$lib/data/spaceLearning';
+
+	const context = $derived.by(() => {
+		const params = statePage.url.searchParams;
+		if (statePage.route.id === '/space-assistant') return learningContext(params);
+		if (statePage.route.id === '/qa' || statePage.route.id === '/exam') return learningContext(params);
+		if (
+			statePage.route.id !== '/space-exploration/learn/[stage]' &&
+			statePage.route.id !== '/space-exploration/learn/[stage]/resources'
+		)
+			return null;
+		const stage = stageKeys.find((key) => key === statePage.params.stage);
+		if (!stage) return null;
+		const topic = spaceTopics[stage].find(({ id }) => id === params.get('topic'));
+		return { stage, topic, lesson: topic?.lessons.find(({ id }) => id === params.get('lesson')) };
+	});
+
 	import { initI18n, setI18nContext } from '$lib/i18n';
 	import { loadUserSettings } from '$lib/data/userSettings';
 	import {
@@ -106,6 +126,21 @@
 
 {#if allowed}
 	{@render children()}
+	{#if $authMode === 'disabled' || $currentAccount}
+		<SpaceAssistant
+			stage={context?.stage}
+			topic={context?.topic?.title}
+			topicId={context?.topic?.id}
+			lesson={context?.lesson?.title}
+			lessonId={context?.lesson?.id}
+			preferredModel={statePage.url.searchParams.get('model') ?? undefined}
+			resourceTitle={statePage.route.id === '/space-assistant' && context
+				? (statePage.url.searchParams.get('resource')?.slice(0, 100) ?? '轨道参数与典型轨道')
+				: undefined}
+			autoOpen={statePage.route.id === '/space-assistant' &&
+				statePage.url.searchParams.get('document') !== 'usgs-1525'}
+		/>
+	{/if}
 {:else if $authMode === 'unavailable'}
 	<main class="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
 		<div class="max-w-md rounded-2xl border border-white/15 p-8 text-center">

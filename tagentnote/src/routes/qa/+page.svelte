@@ -1,4 +1,9 @@
 <script lang="ts">
+	import '$lib/styles/space-theme.css';
+	import './workspace.css';
+	import CosmicLayer from '$lib/components/space/CosmicLayer.svelte';
+	import { appendLearningContext, learningContext, spaceStages } from '$lib/data/spaceLearning';
+	import { saveSpaceRecord } from '$lib/data/spaceRecords';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	type SpeechRecognitionResultLike = { [index: number]: { transcript: string } };
 	type SpeechRecognitionEventLike = { results: ArrayLike<SpeechRecognitionResultLike> };
@@ -101,6 +106,14 @@
 		wouldCreateCycle,
 		type QaFolder
 	} from '$lib/data/qaFolders';
+
+	let exploration = $derived(learningContext($page.url.searchParams));
+	let explorationReturn = $derived.by(() => {
+		if (!exploration) return '';
+		const { stage, topic, lesson } = exploration;
+		return `${resolve('/space-exploration/learn/[stage]', { stage })}?topic=${topic.id}&lesson=${lesson?.id ?? 'review'}`;
+	});
+
 	import type { FolderFormValue } from '$lib/components/chat/FolderModal.svelte';
 	import {
 		applyHighContrast,
@@ -120,6 +133,29 @@
 	let selectedFolderId = $state<string | null>(null);
 	let folders = $state<QaFolder[]>([]);
 	let selectedModelId = $state($page.url.searchParams.get('model') ?? '');
+	let paperSplit = $state(50);
+
+	function setPaperSplit(value: number) {
+		paperSplit = Math.min(68, Math.max(32, Math.round(value)));
+	}
+
+	function dragPaperSplit(event: PointerEvent, divider: HTMLElement) {
+		const bounds = divider.parentElement?.getBoundingClientRect();
+		if (bounds?.width) setPaperSplit(((event.clientX - bounds.left) / bounds.width) * 100);
+	}
+
+	function handlePaperSplitKey(event: KeyboardEvent) {
+		const targets: Record<string, number> = {
+			ArrowLeft: paperSplit - 2,
+			ArrowRight: paperSplit + 2,
+			Home: 32,
+			End: 68
+		};
+		const target = targets[event.key];
+		if (typeof target !== 'number') return;
+		event.preventDefault();
+		setPaperSplit(target);
+	}
 	let assistMode = $state<AssistMode>(
 		$page.url.searchParams.get('mode') === 'paper' ? 'paper' : 'qa'
 	);
@@ -432,6 +468,7 @@
 		closeSidebarIfNarrow();
 		userSettings = loadUserSettings();
 		const sidebarAction = $page.url.searchParams.get('sidebar-action');
+		if (exploration?.lesson && assistMode === 'qa') prompt = exploration.lesson.title;
 		settingsOpen = sidebarAction === 'settings';
 		archivedOpen = sidebarAction === 'archived';
 		shortcutsOpen = sidebarAction === 'shortcuts';
@@ -675,6 +712,14 @@
 		};
 	});
 
+	function getLocalInterfaceSettings(): { followUpGeneration?: boolean; tagsGeneration?: boolean } {
+		try {
+			return JSON.parse(localStorage.getItem('admin-mock-settings') ?? '{}')?.interface ?? {};
+		} catch {
+			return {};
+		}
+	}
+
 	const scrollToBottom = async () => {
 		await tick();
 
@@ -868,6 +913,7 @@
 
 	const syncUrl = () => {
 		const params = new SvelteURLSearchParams();
+		appendLearningContext(params, exploration);
 
 		if (selectedModelId) {
 			params.set('model', selectedModelId);
@@ -979,7 +1025,13 @@
 		bumpGeneration();
 		generating = false;
 		commitActive();
-		void goto(resolve('/agent-select'));
+		if (explorationReturn) {
+			// explorationReturn is built with resolve() above and includes the learning query.
+			// eslint-disable-next-line svelte/no-navigation-without-resolve
+			void goto(explorationReturn);
+		} else {
+			void goto(resolve('/agent-select'));
+		}
 	};
 
 	const openSettings = () => {
@@ -1114,7 +1166,7 @@
 		generating = false;
 		commitActive();
 		if ($authMode === 'enabled') await logout();
-		void goto(resolve('/welcome'));
+		void goto(resolve($authMode === 'enabled' ? '/welcome' : '/space-exploration'));
 	};
 
 	const unarchiveChat = (chatId: string) => {
@@ -1340,11 +1392,12 @@
 	};
 
 	const openExam = () => {
-		void goto(
-			resolve(
-				`/exam?model=${encodeURIComponent(servedModelId)}&from=qa&topic=${encodeURIComponent(collectionId)}`
-			)
-		);
+		const params = new SvelteURLSearchParams({ from: 'qa' });
+		if (servedModelId) params.set('model', servedModelId);
+		const topic = exploration?.topic.title ?? collectionId;
+		if (topic) params.set('topic', topic);
+		appendLearningContext(params, exploration);
+		void goto(resolve(`/exam?${params.toString()}`));
 	};
 
 	const openNotes = () => {
@@ -1357,6 +1410,7 @@
 			params.set('collection', collectionId);
 		}
 		if (activeChatId) params.set('chat', activeChatId);
+		appendLearningContext(params, exploration);
 		void goto(resolve(`/notebook?${params.toString()}`));
 	};
 
@@ -1582,6 +1636,21 @@
 				.join('\n')
 				.trim();
 		}
+		if (exploration) {
+			try {
+				saveSpaceRecord({
+					id: `qa/${exploration.stage}/${exploration.topic.id}/${messageId}`,
+					kind: '问答',
+					context: `${spaceStages[exploration.stage].label} / ${exploration.topic.title}`,
+					title: saveTitle,
+					content: saveContent
+				});
+				toast('已存入航天学习笔记本');
+			} catch {
+				toast('无法保存笔记，请检查浏览器存储设置。');
+			}
+			return;
+		}
 		saveOpen = true;
 	};
 
@@ -1635,6 +1704,9 @@
 			custom?.system?.trim(),
 			...skills,
 			selectedFolder?.systemPrompt?.trim(),
+			exploration
+				? `面向${spaceStages[exploration.stage].label}学生。当前航天专题是「${exploration.topic.title}」。${spaceStages[exploration.stage].description} 资料不足时请明确说明，不要把无关的课程教材当作航天来源。`
+				: '',
 			baseOptions.system
 		]
 			.filter(Boolean)
@@ -1772,14 +1844,21 @@
 					return;
 				}
 
+				const interfaceSettings = getLocalInterfaceSettings();
 				messages = messages.map((message) =>
 					message.id === assistantId
 						? {
 								...message,
 								model: answeredBy(result.model),
 								citations,
-								followUps: userSettings.autoFollowUps ? buildFollowUps(topic) : undefined,
-								tags: userSettings.autoTags ? buildTags(topic) : undefined
+								followUps:
+									userSettings.autoFollowUps && interfaceSettings.followUpGeneration !== false
+										? buildFollowUps(topic)
+										: undefined,
+								tags:
+									userSettings.autoTags && interfaceSettings.tagsGeneration !== false
+										? buildTags(topic)
+										: undefined
 							}
 						: message
 				);
@@ -2421,9 +2500,14 @@
 	}}
 />
 
-<main class="flex h-screen overflow-hidden bg-gray-900 text-white">
+<main
+	class:space-context={Boolean(exploration)}
+	class="space-theme workspace-palette qa-workspace flex h-dvh overflow-hidden bg-gray-900 text-white"
+>
+	{#if exploration}<CosmicLayer />{/if}
 	{#if sidebarOpen}
 		<MockSidebar
+			spaceBrand
 			{activeChatId}
 			{selectedFolderId}
 			chats={sidebarChats}
@@ -2469,9 +2553,7 @@
 			onMoveFolder={handleMoveFolder}
 			onExportFolder={handleExportFolder}
 			knowledgeOptions={notebooks.map((item) => ({ id: item.id, name: item.name }))}
-			onOpenWorkspaceKnowledge={() => {
-				void goto(resolve('/notebook?from=qa'));
-			}}
+			onOpenWorkspaceKnowledge={openNotes}
 			onClose={() => {
 				sidebarOpen = false;
 			}}
@@ -2543,210 +2625,255 @@
 				}}
 			/>
 
-			{#if assistMode === 'paper'}
-				<div
-					class="max-h-[calc(100vh-4rem)] min-h-0 shrink-0 overflow-y-auto overscroll-contain border-b border-white/[0.06] bg-gray-900 px-3 py-2 md:px-5"
-				>
-					<PaperTaskCard
-						bind:title={paperTitle}
-						bind:keywords={paperKeywords}
-						bind:section={paperSection}
-						bind:context={paperContext}
-						sourceName={paperSourceName}
-						{collections}
-						compact={messages.length > 0}
-						onChange={handlePaperTaskChange}
-						onIntent={runPaperIntent}
-						onProposeTopic={proposeTopic}
-					/>
+			{#if exploration}
+				<div class="space-context-bar">
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- explorationReturn is resolved above. -->
+					<a href={explorationReturn}>← 返回学习</a>
+					<span>{spaceStages[exploration.stage].label} · {exploration.topic.title}</span>
+					<span class="space-source-notice">当前使用原教学知识库，航天语料待接入。</span>
+					<a href={resolve('/space-exploration/learn/notebook')}>我的笔记本</a>
 				</div>
 			{/if}
 
 			<div
-				class="relative flex min-h-0 flex-1 flex-col overflow-hidden"
-				dir={userSettings.chatDirection === 'auto'
-					? undefined
-					: (userSettings.chatDirection.toLowerCase() as 'ltr' | 'rtl')}
-				style={effectiveBackgroundUrl
-					? `background-image:url(${effectiveBackgroundUrl});background-size:cover;background-position:center;`
-					: undefined}
+				class:paper-workbench={assistMode === 'paper'}
+				class="flex min-h-0 flex-1 flex-col"
+				style:--paper-split={assistMode === 'paper' ? `${paperSplit}%` : undefined}
 			>
-				{#if messages.length === 0}
-					<div class="flex h-full min-h-0 w-full flex-col">
-						{#if selectedFolderId && selectedFolderName}
-							<div class="relative z-20 flex w-full justify-center pt-3">
-								<div
-									class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-gray-900/90 px-3 py-1 text-xs text-gray-300 backdrop-blur"
-								>
-									分组 · {selectedFolderName}
-									<button
-										type="button"
-										class="text-gray-500 underline hover:text-gray-300"
-										onclick={() => {
-											selectedFolderId = null;
-										}}
+				{#if assistMode === 'paper'}
+					<aside
+						id="paper-task-pane"
+						class="paper-task-pane min-h-0 shrink-0 overflow-y-auto overscroll-contain px-3 py-2"
+						aria-label="论文任务"
+					>
+						<PaperTaskCard
+							bind:title={paperTitle}
+							bind:keywords={paperKeywords}
+							bind:section={paperSection}
+							bind:context={paperContext}
+							sourceName={paperSourceName}
+							{collections}
+							compact={messages.length > 0}
+							onChange={handlePaperTaskChange}
+							onIntent={runPaperIntent}
+							onProposeTopic={proposeTopic}
+						/>
+					</aside>
+					<!-- A resizable ARIA separator is focusable and supports arrow keys. -->
+					<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+					<div
+						class="paper-divider"
+						role="separator"
+						tabindex="0"
+						aria-label="调整论文任务栏宽度"
+						aria-controls="paper-task-pane"
+						aria-orientation="vertical"
+						aria-valuemin={32}
+						aria-valuemax={68}
+						aria-valuenow={paperSplit}
+						onkeydown={handlePaperSplitKey}
+						onpointerdown={(event) => {
+							if (!event.isPrimary || event.button !== 0) return;
+							event.currentTarget.setPointerCapture(event.pointerId);
+							event.preventDefault();
+						}}
+						onpointermove={(event) => {
+							if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+								dragPaperSplit(event, event.currentTarget);
+							}
+						}}
+						ondblclick={() => setPaperSplit(50)}
+					></div>
+				{/if}
+
+				<div
+					class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+					dir={userSettings.chatDirection === 'auto'
+						? undefined
+						: (userSettings.chatDirection.toLowerCase() as 'ltr' | 'rtl')}
+					style={effectiveBackgroundUrl
+						? `background-image:url(${effectiveBackgroundUrl});background-size:cover;background-position:center;`
+						: undefined}
+				>
+					{#if messages.length === 0}
+						<div class="flex h-full min-h-0 w-full flex-col">
+							{#if selectedFolderId && selectedFolderName}
+								<div class="relative z-20 flex w-full justify-center pt-3">
+									<div
+										class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-gray-900/90 px-3 py-1 text-xs text-gray-300 backdrop-blur"
 									>
-										退出
-									</button>
+										分组 · {selectedFolderName}
+										<button
+											type="button"
+											class="text-gray-500 underline hover:text-gray-300"
+											onclick={() => {
+												selectedFolderId = null;
+											}}
+										>
+											退出
+										</button>
+									</div>
+								</div>
+							{/if}
+							<div class="flex min-h-0 w-full flex-1 flex-col overflow-y-auto">
+								<MockPlaceholder
+									bind:prompt
+									{generating}
+									mode={assistMode}
+									{temporaryChat}
+									landingPageMode={userSettings.landingPageMode}
+									ctrlEnterToSend={userSettings.ctrlEnterToSend}
+									enableMessageQueue={userSettings.enableMessageQueue}
+									showFormattingToolbar={userSettings.showFormattingToolbar}
+									richTextInput={userSettings.richTextInput}
+									promptAutocomplete={userSettings.promptAutocomplete}
+									insertSuggestionPrompt={userSettings.insertSuggestionPrompt}
+									{lastUserMessage}
+									modelName={currentModelName}
+									onSubmit={submitPrompt}
+									{resolveAttachment}
+									onReview={assistMode === 'paper' ? submitPaperForReview : null}
+									onFillSample={assistMode === 'paper' && samples.length > 0 ? fillSample : null}
+									onStop={stopResponse}
+									knowledgeOptions={notebooks.map((n) => ({ id: n.id, name: n.name }))}
+									{modelOptions}
+									onSelectKnowledge={selectKnowledgeFromInput}
+									onSelectModel={selectModelFromInput}
+									largeTextAsFile={userSettings.largeTextAsFile}
+									imageCompression={userSettings.imageCompression}
+									imageCompressionSize={userSettings.imageCompressionSize}
+									speechAutoSend={userSettings.speechAutoSend}
+									webSearchAlways={userSettings.webSearchAlways}
+									noteOptions={inputNoteOptions}
+									chatOptions={inputChatOptions}
+									onToast={toast}
+								/>
+							</div>
+						</div>
+					{:else}
+						{#if temporaryChat}
+							<div class="relative z-20 flex justify-center pt-3">
+								<div
+									class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-gray-900/90 px-3 py-1 text-xs text-gray-400 backdrop-blur"
+									title="此对话不会出现在历史记录中，消息也不会被保存。"
+								>
+									临时对话 · 不会写入历史
 								</div>
 							</div>
 						{/if}
-						<div class="flex min-h-0 w-full flex-1 items-center">
-							<MockPlaceholder
-								bind:prompt
-								{generating}
-								mode={assistMode}
-								{temporaryChat}
-								landingPageMode={userSettings.landingPageMode}
-								ctrlEnterToSend={userSettings.ctrlEnterToSend}
-								enableMessageQueue={userSettings.enableMessageQueue}
-								showFormattingToolbar={userSettings.showFormattingToolbar}
-								richTextInput={userSettings.richTextInput}
-								promptAutocomplete={userSettings.promptAutocomplete}
-								insertSuggestionPrompt={userSettings.insertSuggestionPrompt}
-								{lastUserMessage}
-								modelName={currentModelName}
-								onSubmit={submitPrompt}
-								{resolveAttachment}
-								onReview={assistMode === 'paper' ? submitPaperForReview : null}
-								onFillSample={assistMode === 'paper' && samples.length > 0 ? fillSample : null}
-								onStop={stopResponse}
-								knowledgeOptions={notebooks.map((n) => ({ id: n.id, name: n.name }))}
-								{modelOptions}
-								onSelectKnowledge={selectKnowledgeFromInput}
-								onSelectModel={selectModelFromInput}
-								largeTextAsFile={userSettings.largeTextAsFile}
-								imageCompression={userSettings.imageCompression}
-								imageCompressionSize={userSettings.imageCompressionSize}
-								speechAutoSend={userSettings.speechAutoSend}
-								webSearchAlways={userSettings.webSearchAlways}
-								noteOptions={inputNoteOptions}
-								chatOptions={inputChatOptions}
-								onToast={toast}
-							/>
-						</div>
-					</div>
-				{:else}
-					{#if temporaryChat}
-						<div class="relative z-20 flex justify-center pt-3">
-							<div
-								class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-gray-900/90 px-3 py-1 text-xs text-gray-400 backdrop-blur"
-								title="此对话不会出现在历史记录中，消息也不会被保存。"
-							>
-								临时对话 · 不会写入历史
-							</div>
-						</div>
-					{/if}
-					<div
-						bind:this={messagesContainer}
-						id="messages-container"
-						class="min-h-0 flex-1 overflow-y-auto"
-					>
-						<MockMessages
-							{messages}
-							{generating}
-							modelName={currentModelName}
-							resolveModelName={modelDisplayName}
-							userName={userSettings.displayName}
-							chatBubble={userSettings.chatBubble}
-							widescreenMode={userSettings.widescreenMode}
-							showUsername={userSettings.showUsername}
-							regenerateMenu={userSettings.regenerateMenu}
-							collapseCodeBlocks={userSettings.collapseCodeBlocks}
-							fadeStreaming={userSettings.chatFadeStreamingText}
-							expandDetails={userSettings.expandDetails}
-							detectArtifacts={userSettings.detectArtifacts}
-							iframeSandboxAllowSameOrigin={userSettings.iframeSandboxAllowSameOrigin}
-							iframeSandboxAllowForms={userSettings.iframeSandboxAllowForms}
-							showFloatingActionButtons={userSettings.showFloatingActionButtons}
-							floatingActionButtons={userSettings.floatingActionButtons}
-							copyFormatted={userSettings.copyFormatted}
-							keepFollowUpPrompts={userSettings.keepFollowUpPrompts}
-							insertFollowUpPrompt={userSettings.insertFollowUpPrompt}
-							onRegenerate={regenerateResponse}
-							currentTopic={paperTitle}
-							onAdoptTopic={adoptTopic}
-							onRetryPaperCard={rerunPaperCard}
-							onContinue={continueResponse}
-							continueLabel={assistMode === 'paper' ? `继续写${paperSection}` : '继续回答'}
-							onEditMessage={editMessage}
-							onSaveToNotebook={openSaveToNotebook}
-							canSaveToNotebook={$authMode !== 'enabled' || $currentAccount?.role === 'admin'}
-							onToast={toast}
-							onRate={rateMessage}
-							onQuickAction={(content, displayContent) => {
-								prompt = content;
-								submitPrompt(content, displayContent);
-							}}
-							onFollowUp={(content, insertOnly) => {
-								if (insertOnly) {
-									prompt = content;
-									return;
-								}
-								submitPrompt(content);
-							}}
-						/>
-					</div>
-
-					{#if messageQueue.length > 0}
-						<div class="px-4 pb-1 text-center text-[11px] text-gray-500">
-							队列中还有 {messageQueue.length} 条消息
-							<button
-								type="button"
-								class="ml-2 underline hover:text-gray-300"
-								onclick={() => {
-									messageQueue = [];
-								}}
-							>
-								清空
-							</button>
-						</div>
-					{/if}
-
-					{#if userSettings.webSearchAlways}
-						<div class="px-4 pb-1 text-center text-[11px] text-sky-400/80">联网搜索：始终开启</div>
-					{/if}
-
-					<div class="relative z-10 shrink-0 px-4 pt-4 pb-2">
 						<div
-							class={`mx-auto w-full ${userSettings.widescreenMode ? 'max-w-full' : 'max-w-3xl'}`}
+							bind:this={messagesContainer}
+							id="messages-container"
+							class="min-h-0 flex-1 overflow-y-auto"
 						>
-							<MockMessageInput
-								bind:prompt
-								placeholder="有什么我能帮您的吗？"
+							<MockMessages
+								{messages}
 								{generating}
-								ctrlEnterToSend={userSettings.ctrlEnterToSend}
-								enableMessageQueue={userSettings.enableMessageQueue}
-								showFormattingToolbar={userSettings.showFormattingToolbar}
-								richTextInput={userSettings.richTextInput}
-								promptAutocomplete={userSettings.promptAutocomplete}
-								{lastUserMessage}
 								modelName={currentModelName}
-								onSubmit={submitPrompt}
-								{resolveAttachment}
-								onReview={assistMode === 'paper' ? submitPaperForReview : null}
-								onFillSample={assistMode === 'paper' && samples.length > 0 ? fillSample : null}
-								onStop={stopResponse}
-								knowledgeOptions={notebooks.map((n) => ({ id: n.id, name: n.name }))}
-								{modelOptions}
-								onSelectKnowledge={selectKnowledgeFromInput}
-								onSelectModel={selectModelFromInput}
-								largeTextAsFile={userSettings.largeTextAsFile}
-								imageCompression={userSettings.imageCompression}
-								imageCompressionSize={userSettings.imageCompressionSize}
-								speechAutoSend={userSettings.speechAutoSend}
-								webSearchAlways={userSettings.webSearchAlways}
-								noteOptions={inputNoteOptions}
-								chatOptions={inputChatOptions}
+								resolveModelName={modelDisplayName}
+								userName={userSettings.displayName}
+								chatBubble={userSettings.chatBubble}
+								widescreenMode={userSettings.widescreenMode}
+								showUsername={userSettings.showUsername}
+								regenerateMenu={userSettings.regenerateMenu}
+								collapseCodeBlocks={userSettings.collapseCodeBlocks}
+								fadeStreaming={userSettings.chatFadeStreamingText}
+								expandDetails={userSettings.expandDetails}
+								detectArtifacts={userSettings.detectArtifacts}
+								iframeSandboxAllowSameOrigin={userSettings.iframeSandboxAllowSameOrigin}
+								iframeSandboxAllowForms={userSettings.iframeSandboxAllowForms}
+								showFloatingActionButtons={userSettings.showFloatingActionButtons}
+								floatingActionButtons={userSettings.floatingActionButtons}
+								copyFormatted={userSettings.copyFormatted}
+								keepFollowUpPrompts={userSettings.keepFollowUpPrompts}
+								insertFollowUpPrompt={userSettings.insertFollowUpPrompt}
+								onRegenerate={regenerateResponse}
+								currentTopic={paperTitle}
+								onAdoptTopic={adoptTopic}
+								onRetryPaperCard={rerunPaperCard}
+								onContinue={continueResponse}
+								continueLabel={assistMode === 'paper' ? `继续写${paperSection}` : '继续回答'}
+								onEditMessage={editMessage}
+								onSaveToNotebook={openSaveToNotebook}
+								canSaveToNotebook={$authMode !== 'enabled' || $currentAccount?.role === 'admin'}
 								onToast={toast}
+								onRate={rateMessage}
+								onQuickAction={(content, displayContent) => {
+									prompt = content;
+									submitPrompt(content, displayContent);
+								}}
+								onFollowUp={(content, insertOnly) => {
+									if (insertOnly) {
+										prompt = content;
+										return;
+									}
+									submitPrompt(content);
+								}}
 							/>
 						</div>
 
-						<p class="mt-2 text-center text-[11px] text-gray-600">
-							回答来自 basic-agent 检索的教材与笔记，请核实重要内容。
-						</p>
-					</div>
-				{/if}
+						{#if messageQueue.length > 0}
+							<div class="px-4 pb-1 text-center text-[11px] text-gray-500">
+								队列中还有 {messageQueue.length} 条消息
+								<button
+									type="button"
+									class="ml-2 underline hover:text-gray-300"
+									onclick={() => {
+										messageQueue = [];
+									}}
+								>
+									清空
+								</button>
+							</div>
+						{/if}
+
+						{#if userSettings.webSearchAlways}
+							<div class="px-4 pb-1 text-center text-[11px] text-sky-400/80">
+								联网搜索：始终开启
+							</div>
+						{/if}
+
+						<div class="relative z-10 shrink-0 px-4 pt-4 pb-2">
+							<div
+								class={`mx-auto w-full ${userSettings.widescreenMode ? 'max-w-full' : 'max-w-3xl'}`}
+							>
+								<MockMessageInput
+									bind:prompt
+									placeholder={assistMode === 'qa' ? '输入你的课程问题…' : '有什么我能帮您的吗？'}
+									{generating}
+									ctrlEnterToSend={userSettings.ctrlEnterToSend}
+									enableMessageQueue={userSettings.enableMessageQueue}
+									showFormattingToolbar={userSettings.showFormattingToolbar}
+									richTextInput={userSettings.richTextInput}
+									promptAutocomplete={userSettings.promptAutocomplete}
+									{lastUserMessage}
+									modelName={currentModelName}
+									onSubmit={submitPrompt}
+									{resolveAttachment}
+									onReview={assistMode === 'paper' ? submitPaperForReview : null}
+									onFillSample={assistMode === 'paper' && samples.length > 0 ? fillSample : null}
+									onStop={stopResponse}
+									knowledgeOptions={notebooks.map((n) => ({ id: n.id, name: n.name }))}
+									{modelOptions}
+									onSelectKnowledge={selectKnowledgeFromInput}
+									onSelectModel={selectModelFromInput}
+									largeTextAsFile={userSettings.largeTextAsFile}
+									imageCompression={userSettings.imageCompression}
+									imageCompressionSize={userSettings.imageCompressionSize}
+									speechAutoSend={userSettings.speechAutoSend}
+									webSearchAlways={userSettings.webSearchAlways}
+									noteOptions={inputNoteOptions}
+									chatOptions={inputChatOptions}
+									onToast={toast}
+								/>
+							</div>
+
+							<p class="mt-2 text-center text-[11px] text-gray-600">
+								请结合教材与笔记核实重要内容。
+							</p>
+						</div>
+					{/if}
+				</div>
 			</div>
 		</div>
 
@@ -2769,6 +2896,57 @@
 			}}
 		/>
 	</section>
+	{#if settingsOpen}
+		<div class="qa-settings">
+			{#await import('$lib/components/chat/SettingsModal.svelte') then { default: SettingsModal }}
+				<SettingsModal
+					open={settingsOpen}
+					initialTab={settingsTab}
+					userRole="admin"
+					showAdminPanel={true}
+					onClose={() => {
+						settingsOpen = false;
+					}}
+					onSettingsChange={handleSettingsChange}
+					onImportChats={importChatsFromFile}
+					onExportChats={exportAllChats}
+					onArchiveAllChats={archiveAllChats}
+					onDeleteAllChats={deleteAllChats}
+					onToast={(message) => {
+						saveToast = message;
+						window.setTimeout(() => {
+							saveToast = '';
+						}, 2800);
+					}}
+				/>
+			{/await}
+		</div>
+	{/if}
+	{#if archivedOpen}
+		<div class="qa-archived">
+			{#await import('$lib/components/layout/ArchivedChatsModal.svelte') then { default: ArchivedChatsModal }}
+				<ArchivedChatsModal
+					bind:show={archivedOpen}
+					chats={archivedChats}
+					onUnarchive={unarchiveChat}
+					onOpenChat={openArchivedChat}
+					onDelete={deleteChatById}
+				/>
+			{/await}
+		</div>
+	{/if}
+	{#if shortcutsOpen}
+		<div class="qa-shortcuts">
+			{#await import('$lib/components/chat/ShortcutsModal.svelte') then { default: ShortcutsModal }}
+				<ShortcutsModal
+					open={shortcutsOpen}
+					onClose={() => {
+						shortcutsOpen = false;
+					}}
+				/>
+			{/await}
+		</div>
+	{/if}
 </main>
 
 <!--
@@ -2789,54 +2967,6 @@
 				window.setTimeout(() => {
 					saveToast = '';
 				}, 3200);
-			}}
-		/>
-	{/await}
-{/if}
-
-{#if settingsOpen}
-	{#await import('$lib/components/chat/SettingsModal.svelte') then { default: SettingsModal }}
-		<SettingsModal
-			open={settingsOpen}
-			initialTab={settingsTab}
-			userRole="admin"
-			showAdminPanel={true}
-			onClose={() => {
-				settingsOpen = false;
-			}}
-			onSettingsChange={handleSettingsChange}
-			onImportChats={importChatsFromFile}
-			onExportChats={exportAllChats}
-			onArchiveAllChats={archiveAllChats}
-			onDeleteAllChats={deleteAllChats}
-			onToast={(message) => {
-				saveToast = message;
-				window.setTimeout(() => {
-					saveToast = '';
-				}, 2800);
-			}}
-		/>
-	{/await}
-{/if}
-
-{#if archivedOpen}
-	{#await import('$lib/components/layout/ArchivedChatsModal.svelte') then { default: ArchivedChatsModal }}
-		<ArchivedChatsModal
-			bind:show={archivedOpen}
-			chats={archivedChats}
-			onUnarchive={unarchiveChat}
-			onOpenChat={openArchivedChat}
-			onDelete={deleteChatById}
-		/>
-	{/await}
-{/if}
-
-{#if shortcutsOpen}
-	{#await import('$lib/components/chat/ShortcutsModal.svelte') then { default: ShortcutsModal }}
-		<ShortcutsModal
-			open={shortcutsOpen}
-			onClose={() => {
-				shortcutsOpen = false;
 			}}
 		/>
 	{/await}

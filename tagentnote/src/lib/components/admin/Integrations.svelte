@@ -171,7 +171,7 @@
 					<div class="flex items-center gap-2">
 						<div class="font-medium">打开终端</div>
 						<span
-							class="rounded-full bg-gray-100 px-1.5 py-0.5 text-[0.65rem] font-medium text-gray-500 uppercase dark:bg-gray-800 dark:text-gray-400"
+							class="rounded-full bg-[var(--qa-raised)] px-1.5 py-0.5 text-xs font-medium text-[color:var(--qa-text)]"
 							>实验性</span
 						>
 					</div>
@@ -233,7 +233,7 @@
 
 	<div class="flex justify-end pt-3 text-sm font-medium">
 		<button
-			class="rounded-full bg-black px-3.5 py-1.5 text-sm font-medium text-white transition hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100"
+			class="admin-primary rounded-full px-3.5 py-1.5 text-sm font-medium transition"
 			type="submit">保存</button
 		>
 	</div>

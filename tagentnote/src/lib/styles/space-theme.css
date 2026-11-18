@@ -1,0 +1,158 @@
+.space-theme {
+	--m3-background: #141218;
+	--m3-surface-low: #1d1b20;
+	--m3-surface-high: #2b2930;
+	--m3-on-surface: #e6e0e9;
+	--m3-on-surface-variant: #cac4d0;
+	--m3-outline-variant: #49454f;
+	--m3-primary: #d0bcff;
+	--m3-on-primary: #381e72;
+	--space-amber: #f6b45f;
+	--space-blue: #8ac9ec;
+	--space-selected: #342844;
+	--space-error: #ffb4ab;
+	--space-font: Roboto, 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+}
+
+html.light .space-theme {
+	--m3-background: #f7f5ef;
+	--m3-surface-low: #fffefa;
+	--m3-surface-high: #e8edf3;
+	--m3-on-surface: #202b3c;
+	--m3-on-surface-variant: #465568;
+	--m3-outline-variant: #bac6d5;
+	--m3-primary: #174b9b;
+	--m3-on-primary: #ffffff;
+	--space-amber: #8b4d04;
+	--space-blue: #2966a6;
+	--space-selected: #dce8fb;
+	--space-error: #a12632;
+}
+
+.workspace-palette {
+	--qa-surface: var(--m3-background);
+	--qa-panel: var(--m3-surface-low);
+	--qa-raised: var(--m3-surface-high);
+	--qa-line: var(--m3-outline-variant);
+	--qa-text: var(--m3-on-surface);
+	--qa-muted: var(--m3-on-surface-variant);
+	--qa-active: var(--m3-primary);
+	--qa-on-active: var(--m3-on-primary);
+	--qa-tint: var(--space-selected);
+	--qa-amber: var(--space-amber);
+	font-family: var(--space-font);
+}
+
+.workspace-palette {
+	--color-gray-950: var(--qa-surface);
+	--color-gray-900: var(--qa-surface);
+	--color-gray-850: var(--qa-panel);
+	--color-gray-800: var(--qa-raised);
+	--color-gray-700: var(--qa-line);
+	--color-gray-600: var(--qa-subtle, #a69caf);
+	--color-gray-500: #b5aabc;
+	--color-gray-400: var(--qa-muted);
+	--color-gray-300: var(--qa-muted);
+	--color-gray-200: var(--qa-text);
+	--color-gray-100: var(--qa-text);
+}
+
+.workspace-palette :is(.user-menu-popup, .workspace-menu-popup) {
+	background: var(--qa-panel) !important;
+	border-color: var(--qa-line);
+	color: var(--qa-text) !important;
+}
+
+.workspace-palette :is(.user-menu-popup, .workspace-menu-popup) button:is(:hover, :focus-visible) {
+	background: var(--qa-raised) !important;
+}
+
+.workspace-palette .composer-menu-popup .bg-gray-800 {
+	background: var(--qa-tint) !important;
+	color: var(--qa-active) !important;
+}
+
+.workspace-palette .composer-menu-popup [role='switch'] {
+	outline-color: var(--qa-line);
+	background: var(--qa-raised) !important;
+}
+
+.workspace-palette .composer-menu-popup [role='switch'] > span {
+	background: var(--qa-muted);
+}
+
+.workspace-palette .composer-menu-popup [role='switch'][aria-checked='true'] {
+	outline-color: var(--qa-active);
+	background: var(--qa-active) !important;
+}
+
+.workspace-palette .composer-menu-popup [role='switch'][aria-checked='true'] > span {
+	background: var(--qa-on-active);
+}
+
+.workspace-palette .user-menu-popup .bg-amber-500 {
+	background: var(--qa-tint);
+	color: var(--qa-active);
+}
+
+.playground-shell .chat-sidebar,
+.admin-workspace .chat-sidebar,
+.admin-workspace .drag-region {
+	background: var(--qa-panel);
+	border-color: var(--qa-line);
+}
+
+.workspace-palette::selection,
+.workspace-palette ::selection {
+	background: var(--qa-tint);
+	color: var(--qa-text);
+}
+
+.workspace-palette .space-branded .chat-sidebar-header {
+	min-height: 58px;
+	padding-inline: 12px;
+	border-bottom: 1px solid var(--qa-line);
+}
+
+.workspace-palette .space-branded nav {
+	padding: 10px 0;
+}
+
+.workspace-palette .space-branded nav > button,
+.workspace-palette .space-branded button[aria-current='true'] {
+	border-radius: 10px;
+}
+
+.workspace-palette .space-branded #sidebar-new-chat-button {
+	margin-bottom: 4px;
+	border: 1px solid var(--qa-line);
+}
+
+.workspace-palette .space-branded #sidebar-new-chat-button,
+.workspace-palette .space-branded button[aria-current='true'] {
+	background: var(--qa-tint);
+	color: var(--qa-active);
+}
+
+.workspace-palette .qa-orbit-mark {
+	display: inline-grid;
+	width: 32px;
+	height: 32px;
+	flex: none;
+	place-items: center;
+	border: 1px solid color-mix(in srgb, var(--qa-amber), transparent 48%);
+	border-radius: 50%;
+	background: var(--qa-panel);
+	color: var(--qa-amber);
+	font-size: 21px;
+}
+
+.workspace-palette .space-branded .sidebar-avatar {
+	background: var(--qa-active);
+	color: var(--qa-on-active) !important;
+}
+
+html.light .workspace-palette .space-branded .sidebar-avatar {
+	background: #dfe8f9;
+	color: #232b3b !important;
+}

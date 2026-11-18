@@ -810,14 +810,14 @@
 						{/if}
 						{#if prompt.trim()}
 							<span
-								class={`text-[11px] tabular-nums ${reviewReady ? 'text-gray-500' : 'text-amber-300/80'}`}
+								class={`text-[11px] tabular-nums ${reviewReady ? 'text-gray-500' : 'text-[color:var(--qa-active,var(--m3-primary))]/80'}`}
 							>
 								{reviewChars.toLocaleString()} 字
 							</span>
 						{/if}
 						<button
 							type="button"
-							class="rounded-full border border-amber-300/40 px-3 py-1 text-xs font-medium text-amber-100 transition hover:bg-amber-300/10 disabled:cursor-not-allowed disabled:border-white/15 disabled:text-gray-500"
+							class="rounded-full border border-[color:var(--qa-active,var(--m3-primary))]/40 px-3 py-1 text-xs font-medium text-[color:var(--qa-active,var(--m3-primary))] transition hover:bg-[var(--qa-active,var(--m3-primary))]/10 disabled:cursor-not-allowed disabled:border-white/15 disabled:text-gray-500"
 							onclick={submitReview}
 							disabled={disabled || !reviewReady}
 							title={reviewTitle}
