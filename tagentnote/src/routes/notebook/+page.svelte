@@ -5,6 +5,7 @@
 	import { page } from '$app/stores';
 	import { env } from '$env/dynamic/public';
 	import { onMount } from 'svelte';
+	import { authMode } from '$lib/apis/auth';
 	import { SvelteURL, SvelteURLSearchParams } from 'svelte/reactivity';
 
 	import { listNotebookKnowledge, listNotebooks } from '$lib/apis/opennotebook';
@@ -24,6 +25,16 @@
 	};
 
 	const openNotebookUrl = normalizeNotebookUrl(env.PUBLIC_OPENNOTEBOOK_URL || DEFAULT_NOTEBOOK_URL);
+	const accountNotebookUrl = $derived.by(() => {
+		if ($authMode !== 'enabled') return openNotebookUrl;
+		if (typeof window === 'undefined') return '';
+		try {
+			const url = new URL(openNotebookUrl, window.location.origin);
+			return url.protocol === 'https:' && url.hostname === window.location.hostname ? url.href : '';
+		} catch {
+			return '';
+		}
+	});
 
 	let iframeKey = $state(0);
 	let status = $state<'checking' | 'ready' | 'offline'>('checking');
@@ -122,6 +133,7 @@
 	};
 
 	onMount(() => {
+		if ($authMode === 'enabled') return;
 		const controller = new AbortController();
 		void checkNotebook();
 		const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]);
@@ -145,6 +157,20 @@
 	<title>知识笔记本 | TAgent</title>
 </svelte:head>
 
+{#if $authMode === 'enabled'}
+	<main class="space-theme flex min-h-screen items-center justify-center p-6 text-white">
+		<div class="max-w-md rounded-2xl border border-white/15 bg-gray-900 p-8 text-center">
+			<h1 class="text-2xl font-semibold">知识笔记本</h1>
+			{#if accountNotebookUrl}
+				<p class="mt-3 text-sm text-gray-300">使用当前账号进入完整笔记工作空间。已有的共享笔记仅管理员可见。</p>
+				<a href={accountNotebookUrl} class="mt-6 inline-block rounded-lg bg-blue-500 px-4 py-2 font-medium text-white">打开 OpenNotebook</a>
+			{:else}
+				<p class="mt-3 text-sm text-amber-200">笔记本地址必须是与本站同一主机的 HTTPS 地址，请联系管理员配置。</p>
+			{/if}
+			<a href={resolve(returnPath)} class="mt-5 block text-sm text-gray-300 underline">{returnLabel}</a>
+		</div>
+	</main>
+{:else}
 <div class="space-theme notebook-page">
 	<header class="topbar">
 		<a class="brand" href={resolve('/space-exploration')}>
@@ -208,6 +234,7 @@
 		{/if}
 	</main>
 </div>
+{/if}
 
 <style>
 	.notebook-page {

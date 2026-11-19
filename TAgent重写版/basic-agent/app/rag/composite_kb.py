@@ -183,6 +183,8 @@ class CompositeKnowledgeBase:
         scoped = [str(item).strip() for item in notebook_ids or [] if str(item).strip()]
         for source in self.sources:
             kind = source.describe().get("kind") if hasattr(source, "describe") else ""
+            if notebook_ids == [] and kind == "notebook":
+                continue
             if scoped and kind == "local":
                 continue
             if not self._available(source):

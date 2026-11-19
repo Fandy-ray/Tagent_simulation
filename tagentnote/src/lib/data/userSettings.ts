@@ -1,4 +1,5 @@
 import { browser } from '$app/environment';
+import { readPersonalCache, writePersonalCache } from '$lib/apis/auth';
 
 export type DirectConnection = {
 	url: string;
@@ -135,8 +136,6 @@ export type UserSettings = {
 	terminalServers: TerminalServer[];
 };
 
-const STORAGE_KEY = 'tagentnote.user.settings.v1';
-
 export const defaultUserSettings = (): UserSettings => ({
 	theme: 'dark',
 	language: 'zh-CN',
@@ -223,9 +222,8 @@ export function loadUserSettings(): UserSettings {
 	const defaults = defaultUserSettings();
 	if (!browser) return defaults;
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
-		if (!raw)
-			return { ...defaults, theme: localStorage.getItem('theme') === 'light' ? 'light' : 'dark' };
+		const raw = readPersonalCache('settings');
+		if (!raw) return defaults;
 		const parsed = JSON.parse(raw) as Partial<UserSettings>;
 		return {
 			...defaults,
@@ -260,7 +258,7 @@ export function loadUserSettings(): UserSettings {
 export function saveUserSettings(settings: UserSettings) {
 	if (!browser) return;
 	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+		writePersonalCache('settings', JSON.stringify(settings));
 	} catch {
 		// ignore
 	}

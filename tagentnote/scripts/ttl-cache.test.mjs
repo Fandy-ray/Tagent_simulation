@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const { createTtlCache } = await import('../src/lib/data/ttlCache.ts');
+const { createTtlCache, createScopedTtlCache } = await import('../src/lib/data/ttlCache.ts');
 
 const clock = () => {
 	let now = 0;
@@ -95,4 +95,31 @@ test('一个调用方中断，不该拖垮共用同一次请求的其他调用�
 	await assert.rejects(() => withSignal);
 	assert.equal(await cache.get(load), 'ok', '别人中断不该影响这一个');
 	assert.equal(calls, 1, '仍然只打一次请求');
+});
+
+test('切换账号或课程后不复用上一范围的笔记本结果', async () => {
+	let scope = 'account-a:general';
+	const cache = createScopedTtlCache(() => scope, 10_000, clock());
+	let calls = 0;
+	const load = async () => ++calls;
+
+	assert.equal(await cache.get(load), 1);
+	assert.equal(await cache.get(load), 1);
+	scope = 'account-b:general';
+	assert.equal(await cache.get(load), 2);
+	scope = 'account-b:course-1';
+	assert.equal(await cache.get(load), 3);
+	assert.equal(calls, 3);
+});
+
+test('账号切换时丢弃上一个账号尚在返回的笔记本请求', async () => {
+	let scope = 'account-a:general';
+	const cache = createScopedTtlCache(() => scope, 10_000, clock());
+	let finishOld;
+	const old = cache.get(() => new Promise((resolve) => (finishOld = resolve)));
+	scope = 'account-b:general';
+	assert.deepEqual(await cache.get(async () => ['account-b']), ['account-b']);
+	finishOld(['account-a']);
+	await assert.rejects(old, /账号或课程已切换/);
+	assert.deepEqual(await cache.get(async () => ['unexpected']), ['account-b']);
 });

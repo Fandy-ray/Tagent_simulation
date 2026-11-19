@@ -5,6 +5,8 @@
  * 口令由调用方传进来、随请求头发出去，这里不存（记住口令见 $lib/apis/admin）。
  */
 import { agentBase } from '$lib/apis/agent';
+import { authMode, sessionHeaders } from '$lib/apis/auth';
+import { get } from 'svelte/store';
 
 export type ModelProvider = {
 	name: string;
@@ -74,6 +76,9 @@ function explain(status: number, payload: unknown): string {
 	const error = (payload as { error?: { message?: string; code?: string } })?.error;
 	const code = error?.code ?? '';
 	const message = error?.message ?? '';
+	if (get(authMode) === 'enabled' && status === 403) {
+		return message || '当前账号没有权限。';
+	}
 
 	if (code === 'admin_token_not_configured') {
 		return '后端还没有管理口令：跑一次启动脚本（start.command / start.bat）会自动生成。';
@@ -97,12 +102,13 @@ function explain(status: number, payload: unknown): string {
 async function call<T>(token: string, path: string, method = 'GET', body?: unknown): Promise<T> {
 	let response: Response;
 	try {
+		const headers = sessionHeaders(method);
+		headers.set('Content-Type', 'application/json');
+		if (get(authMode) !== 'enabled') headers.set('X-Agent-Admin-Token', token.trim());
 		response = await fetch(`${agentBase()}/admin/model-providers${path}`, {
 			method,
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Agent-Admin-Token': token.trim()
-			},
+			headers,
+			credentials: 'same-origin',
 			body: body === undefined ? undefined : JSON.stringify(body)
 		});
 	} catch {
@@ -158,11 +164,14 @@ export async function probeModel(token: string, servedModelId: string): Promise<
 	const started = performance.now();
 	let response: Response;
 	try {
+		const headers = sessionHeaders('POST');
+		if (get(authMode) !== 'enabled') headers.set('X-Agent-Admin-Token', token.trim());
 		response = await fetch(
 			`${agentBase()}/admin/model-providers/${encodeURIComponent(servedModelId)}/probe`,
 			{
 				method: 'POST',
-				headers: { 'X-Agent-Admin-Token': token.trim() },
+				headers,
+				credentials: 'same-origin',
 				signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
 			}
 		);

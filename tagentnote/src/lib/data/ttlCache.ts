@@ -41,3 +41,32 @@ export function createTtlCache<T>(ttlMs = 15_000, now: () => number = Date.now):
 		}
 	};
 }
+
+/** Keep cached account data inside the identity and course that requested it. */
+export function createScopedTtlCache<T>(
+	scope: () => string,
+	ttlMs = 15_000,
+	now: () => number = Date.now
+): TtlCache<T> {
+	let activeScope: string | null = null;
+	const cache = createTtlCache<T>(ttlMs, now);
+	return {
+		get(load) {
+			const requestedScope = scope();
+			if (activeScope !== requestedScope) {
+				cache.invalidate();
+				activeScope = requestedScope;
+			}
+			return cache.get(async () => {
+				const value = await load();
+				if (activeScope !== requestedScope || scope() !== requestedScope) {
+					throw new Error('账号或课程已切换，请重新载入笔记本。');
+				}
+				return value;
+			});
+		},
+		invalidate() {
+			cache.invalidate();
+		}
+	};
+}

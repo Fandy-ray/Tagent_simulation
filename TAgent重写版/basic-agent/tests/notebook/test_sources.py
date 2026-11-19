@@ -123,7 +123,10 @@ def test_download_delete_and_file_cleanup(client, app):
     response = client.get(f"/api/sources/{source['id']}/download")
     assert response.status_code == 200 and response.data == "下载测试".encode()
     assert "attachment" in response.headers["Content-Disposition"]
-    assert client.head(f"/api/sources/{source['id']}/download").status_code == 200
+    response.close()
+    head_response = client.head(f"/api/sources/{source['id']}/download")
+    assert head_response.status_code == 200
+    head_response.close()
     text_only = text_source(client, nid, "没有文件")
     assert client.get(f"/api/sources/{text_only['id']}/download").status_code == 404
 

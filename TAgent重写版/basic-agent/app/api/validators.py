@@ -139,9 +139,24 @@ def exam_json_body() -> dict[str, Any]:
 
 
 def optional_notebook_ids(data: dict[str, Any]) -> list[str] | None:
+    from flask import current_app, g
+
+    course = getattr(g, "course", None)
+    student = (current_app.config.get("AUTH_ENABLED")
+               and getattr(g, "account", {}).get("role") == "student")
+    if current_app.config.get("AUTH_ENABLED") and course and not student:
+        allowed = course.get("notebook_ids") or []
+        if not allowed:
+            raise AgentAPIError("这门课程尚未配置知识来源。", 409, "course_sources_empty")
+        requested = data.get("notebook_ids")
+        if requested and requested != "":
+            values = [requested] if isinstance(requested, str) else requested
+            if not isinstance(values, list) or any(item not in allowed for item in values):
+                raise AgentAPIError("不能使用当前课程以外的资料。", 403, "course_source_forbidden")
+        return list(allowed)
     value = data.get("notebook_ids")
     if value is None or value == "":
-        return None
+        value = []
     if isinstance(value, str):
         value = [value]
     if not isinstance(value, list):
@@ -160,6 +175,15 @@ def optional_notebook_ids(data: dict[str, Any]) -> list[str] | None:
         normalized.append(notebook_id)
         if len(normalized) > 20:
             raise AgentAPIError("notebook_ids is limited to 20 notebooks.", 400, "validation_error")
+    if student:
+        # 学生只主动选择自己的笔记本。OpenNotebook 的账号会话和记录权限还会
+        # 独立核对归属；不传 ID 时不能把空范围解释成全库。
+        if not normalized:
+            return []
+        settings = current_app.extensions.get("settings")
+        if (settings is None or getattr(settings, "knowledge_source", None) not in {"notebook", "composite"}
+                or not getattr(settings, "notebook_url", "")):
+            raise AgentAPIError("个人笔记服务尚未接入答疑。", 503, "notebook_source_unavailable")
     return normalized or None
 
 

@@ -1,4 +1,11 @@
 import { browser } from '$app/environment';
+import {
+	readPersonalCache,
+	writePersonalCache,
+	readTemporary,
+	writeTemporary,
+	removeTemporary
+} from '$lib/apis/auth';
 
 import type { PaperCard } from '$lib/data/essay';
 import type { Citation } from '$lib/data/knowledge';
@@ -40,7 +47,6 @@ export type QaChat = {
 	messages: QaMessage[];
 };
 
-const STORAGE_KEY = 'tagentnote.qa.chats.v1';
 /**
  * 流式回答进行中的「草稿」：只有正在吐字的那一条消息（几 KB）。
  *
@@ -112,7 +118,7 @@ export function loadQaChats(): StoredBundle {
 	}
 
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const raw = readPersonalCache('qa_chats');
 
 		if (!raw) {
 			return { chats: [], activeId: null };
@@ -147,9 +153,9 @@ export function saveQaChats(chats: QaChat[], activeId: string | null) {
 	};
 
 	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(bundle));
+		writePersonalCache('qa_chats', JSON.stringify(bundle));
 		// 完整保存里已经是最新内容了，草稿作废
-		localStorage.removeItem(DRAFT_KEY);
+		removeTemporary(DRAFT_KEY);
 	} catch {
 		// Quota or private mode. Keep going with in-memory chats.
 	}
@@ -164,7 +170,7 @@ export function saveStreamingDraft(chatId: string, message: QaMessage) {
 	}
 	try {
 		const draft: StreamingDraft = { chatId, message: snapshotMessage(message) };
-		localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+		writeTemporary(DRAFT_KEY, JSON.stringify(draft));
 	} catch {
 		// 同上
 	}
@@ -174,7 +180,7 @@ export function saveStreamingDraft(chatId: string, message: QaMessage) {
 function applyStreamingDraft(chats: QaChat[]) {
 	let draft: StreamingDraft | null = null;
 	try {
-		const raw = localStorage.getItem(DRAFT_KEY);
+		const raw = readTemporary(DRAFT_KEY);
 		draft = raw ? (JSON.parse(raw) as StreamingDraft) : null;
 	} catch {
 		draft = null;

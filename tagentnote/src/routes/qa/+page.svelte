@@ -24,6 +24,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
 	import { onDestroy, onMount, tick } from 'svelte';
+	import { authMode, currentAccount, logout } from '$lib/apis/auth';
 
 	import {
 		generateEssayTopic,
@@ -1160,11 +1161,12 @@
 		void goto(resolve('/admin'));
 	};
 
-	const signOut = () => {
+	const signOut = async () => {
 		bumpGeneration();
 		generating = false;
 		commitActive();
-		void goto(resolve('/space-exploration'));
+		if ($authMode === 'enabled') await logout();
+		void goto(resolve($authMode === 'enabled' ? '/welcome' : '/space-exploration'));
 	};
 
 	const unarchiveChat = (chatId: string) => {
@@ -2793,6 +2795,7 @@
 								continueLabel={assistMode === 'paper' ? `继续写${paperSection}` : '继续回答'}
 								onEditMessage={editMessage}
 								onSaveToNotebook={openSaveToNotebook}
+								canSaveToNotebook={$authMode !== 'enabled' || $currentAccount?.role === 'admin'}
 								onToast={toast}
 								onRate={rateMessage}
 								onQuickAction={(content, displayContent) => {

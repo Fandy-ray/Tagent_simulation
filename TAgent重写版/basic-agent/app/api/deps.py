@@ -6,8 +6,9 @@ service 层不认识 Flask，拿依赖一律经过这里注入。
 
 from __future__ import annotations
 
-from flask import current_app
+from flask import current_app, g
 
+from app.errors.api_errors import AgentAPIError
 from app.errors.api_errors import ModelNotFoundError
 
 
@@ -17,6 +18,14 @@ def get_registry():
 
 def select_provider(model_id: str | None = None):
     registry = get_registry()
+    course = getattr(g, "course", None)
+    if course and current_app.config.get("AUTH_ENABLED"):
+        allowed = course.get("model_ids") or []
+        if not allowed:
+            raise AgentAPIError("这门课程尚未配置模型。", 409, "course_models_empty")
+        if model_id and model_id not in allowed:
+            raise AgentAPIError("该模型不属于当前课程。", 403, "course_model_forbidden")
+        model_id = model_id or allowed[0]
     try:
         return registry.get_enabled_provider(model_id)
     except KeyError:

@@ -1,4 +1,5 @@
 import { browser } from '$app/environment';
+import { readPersonalCache, writePersonalCache } from '$lib/apis/auth';
 
 export type QaFolder = {
 	id: string;
@@ -12,8 +13,6 @@ export type QaFolder = {
 	createdAt: number;
 	updatedAt: number;
 };
-
-const STORAGE_KEY = 'tagentnote.qa.folders.v1';
 
 const normalize = (item: Partial<QaFolder>): QaFolder | null => {
 	if (!item || typeof item.id !== 'string' || typeof item.name !== 'string') return null;
@@ -34,7 +33,7 @@ const normalize = (item: Partial<QaFolder>): QaFolder | null => {
 export function loadQaFolders(): QaFolder[] {
 	if (!browser) return [];
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const raw = readPersonalCache('qa_folders');
 		if (!raw) return [];
 		const parsed = JSON.parse(raw) as unknown;
 		if (!Array.isArray(parsed)) return [];
@@ -47,7 +46,7 @@ export function loadQaFolders(): QaFolder[] {
 export function saveQaFolders(folders: QaFolder[]) {
 	if (!browser) return;
 	try {
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(folders));
+		writePersonalCache('qa_folders', JSON.stringify(folders));
 	} catch {
 		// ignore quota
 	}

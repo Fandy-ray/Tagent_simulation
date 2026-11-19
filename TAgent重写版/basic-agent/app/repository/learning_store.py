@@ -235,6 +235,17 @@ MIGRATIONS: list[str] = [
     DROP INDEX idx_chat_student_time;
     CREATE INDEX idx_chat_student_time ON chat_turns (student_id, created_at, mode);
     """,
+    # 第 4 版：新账号的学习事件按课程分组。旧匿名设备记录归 general，保留原状。
+    """
+    ALTER TABLE chat_turns ADD COLUMN course_id TEXT NOT NULL DEFAULT 'general';
+    ALTER TABLE essay_reviews ADD COLUMN course_id TEXT NOT NULL DEFAULT 'general';
+    ALTER TABLE exam_attempts ADD COLUMN course_id TEXT NOT NULL DEFAULT 'general';
+    ALTER TABLE feedback ADD COLUMN course_id TEXT NOT NULL DEFAULT 'general';
+    CREATE INDEX idx_chat_course_student ON chat_turns (course_id, student_id, created_at);
+    CREATE INDEX idx_essay_course_student ON essay_reviews (course_id, student_id, created_at);
+    CREATE INDEX idx_exam_course_student ON exam_attempts (course_id, student_id, created_at);
+    CREATE INDEX idx_feedback_course_student ON feedback (course_id, student_id, updated_at);
+    """,
 ]
 
 
@@ -320,6 +331,7 @@ class LearningStore:
         self,
         *,
         student_id: str | None,
+        course_id: str = "general",
         mode: str,
         model: str,
         question: str,
@@ -330,21 +342,22 @@ class LearningStore:
     ) -> int:
         cur = self._conn().execute(
             "INSERT INTO chat_turns (student_id, mode, model, question, answer, finish_reason, notebook_ids, "
-            "duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "duration_ms, created_at, course_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (student_id, mode, model, question, answer, finish_reason,
-             json.dumps(notebook_ids or [], ensure_ascii=False), duration_ms, now_ms()),
+             json.dumps(notebook_ids or [], ensure_ascii=False), duration_ms, now_ms(), course_id),
         )
         return cur.lastrowid
 
     @_writes_records
     def record_essay_review(
-        self, *, student_id: str | None, model: str, topic: str | None, text: str, review: dict[str, Any]
+        self, *, student_id: str | None, course_id: str = "general", model: str,
+        topic: str | None, text: str, review: dict[str, Any]
     ) -> int:
         cur = self._conn().execute(
-            "INSERT INTO essay_reviews (student_id, model, topic, text, score, review, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO essay_reviews (student_id, model, topic, text, score, review, created_at, course_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (student_id, model, topic, text, int(review.get("score", 0)),
-             json.dumps(review, ensure_ascii=False), now_ms()),
+             json.dumps(review, ensure_ascii=False), now_ms(), course_id),
         )
         return cur.lastrowid
 
@@ -353,6 +366,7 @@ class LearningStore:
         self,
         *,
         student_id: str | None,
+        course_id: str = "general",
         exam_id: str,
         model: str,
         title: str,
@@ -361,10 +375,10 @@ class LearningStore:
         paper: dict[str, Any] | None = None,
     ) -> None:
         self._conn().execute(
-            "INSERT INTO exam_attempts (exam_id, student_id, model, title, topic, total_points, paper, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(exam_id) DO NOTHING",
+            "INSERT INTO exam_attempts (exam_id, student_id, model, title, topic, total_points, paper, created_at, course_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(exam_id) DO NOTHING",
             (exam_id, student_id, model, title, topic, total_points,
-             json.dumps(paper, ensure_ascii=False) if paper is not None else None, now_ms()),
+             json.dumps(paper, ensure_ascii=False) if paper is not None else None, now_ms(), course_id),
         )
 
     @_writes_records
@@ -372,6 +386,7 @@ class LearningStore:
         self,
         *,
         student_id: str | None,
+        course_id: str = "general",
         exam_id: str,
         model: str,
         answers: dict[str, Any],
@@ -381,12 +396,13 @@ class LearningStore:
         at = now_ms()
         self._conn().execute(
             "INSERT INTO exam_attempts (exam_id, student_id, model, title, total_points, score, answers, review, "
-            "created_at, reviewed_at) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?) "
+            "created_at, reviewed_at, course_id) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(exam_id) DO UPDATE SET score = excluded.score, answers = excluded.answers, "
             "review = excluded.review, total_points = excluded.total_points, reviewed_at = excluded.reviewed_at, "
-            "student_id = COALESCE(exam_attempts.student_id, excluded.student_id)",
+            "student_id = COALESCE(exam_attempts.student_id, excluded.student_id), "
+            "course_id = CASE WHEN exam_attempts.student_id IS NULL THEN excluded.course_id ELSE exam_attempts.course_id END",
             (exam_id, student_id, model, review.get("total_points"), review.get("total_score"),
-             json.dumps(answers, ensure_ascii=False), json.dumps(review, ensure_ascii=False), at, at),
+             json.dumps(answers, ensure_ascii=False), json.dumps(review, ensure_ascii=False), at, at, course_id),
         )
 
     # ====================== 出好的私有卷（重启后还能交卷） ======================
@@ -410,6 +426,62 @@ class LearningStore:
         return (row["served_model_id"], row["exam"], row["expires_at"]) if row else None
 
     # ====================== 读（老师看学情） ======================
+    def exam_belongs_to(self, exam_id: str, student_id: str, course_id: str) -> bool:
+        row = self._conn().execute(
+            "SELECT 1 FROM exam_attempts WHERE exam_id = ? AND student_id = ? AND course_id = ?",
+            (exam_id, student_id, course_id),
+        ).fetchone()
+        return row is not None
+
+    def course_summary(self, course_id: str, student_ids: list[str]) -> dict[str, Any]:
+        """课程学情只统计本课程记录；成员列表由账号库授权后传入。"""
+        conn = self._conn()
+        chat = {row["student_id"]: row["count"] for row in conn.execute(
+            "SELECT student_id, COUNT(*) AS count FROM chat_turns WHERE course_id = ? GROUP BY student_id",
+            (course_id,),
+        )}
+        essays = {row["student_id"]: row for row in conn.execute(
+            "SELECT student_id, COUNT(*) AS count, ROUND(AVG(score), 1) AS average "
+            "FROM essay_reviews WHERE course_id = ? GROUP BY student_id", (course_id,),
+        )}
+        exams = {row["student_id"]: row for row in conn.execute(
+            "SELECT student_id, COUNT(*) AS count, "
+            "ROUND(AVG(CASE WHEN total_points > 0 THEN score * 100.0 / total_points END), 1) AS average "
+            "FROM exam_attempts WHERE course_id = ? AND score IS NOT NULL GROUP BY student_id",
+            (course_id,),
+        )}
+        students = {}
+        for offset in range(0, len(student_ids), 500):
+            batch = student_ids[offset:offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            students.update({row["id"]: row for row in conn.execute(
+                f"SELECT id, name, first_seen_at, last_seen_at FROM students WHERE id IN ({placeholders})",
+                batch,
+            )})
+        rows = []
+        for student_id in student_ids:
+            student = students.get(student_id)
+            rows.append({
+                "id": student_id, "name": student["name"] if student else "",
+                "first_seen_at": student["first_seen_at"] if student else None,
+                "last_seen_at": student["last_seen_at"] if student else None,
+                "chat_turns": chat.get(student_id, 0),
+                "essay_reviews": essays[student_id]["count"] if student_id in essays else 0,
+                "essay_avg": essays[student_id]["average"] if student_id in essays else None,
+                "exams_reviewed": exams[student_id]["count"] if student_id in exams else 0,
+                "exam_avg_percent": exams[student_id]["average"] if student_id in exams else None,
+            })
+        return {
+            "course_id": course_id,
+            "totals": {
+                "students": len(student_ids),
+                "chat_turns": sum(row["chat_turns"] for row in rows),
+                "essay_reviews": sum(row["essay_reviews"] for row in rows),
+                "exams_reviewed": sum(row["exams_reviewed"] for row in rows),
+            },
+            "students": rows,
+        }
+
     @_memoized_stats
     def summary(self, limit: int = 500) -> dict[str, Any]:
         conn = self._conn()
@@ -461,12 +533,40 @@ class LearningStore:
             "exam_attempts": [decode(r, "paper", "answers", "review") for r in exams],
         }
 
+    def export_student(self, student_id: str) -> dict[str, Any]:
+        """导出某个账号的全部学习记录；旧设备编号不在账号名下，不会误带入。"""
+        conn = self._conn()
+        result: dict[str, Any] = {}
+        for table in ("chat_turns", "essay_reviews", "exam_attempts", "feedback"):
+            rows = conn.execute(f"SELECT * FROM {table} WHERE student_id = ?", (student_id,)).fetchall()
+            result[table] = [dict(row) for row in rows]
+        return result
+
+    @_writes_records
+    def delete_student(self, student_id: str) -> None:
+        """注销时删除账号所属记录及私有试卷缓存。一次 SQLite 事务完成。"""
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "DELETE FROM exam_cache WHERE exam_id IN "
+                "(SELECT exam_id FROM exam_attempts WHERE student_id = ?)", (student_id,)
+            )
+            for table in ("chat_turns", "essay_reviews", "exam_attempts", "feedback"):
+                conn.execute(f"DELETE FROM {table} WHERE student_id = ?", (student_id,))
+            conn.execute("DELETE FROM students WHERE id = ?", (student_id,))
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
     # ====================== 赞 / 踩 ======================
     @_writes_records
     def record_feedback(
         self,
         *,
         student_id: str,
+        course_id: str = "general",
         message_key: str,
         model: str,
         mode: str,
@@ -483,11 +583,12 @@ class LearningStore:
             return
         at = now_ms()
         conn.execute(
-            "INSERT INTO feedback (student_id, message_key, model, mode, rating, question, answer, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "INSERT INTO feedback (student_id, message_key, model, mode, rating, question, answer, created_at, updated_at, course_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(student_id, message_key) DO UPDATE SET rating = excluded.rating, model = excluded.model, "
-            "mode = excluded.mode, question = excluded.question, answer = excluded.answer, updated_at = excluded.updated_at",
-            (student_id, message_key, model, mode, rating, question, answer, at, at),
+            "mode = excluded.mode, question = excluded.question, answer = excluded.answer, "
+            "updated_at = excluded.updated_at, course_id = excluded.course_id",
+            (student_id, message_key, model, mode, rating, question, answer, at, at, course_id),
         )
 
     @_memoized_stats

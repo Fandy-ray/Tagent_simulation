@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, current_app, g, jsonify
 
 from app.api.deps import get_registry, select_provider
 from app.api.openai_view import chat_completion_response
@@ -16,6 +16,10 @@ blueprint = Blueprint("openai", __name__, url_prefix="/v1")
 @blueprint.get("/models")
 def list_models():
     providers = get_registry().enabled_providers()
+    course = getattr(g, "course", None)
+    if current_app.config.get("AUTH_ENABLED") and course:
+        allowed = set(course.get("model_ids") or [])
+        providers = [provider for provider in providers if provider.served_model_id in allowed]
     return jsonify(
         {
             "object": "list",

@@ -72,7 +72,10 @@ def test_a_broken_store_falls_back_to_memory_only():
 def test_an_old_database_is_upgraded_and_keeps_its_records(db_path, monkeypatch):
     monkeypatch.setattr(learning_store_module, "MIGRATIONS", MIGRATIONS[:1])
     old = LearningStore(db_path)
-    old.record_chat(student_id=None, mode="qa", model="m", question="升级前的提问", answer="a")
+    old._conn().execute(
+        "INSERT INTO chat_turns (student_id, mode, model, question, answer, created_at) "
+        "VALUES (NULL, 'qa', 'm', '升级前的提问', 'a', 1)"
+    )
     old.close()
     monkeypatch.setattr(learning_store_module, "MIGRATIONS", MIGRATIONS)
 
