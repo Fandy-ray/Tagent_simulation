@@ -2,19 +2,11 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
+	import { authMode, currentAccount } from '$lib/apis/auth';
 
 	let phase = $state(0); // 0=hidden, 1=badge, 2=title, 3=cta
 
 	onMount(() => {
-		try {
-			localStorage.setItem('theme', 'dark');
-		} catch {
-			// 本地存储不可用时保持当前主题
-		}
-
-		document.documentElement.classList.remove('light', 'dark', 'oled-dark', 'system');
-		document.documentElement.classList.add('dark');
-
 		const t1 = setTimeout(() => {
 			phase = 1;
 		}, 200);
@@ -34,14 +26,14 @@
 </script>
 
 <svelte:head>
-	<title>系统建模与仿真智能教学平台</title>
+	<title>航空航天探索实验室</title>
 </svelte:head>
 
-<div class="wrap">
+<div class="wrap space-theme">
 	<!-- animated grid canvas -->
 	<div class="grid-layer" aria-hidden="true"></div>
 
-	<!-- SVG node-link decoration -->
+	<!-- Orbital star map -->
 	<svg
 		class="nodes-svg"
 		aria-hidden="true"
@@ -54,27 +46,26 @@
 				<feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
 			</filter>
 		</defs>
-		<!-- 节点只摆在外圈，连线也绕开正中间的文字区（画布里大约 x 280~620、y 190~410）。
-		     原来「仿真引擎」「知识图谱」两个点正好落在大标题和比赛名称上 -->
-		<!-- connector lines -->
-		<line class="node-line" x1="120" y1="140" x2="170" y2="380" />
-		<line class="node-line" x1="170" y1="380" x2="240" y2="520" />
-		<line class="node-line" x1="120" y1="140" x2="760" y2="130" />
-		<line class="node-line" x1="760" y1="130" x2="790" y2="400" />
-		<line class="node-line" x1="790" y1="400" x2="650" y2="520" />
-		<line class="node-line" x1="240" y1="520" x2="650" y2="520" />
-		<!-- nodes -->
-		<circle class="node-dot" cx="120" cy="140" r="7" filter="url(#glow)" />
-		<circle class="node-dot" cx="170" cy="380" r="10" filter="url(#glow)" />
-		<circle class="node-dot" cx="760" cy="130" r="8" filter="url(#glow)" />
-		<circle class="node-dot" cx="790" cy="400" r="6" filter="url(#glow)" />
-		<circle class="node-dot" cx="240" cy="520" r="6" filter="url(#glow)" />
-		<circle class="node-dot" cx="650" cy="520" r="7" filter="url(#glow)" />
-		<!-- labels -->
-		<text class="node-label" x="100" y="125">系统模型</text>
-		<text class="node-label" x="80" y="410">仿真引擎</text>
-		<text class="node-label" x="735" y="115">知识图谱</text>
-		<text class="node-label" x="805" y="405">智能体</text>
+		<g transform="rotate(-19 450 300)">
+			<ellipse class="node-line" cx="450" cy="300" rx="375" ry="202" />
+			<circle class="node-dot" cx="75" cy="300" r="4" filter="url(#glow)" />
+			<circle class="node-dot" cx="450" cy="98" r="5" filter="url(#glow)" />
+			<circle class="node-dot" cx="825" cy="300" r="6" filter="url(#glow)" />
+			<circle class="node-dot" cx="450" cy="502" r="4" filter="url(#glow)" />
+		</g>
+		<g class="node-label">
+			<text x="83" y="448" text-anchor="middle">仿真引擎</text>
+			<text x="384" y="89" text-anchor="middle">系统模型</text>
+			<text x="817" y="160" text-anchor="middle">知识图谱</text>
+			<text x="516" y="522" text-anchor="middle">智能体</text>
+		</g>
+		<g class="distant-stars">
+			<circle cx="195" cy="100" r="2" />
+			<circle cx="694" cy="94" r="2.5" />
+			<circle cx="774" cy="389" r="1.75" />
+			<circle cx="230" cy="487" r="2.5" />
+			<circle cx="577" cy="540" r="2" />
+		</g>
 	</svg>
 
 	<!-- main content -->
@@ -85,19 +76,24 @@
 		</div>
 
 		<h1 class="title" class:show={phase >= 2}>
-			系统建模与仿真<br />智能教学平台
+			航空航天<wbr />探索实验室
 		</h1>
 
 		<p class="subtitle" class:show={phase >= 2}>课程答疑 · 论文辅助 · 知识笔记本 · 智能测评</p>
 
-		<button class="cta-btn" class:show={phase >= 3} onclick={() => goto(resolve('/agent-select'))}>
+		<button
+			class="cta-btn"
+			class:show={phase >= 3}
+			onclick={() =>
+				goto(resolve($authMode === 'enabled' && !$currentAccount ? '/login' : '/agent-select'))}
+		>
 			<span class="cta-text">进入平台</span>
 			<span class="cta-arrow">→</span>
 		</button>
 	</div>
 
 	<!-- corner watermark -->
-	<div class="watermark" class:show={phase >= 3}>系统建模与仿真智能体 v1.0</div>
+	<div class="watermark" class:show={phase >= 3}>航空航天探索实验室 v1.0</div>
 </div>
 
 <style>
@@ -106,7 +102,7 @@
 	.wrap {
 		position: fixed;
 		inset: 0;
-		background-color: #050d1a;
+		background-color: var(--m3-background);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -118,8 +114,12 @@
 		position: absolute;
 		inset: 0;
 		background-image:
-			linear-gradient(rgba(80, 140, 255, 0.1) 1px, transparent 1px),
-			linear-gradient(90deg, rgba(80, 140, 255, 0.1) 1px, transparent 1px);
+			linear-gradient(color-mix(in srgb, var(--m3-primary) 10%, transparent) 1px, transparent 1px),
+			linear-gradient(
+				90deg,
+				color-mix(in srgb, var(--m3-primary) 10%, transparent) 1px,
+				transparent 1px
+			);
 		background-size: 52px 52px;
 		animation: grid-drift 18s linear infinite;
 		pointer-events: none;
@@ -143,25 +143,11 @@
 		opacity: 0.55;
 	}
 	.node-line {
-		stroke: rgba(80, 180, 255, 0.3);
+		fill: none;
+		stroke: color-mix(in srgb, var(--m3-primary) 30%, transparent);
 		stroke-width: 1.5;
 		stroke-dasharray: 8 4;
 		animation: dash-flow 3s linear infinite;
-	}
-	.node-line:nth-child(2) {
-		animation-delay: -0.8s;
-	}
-	.node-line:nth-child(3) {
-		animation-delay: -1.5s;
-	}
-	.node-line:nth-child(4) {
-		animation-delay: -2.2s;
-	}
-	.node-line:nth-child(5) {
-		animation-delay: -0.4s;
-	}
-	.node-line:nth-child(6) {
-		animation-delay: -1.1s;
 	}
 	@keyframes dash-flow {
 		from {
@@ -172,7 +158,7 @@
 		}
 	}
 	.node-dot {
-		fill: rgba(0, 230, 255, 0.85);
+		fill: var(--m3-primary);
 		animation: node-pulse 2.5s ease-in-out infinite alternate;
 	}
 	.node-dot:nth-child(odd) {
@@ -181,18 +167,20 @@
 	@keyframes node-pulse {
 		from {
 			opacity: 0.55;
-			r: 6;
 		}
 		to {
 			opacity: 1;
-			r: 9;
 		}
 	}
+	.distant-stars {
+		fill: var(--m3-primary);
+		opacity: 0.55;
+	}
+
 	.node-label {
-		fill: rgba(0, 200, 255, 0.45);
-		font-size: 11px;
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-		letter-spacing: 0.05em;
+		fill: var(--m3-on-surface-variant);
+		font-size: 10px;
+		opacity: 0.7;
 	}
 
 	/* ── Content panel ── */
@@ -215,9 +203,9 @@
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 		font-size: 0.78rem;
 		letter-spacing: 0.04em;
-		color: rgba(0, 230, 255, 0.8);
-		background: rgba(0, 230, 255, 0.07);
-		border: 1px solid rgba(0, 230, 255, 0.22);
+		color: var(--m3-primary);
+		background: color-mix(in srgb, var(--m3-primary) 7%, transparent);
+		border: 1px solid color-mix(in srgb, var(--m3-primary) 22%, transparent);
 		padding: 6px 16px;
 		border-radius: 100px;
 		opacity: 0;
@@ -234,8 +222,8 @@
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: #00e5ff;
-		box-shadow: 0 0 6px #00e5ff;
+		background: var(--m3-primary);
+		box-shadow: 0 0 6px var(--m3-primary);
 		animation: dot-blink 1.4s infinite;
 	}
 	@keyframes dot-blink {
@@ -251,11 +239,11 @@
 	/* main title */
 	.title {
 		font-family: 'Songti SC', 'Noto Serif SC', 'Source Han Serif SC', serif;
-		font-size: clamp(2.4rem, 5.5vw, 4.2rem);
+		font-size: clamp(1.9rem, 5.5vw, 4.2rem);
 		font-weight: 900;
 		line-height: 1.15;
 		letter-spacing: 0.06em;
-		background: linear-gradient(135deg, #e0f4ff 0%, #00e5ff 45%, #6c8eff 100%);
+		background: linear-gradient(135deg, #f5edff 0%, var(--m3-primary) 45%, #af95eb 100%);
 		-webkit-background-clip: text;
 		-webkit-text-fill-color: transparent;
 		background-clip: text;
@@ -277,7 +265,7 @@
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 		font-size: 0.88rem;
 		letter-spacing: 0.04em;
-		color: rgba(140, 180, 220, 0.75);
+		color: var(--m3-on-surface-variant);
 		margin: -10px 0 0;
 		opacity: 0;
 		transition: opacity 0.7s ease 0.15s;
@@ -293,16 +281,16 @@
 		gap: 12px;
 		padding: 14px 40px;
 		border-radius: 12px;
-		background: linear-gradient(135deg, #00c8e8, #4060f0);
+		background: linear-gradient(135deg, var(--m3-primary), #b69aef);
 		border: none;
 		cursor: pointer;
 		font-size: 1.05rem;
 		font-weight: 700;
 		font-family: 'Songti SC', 'Noto Serif SC', 'Source Han Serif SC', serif;
-		color: #030c18;
+		color: var(--m3-on-primary);
 		letter-spacing: 0.06em;
 		box-shadow:
-			0 0 24px rgba(0, 200, 240, 0.3),
+			0 0 24px color-mix(in srgb, var(--m3-primary) 24%, transparent),
 			0 4px 20px rgba(0, 0, 0, 0.4);
 		opacity: 0;
 		transform: translateY(12px);
@@ -319,7 +307,7 @@
 	.cta-btn:hover {
 		filter: brightness(1.15);
 		box-shadow:
-			0 0 40px rgba(0, 200, 240, 0.5),
+			0 0 40px color-mix(in srgb, var(--m3-primary) 36%, transparent),
 			0 8px 32px rgba(0, 0, 0, 0.5);
 		transform: translateY(-3px);
 	}
@@ -341,12 +329,21 @@
 		right: 24px;
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 		font-size: 0.7rem;
-		color: rgba(80, 140, 200, 0.35);
+		color: #9a8da9;
 		letter-spacing: 0.06em;
 		opacity: 0;
 		transition: opacity 1s ease 0.5s;
 	}
 	.watermark.show {
 		opacity: 1;
+	}
+	:global(html.light) .title {
+		background-image: linear-gradient(135deg, #153465, var(--m3-primary), #326a9e);
+	}
+	:global(html.light) .cta-btn {
+		background: var(--m3-primary);
+	}
+	:global(html.light) .watermark {
+		color: var(--m3-on-surface-variant);
 	}
 </style>

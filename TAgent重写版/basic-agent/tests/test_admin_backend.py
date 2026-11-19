@@ -69,7 +69,7 @@ def test_upgrading_an_old_database_keeps_its_records(tmp_path):
 
     upgraded = LearningStore(path)
     try:
-        assert upgraded.schema_version == len(MIGRATIONS) == 3
+        assert upgraded.schema_version == len(MIGRATIONS) == 4
         assert upgraded.db_info()["tables"]["chat_turns"] == 1
         assert upgraded.db_info()["tables"]["feedback"] == 0
     finally:
@@ -176,7 +176,7 @@ def test_db_info_lists_tables_and_backups(store):
 
     info = store.db_info()
 
-    assert info["schema_version"] == 3
+    assert info["schema_version"] == len(MIGRATIONS)
     assert info["tables"]["chat_turns"] == 1
     assert info["bytes"] > 0
     assert len(info["backups"]) == 1 and info["backups"][0]["file"].startswith("tagent-")
@@ -532,6 +532,9 @@ def test_a_window_across_a_daylight_saving_change_falls_back_to_per_row_conversi
     """夏令时地区一年里总有一天是 23 或 25 小时，不能按 24 小时整除分天。"""
     import time
 
+    if not hasattr(time, "tzset"):
+        pytest.skip("This platform does not expose time.tzset")
+
     monkeypatch.setenv("TZ", "America/New_York")
     time.tzset()
     try:
@@ -637,6 +640,11 @@ def test_remembered_statistics_are_capped():
 
 def test_db_info_skips_a_backup_rotated_away_while_listing(store):
     store.backup()
-    (store.backup_dir / "tagent-19700101-000000.sqlite3").symlink_to(store.backup_dir / "已经删掉了.sqlite3")
+    try:
+        (store.backup_dir / "tagent-19700101-000000.sqlite3").symlink_to(
+            store.backup_dir / "已经删掉了.sqlite3"
+        )
+    except OSError as exc:
+        pytest.skip(f"Symlinks unavailable on this platform: {exc.winerror if hasattr(exc, 'winerror') else exc}")
     info = store.db_info()
     assert len(info["backups"]) == 1 and info["backups"][0]["modified_at"] is not None

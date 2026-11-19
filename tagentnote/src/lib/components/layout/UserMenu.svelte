@@ -84,7 +84,8 @@
 	};
 
 	const portal = (node: HTMLElement) => {
-		document.body.appendChild(node);
+		const container = rootEl?.closest('.workspace-palette') ?? document.body;
+		container.appendChild(node);
 		return {
 			destroy() {
 				node.remove();
@@ -179,7 +180,7 @@
 	<div
 		bind:this={menuEl}
 		use:portal
-		class={`bg-gray-850 z-50 rounded-2xl border border-gray-800 px-1 py-1 text-sm text-white shadow-lg ${className}`}
+		class={`user-menu-popup bg-gray-850 z-50 rounded-2xl border border-gray-800 px-1 py-1 text-sm text-white shadow-lg ${className}`}
 		style={menuStyle}
 		tabindex="-1"
 		role="menu"

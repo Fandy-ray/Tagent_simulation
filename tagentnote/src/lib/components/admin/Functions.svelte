@@ -382,19 +382,17 @@
 				>{/if}
 		</div>
 		<div class="flex gap-1 overflow-x-auto px-3 text-xs">
-			<div class="dark:bg-gray-850/70 flex shrink-0 gap-1 rounded-full bg-gray-100/70 p-0.5">
+			<div class="flex shrink-0 gap-1 rounded-full bg-[var(--qa-panel)] p-0.5">
 				{#each [{ key: '', label: '全部' }, { key: 'created', label: '我创建的' }, { key: 'shared', label: '共享给我' }] as option (option.key)}<button
-						class="rounded-full px-3 py-1 transition {viewOption === option.key
-							? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
-							: 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}"
+						class="admin-filter rounded-full px-3 py-1 transition"
+						aria-pressed={viewOption === option.key}
 						onclick={() => (viewOption = option.key)}>{option.label}</button
 					>{/each}
 			</div>
-			<div class="dark:bg-gray-850/70 flex shrink-0 gap-1 rounded-full bg-gray-100/70 p-0.5">
+			<div class="flex shrink-0 gap-1 rounded-full bg-[var(--qa-panel)] p-0.5">
 				{#each [{ key: '', label: '全部类型' }, { key: 'pipe', label: 'Pipe' }, { key: 'filter', label: 'Filter' }, { key: 'action', label: 'Action' }] as option (option.key)}<button
-						class="rounded-full px-3 py-1 transition {selectedType === option.key
-							? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
-							: 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}"
+						class="admin-filter rounded-full px-3 py-1 transition"
+						aria-pressed={selectedType === option.key}
 						onclick={() => (selectedType = option.key)}>{option.label}</button
 					>{/each}
 			</div>

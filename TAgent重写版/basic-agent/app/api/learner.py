@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from functools import wraps
 from urllib.parse import unquote
 
-from flask import request
+from flask import current_app, g, request
 
 from app.api.deps import get_learning_store
 from app.api.response import public_value
@@ -43,11 +43,18 @@ class Learner:
     name: str = ""
     # False = 这次请求不留记录（临时对话）
     record: bool = True
+    course_id: str = "general"
 
 
 def current_learner() -> Learner:
     """从请求头里认人。必须在请求上下文里调（流式回答要在生成器开跑之前先取好）。"""
     record = request.headers.get(NO_RECORD_HEADER, "").strip() != "1"
+    if current_app.config.get("AUTH_ENABLED") and (account := getattr(g, "account", None)):
+        course = getattr(g, "course", None)
+        return Learner(
+            account["uid"], account.get("name", ""), record,
+            course["uid"] if course else "general",
+        )
     client_id = request.headers.get(CLIENT_ID_HEADER, "").strip()
     if not _CLIENT_ID.fullmatch(client_id):
         return Learner(None, record=record)
@@ -100,6 +107,7 @@ def note_chat(
     question = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
     store.record_chat(
         student_id=learner.id,
+        course_id=learner.course_id,
         mode=mode,
         model=provider.served_model_id,
         question=question,
@@ -114,6 +122,7 @@ def note_chat(
 def note_essay_review(store, learner: Learner, provider, *, topic: str | None, text: str, review) -> None:
     store.record_essay_review(
         student_id=learner.id,
+        course_id=learner.course_id,
         model=provider.served_model_id,
         topic=topic,
         text=text,
@@ -126,6 +135,7 @@ def note_exam_generated(store, learner: Learner, provider, *, topic: str | None,
     paper = public_value(exam)
     store.record_exam_generated(
         student_id=learner.id,
+        course_id=learner.course_id,
         exam_id=paper["exam_id"],
         model=provider.served_model_id,
         title=paper.get("title", ""),
@@ -139,6 +149,7 @@ def note_exam_generated(store, learner: Learner, provider, *, topic: str | None,
 def note_exam_reviewed(store, learner: Learner, provider, *, exam_id: str, answers: dict, review) -> None:
     store.record_exam_reviewed(
         student_id=learner.id,
+        course_id=learner.course_id,
         exam_id=exam_id,
         model=provider.served_model_id,
         answers=answers,

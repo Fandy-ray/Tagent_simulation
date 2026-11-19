@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "TAgent RAG and assessment service"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "argon2-cffi>=25,<26",
+    "cryptography>=46,<47",
     "faiss-cpu==1.14.3",
     "flask==2.3.3",
     "httpx==0.28.1",
@@ -19,12 +21,16 @@ dependencies = [
     "pypdf==6.19.0",
     "python-dotenv==1.2.1",
     "sentence-transformers==5.5.1",
+    "surrealdb>=2,<3",
     "tqdm==4.68.4",
     "waitress>=3,<4",
 ]
 
 [dependency-groups]
-dev = ["pytest==9.0.2"]
+dev = [
+    "psutil>=7.2.2",
+    "pytest==9.0.2",
+]
 
 [tool.uv]
 package = false

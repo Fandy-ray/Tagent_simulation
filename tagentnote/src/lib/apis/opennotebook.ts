@@ -1,6 +1,14 @@
 import { env } from '$env/dynamic/public';
+import { get } from 'svelte/store';
+import {
+	authMode,
+	availableCourses,
+	currentAccount,
+	currentCourseId,
+	sessionHeaders
+} from '$lib/apis/auth';
 
-import { createTtlCache } from '$lib/data/ttlCache';
+import { createScopedTtlCache } from '$lib/data/ttlCache';
 import {
 	type KnowledgeCollection,
 	type KnowledgeFile,
@@ -35,7 +43,16 @@ type NoteListItem = {
 
 const DEFAULT_API_URL = 'http://localhost:5055';
 
+const allowedNotebookIds = (): Set<string> | null => {
+	if (get(authMode) !== 'enabled' || get(currentCourseId) === 'general') return null;
+	// 课程资料映射由管理员管理；学生的完整笔记本是个人内容，归属由服务端校验。
+	if (get(currentAccount)?.role === 'student') return null;
+	const course = get(availableCourses).find((item) => item.id === get(currentCourseId));
+	return new Set(course?.notebook_ids ?? []);
+};
+
 export function getOpenNotebookApiUrl() {
+	if (get(authMode) !== 'disabled') return '/opennotebook-api';
 	const explicit = env.PUBLIC_OPENNOTEBOOK_API_URL?.trim();
 
 	if (explicit) {
@@ -130,8 +147,17 @@ export type CreatedNote = {
 	content: string | null;
 };
 
+const assertNotebookAccess = () => {
+	if (get(authMode) !== 'disabled' && (get(authMode) !== 'enabled' || !get(currentAccount)))
+		throw new Error('请先登录，再访问个人笔记。');
+};
+
 const fetchJson = async <T>(path: string, signal?: AbortSignal): Promise<T> => {
-	const response = await fetch(`${getOpenNotebookApiUrl()}${path}`, { signal });
+	assertNotebookAccess();
+	const response = await fetch(`${getOpenNotebookApiUrl()}${path}`, {
+		headers: sessionHeaders('GET'),
+		signal
+	});
 
 	if (!response.ok) {
 		throw new Error(`OpenNoteBook ${path} ${response.status}`);
@@ -141,11 +167,12 @@ const fetchJson = async <T>(path: string, signal?: AbortSignal): Promise<T> => {
 };
 
 const postJson = async <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> => {
+	assertNotebookAccess();
+	const headers = sessionHeaders('POST');
+	headers.set('Content-Type', 'application/json');
 	const response = await fetch(`${getOpenNotebookApiUrl()}${path}`, {
 		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json'
-		},
+		headers,
 		body: JSON.stringify(body),
 		signal
 	});
@@ -163,11 +190,13 @@ export async function listNotebooks(signal?: AbortSignal): Promise<NotebookSumma
 		'/api/notebooks?archived=false&order_by=updated+desc',
 		signal
 	);
+	const allowed = allowedNotebookIds();
+	const visible = allowed ? notebooks.filter((item) => allowed.has(item.id)) : notebooks;
 
 	// 列表里带了 note_count 就直接用；只有没带（老版本镜像）才逐本去数——
 	// 以前每本都再请求一次笔记列表，十本笔记本就是 11 个请求，打开答疑页、笔记页都要等它
 	return Promise.all(
-		notebooks.map(async (notebook) => {
+		visible.map(async (notebook) => {
 			const reportedCount = notebook.note_count;
 			const reported =
 				typeof reportedCount === 'number' && Number.isFinite(reportedCount) ? reportedCount : null;
@@ -253,6 +282,7 @@ export async function searchKnowledge(
 	).catch(() => ({ results: [] }));
 
 	const rows = Array.isArray(payload.results) ? payload.results : [];
+	const allowed = allowedNotebookIds();
 
 	return rows
 		.map((item): KnowledgeSearchHit | null => {
@@ -287,7 +317,10 @@ export async function searchKnowledge(
 
 			return hit;
 		})
-		.filter((item): item is KnowledgeSearchHit => item !== null);
+		.filter(
+			(item): item is KnowledgeSearchHit =>
+				item !== null && (!allowed || (Boolean(item.notebookId) && allowed.has(item.notebookId!)))
+		);
 }
 
 export async function getSourceText(sourceId: string, signal?: AbortSignal) {
@@ -317,7 +350,9 @@ export async function getNoteText(noteId: string, signal?: AbortSignal) {
  * 答疑页每次挂载都会调，页面来回切时整轮重发——内容又不会秒秒钟变，缓存十几秒。
  * 新建/删除笔记本后调 invalidateNotebookKnowledge() 立刻见新的。
  */
-const knowledgeCache = createTtlCache<KnowledgeCollection[]>();
+const knowledgeScope = () =>
+	JSON.stringify([get(authMode), get(currentAccount)?.id ?? null, get(currentCourseId)]);
+const knowledgeCache = createScopedTtlCache<KnowledgeCollection[]>(knowledgeScope);
 
 export function invalidateNotebookKnowledge(): void {
 	knowledgeCache.invalidate();
@@ -348,9 +383,11 @@ async function loadNotebookKnowledge(signal?: AbortSignal): Promise<KnowledgeCol
 		'/api/notebooks?archived=false&order_by=updated+desc',
 		signal ?? new AbortController().signal
 	);
+	const allowed = allowedNotebookIds();
+	const visible = allowed ? notebooks.filter((item) => allowed.has(item.id)) : notebooks;
 
 	const collections = await Promise.all(
-		notebooks.map(async (notebook) => {
+		visible.map(async (notebook) => {
 			const [sources, notes] = await Promise.all([
 				fetchJson<SourceListItem[]>(
 					`/api/sources?notebook_id=${encodeURIComponent(notebook.id)}&limit=100&sort_by=updated&sort_order=desc`,

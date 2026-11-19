@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import hmac
 
-from flask import current_app, request
+from flask import current_app, g, request
 
 from app.errors.api_errors import AgentAPIError
 
 
 def require_admin_token() -> None:
+    account = getattr(g, "account", None)
+    if current_app.config.get("AUTH_ENABLED") and account and account.get("role") == "admin":
+        return
     expected = current_app.config.get("AGENT_ADMIN_TOKEN", "")
     if not expected:
         raise AgentAPIError(

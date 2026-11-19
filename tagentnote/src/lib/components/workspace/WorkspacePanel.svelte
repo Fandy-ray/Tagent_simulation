@@ -71,7 +71,9 @@
 		</div>
 	</div>
 
-	<div class="border-gray-850/30 mt-3 flex-1 overflow-y-auto rounded-3xl border bg-gray-900">
+	<div
+		class="workspace-surface border-gray-850/30 mt-3 flex-1 overflow-y-auto rounded-3xl border bg-gray-900"
+	>
 		<div class="flex items-center gap-2 border-b border-white/[0.04] px-3.5 py-2.5">
 			<svg
 				class="size-3.5 shrink-0 text-gray-500"

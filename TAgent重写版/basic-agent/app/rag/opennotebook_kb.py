@@ -18,6 +18,7 @@ from langchain_core.documents import Document
 
 from app.config import EXAM_CONTEXT_CHAR_LIMIT, EXAM_SAMPLE_K
 from app.errors.notebook import NotebookError
+from app.infra.notebook_identity import current_notebook_identity
 from app.rag.knowledge_base import select_quiz_documents
 
 
@@ -62,11 +63,19 @@ class OpenNotebookKnowledgeBase:
         token: str = "",
         timeout: float = 15.0,
         client: httpx.Client | None = None,
+        account_mode: bool = False,
     ):
         if not base_url:
             raise ValueError("OpenNotebook base_url is required.")
+        if account_mode:
+            target = urlsplit(base_url)
+            if (target.scheme != "http" or target.hostname not in {"127.0.0.1", "::1"}
+                    or target.username or target.password or target.path not in {"", "/"}
+                    or target.query or target.fragment):
+                raise ValueError("Account-mode notebook API must use loopback HTTP")
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.account_mode = account_mode
         self.timeout = timeout
         self._client = client
         self._owns_client = client is None
@@ -81,6 +90,8 @@ class OpenNotebookKnowledgeBase:
         return {**self.describe(), "timeout_seconds": self.timeout, "auth": bool(self.token)}
 
     def warm_up(self) -> None:
+        if self.account_mode:
+            return  # A process-wide warmup has no verified student identity.
         self.ping()
 
     def ensure_index(self) -> list[Document]:
@@ -110,19 +121,30 @@ class OpenNotebookKnowledgeBase:
         raise OpenNotebookError("OpenNotebook 健康检查失败。")
 
     def retrieve(self, query: str, notebook_ids: list[str] | None = None):
+        if notebook_ids == []:
+            return "", []
         documents = self._search_documents(query, limit=4, notebook_ids=notebook_ids)
         context = "\n\n---\n\n".join(document.page_content for document in documents)
         return context, documents
 
     def search(self, query: str, *, k: int = 3, notebook_ids: list[str] | None = None) -> list[Document]:
+        if notebook_ids == []:
+            return []
         return self._search_documents(query, limit=k, notebook_ids=notebook_ids)
 
     def chunks(self, notebook_ids: list[str] | None = None) -> list[Document]:
+        if notebook_ids == []:
+            return []
         scoped = _normalize_ids(notebook_ids)
         if scoped:
             documents = self._list_documents(notebook_ids=scoped)
             if not documents:
                 raise OpenNotebookError("选中的笔记本没有可出题的笔记或来源。")
+            return documents
+        if self.account_mode:
+            documents = self._list_documents()
+            if not documents:
+                raise OpenNotebookError("OpenNotebook 没有可出题的笔记或来源。")
             return documents
         if self._chunks is not None:
             return self._chunks
@@ -137,6 +159,8 @@ class OpenNotebookKnowledgeBase:
     def sample_exam_pieces(
         self, topic: str | None = None, notebook_ids: list[str] | None = None
     ) -> list[tuple[str, str]]:
+        if notebook_ids == []:
+            return []
         """出卷取材的片段和来源。笔记本里的都是学生自己的材料，来源一律记 opennotebook。"""
         if topic:
             documents = self._search_documents(topic, limit=EXAM_SAMPLE_K, notebook_ids=notebook_ids)
@@ -164,7 +188,7 @@ class OpenNotebookKnowledgeBase:
     def _client_or_create(self) -> httpx.Client:
         if self._client is None:
             headers = {"Accept": "application/json"}
-            if self.token:
+            if self.token and not self.account_mode:
                 headers["Authorization"] = f"Bearer {self.token}"
                 headers["X-Password"] = self.token
             self._client = httpx.Client(
@@ -178,6 +202,19 @@ class OpenNotebookKnowledgeBase:
         return self._client
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        if self.account_mode:
+            identity = current_notebook_identity()
+            if identity is None:
+                raise OpenNotebookError("账号模式检索缺少已验证的请求身份。")
+            if not identity.cookie:
+                raise OpenNotebookError("账号模式检索缺少会话。")
+            headers = dict(kwargs.pop("headers", {}))
+            headers["Cookie"] = f"__Host-tagent_session={identity.cookie}"
+            headers["X-Tagent-Account-Id"] = identity.account_id
+            if method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+                headers["Origin"] = identity.public_origin
+                headers["X-Tagent-CSRF"] = identity.csrf
+            kwargs["headers"] = headers
         try:
             response = self._client_or_create().request(method, path, **kwargs)
         except httpx.HTTPError as exc:
@@ -248,6 +285,8 @@ class OpenNotebookKnowledgeBase:
     def _list_documents(self, notebook_ids: list[str] | None = None) -> list[Document]:
         documents: list[Document] = []
         names = self._notebook_names()
+        if self.account_mode and notebook_ids and any(item not in names for item in notebook_ids):
+            raise OpenNotebookError("选中的笔记本不属于当前账号或已被删除。")
         for path, fallback_title, notebook_id in _list_paths(notebook_ids):
             try:
                 payload = self._json("GET", path)
@@ -267,6 +306,8 @@ class OpenNotebookKnowledgeBase:
 
     def _membership(self, notebook_ids: list[str]) -> dict[str, dict[str, str]]:
         names = self._notebook_names()
+        if self.account_mode and any(item not in names for item in notebook_ids):
+            raise OpenNotebookError("选中的笔记本不属于当前账号或已被删除。")
         members: dict[str, dict[str, str]] = {}
         for notebook_id in notebook_ids:
             info = {

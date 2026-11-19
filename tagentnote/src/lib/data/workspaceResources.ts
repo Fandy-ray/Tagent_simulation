@@ -1,4 +1,5 @@
 import { browser } from '$app/environment';
+import { readPersonalCache, writePersonalCache } from '$lib/apis/auth';
 
 export type WorkspaceView = '' | 'created' | 'shared';
 
@@ -98,8 +99,6 @@ type Bundle = {
 	tools: WorkspaceTool[];
 };
 
-const STORAGE_KEY = 'tagentnote.workspace.v1';
-
 const now = () => Date.now();
 
 const seed = (): Bundle => {
@@ -194,10 +193,10 @@ const empty = (): Bundle => ({
 export function loadWorkspace(): Bundle {
 	if (!browser) return empty();
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
+		const raw = readPersonalCache('workspace');
 		if (!raw) {
 			const initial = seed();
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
+			writePersonalCache('workspace', JSON.stringify(initial));
 			return initial;
 		}
 		const parsed = JSON.parse(raw) as Partial<Bundle>;
@@ -215,7 +214,7 @@ export function loadWorkspace(): Bundle {
 
 export function saveWorkspace(bundle: Bundle) {
 	if (!browser) return;
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(bundle));
+	writePersonalCache('workspace', JSON.stringify(bundle));
 }
 
 const patch = <K extends keyof Bundle>(key: K, items: Bundle[K]) => {

@@ -51,6 +51,7 @@
 								? 'bg-gray-800 font-medium text-white'
 								: 'text-gray-400 hover:text-gray-300'
 						}`}
+						aria-pressed={activeTab === 'controls'}
 						onclick={() => {
 							activeTab = 'controls';
 						}}
@@ -65,6 +66,7 @@
 									? 'bg-gray-800 font-medium text-white'
 									: 'text-gray-400 hover:text-gray-300'
 							}`}
+							aria-pressed={activeTab === 'overview'}
 							onclick={() => {
 								activeTab = 'overview';
 							}}

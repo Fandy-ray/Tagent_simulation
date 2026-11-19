@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/public';
 
 import { learnerHeaders } from '$lib/data/learner';
+import { sessionHeaders } from '$lib/apis/auth';
 import type { AnswerAnnotations, EssayTopic, PaperReview } from '$lib/data/essay';
 import type { ExamReview, PublicExam, ReviewResult } from '$lib/data/exam';
 import type { FlashDeck } from '$lib/data/flash';
@@ -93,6 +94,7 @@ const connectionError = (error: unknown) => {
 /** 所有发往 basic-agent 的请求都从这里走：统一带上设备编号与昵称（学习记录靠它归到人） */
 async function agentRequest(url: string, init?: RequestInit) {
 	const headers = new Headers(init?.headers);
+	sessionHeaders(init?.method || 'GET').forEach((value, name) => headers.set(name, value));
 	for (const [name, value] of Object.entries(learnerHeaders())) {
 		headers.set(name, value);
 	}

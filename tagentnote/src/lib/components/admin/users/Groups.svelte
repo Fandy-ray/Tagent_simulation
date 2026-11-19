@@ -304,12 +304,12 @@
 	</div>
 
 	<button
-		class="dark:hover:bg-gray-850 flex w-full items-center justify-between rounded-xl px-1 py-2 text-left transition hover:bg-gray-100/70"
+		class="admin-secondary flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition"
 		onclick={() => (defaultPermissionsOpen = true)}
 	>
 		<span class="flex items-center gap-2.5"
 			><span
-				class="flex size-8 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800"
+				class="flex size-8 items-center justify-center rounded-full bg-[var(--qa-tint)] text-[color:var(--qa-active)]"
 				><svg viewBox="0 0 20 20" fill="currentColor" class="size-4"
 					><path
 						d="M10 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4.75 16a4.75 4.75 0 0 1 9.5 0v.25h-9.5V16ZM15.2 8.1a2.25 2.25 0 1 0-1.3-4.1 4.5 4.5 0 0 1 .3 5.2c.35.15.68.34.98.56a2.25 2.25 0 0 0 .02-1.66ZM16.2 12.3a5.7 5.7 0 0 1 .55 2.45v.25h-1.1A6.2 6.2 0 0 0 14.5 11c.7.27 1.3.72 1.7 1.3Z"
@@ -344,7 +344,7 @@
 		}}
 	>
 		<div
-			class="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white text-gray-900 shadow-2xl dark:border dark:border-gray-800 dark:bg-[#171717] dark:text-gray-100"
+			class="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-[color:var(--qa-line)] bg-[var(--qa-panel)] text-[color:var(--qa-text)] shadow-2xl"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="group-modal-title"

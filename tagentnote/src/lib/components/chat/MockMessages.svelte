@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { readBrowserVoice } from '$lib/data/adminAudio';
 	import MarkdownContent from '$lib/components/chat/MarkdownContent.svelte';
 	import PaperReviewCard from '$lib/components/chat/PaperReviewCard.svelte';
 	import PaperTopicCard from '$lib/components/chat/PaperTopicCard.svelte';
+	import OrbitMark from '$lib/components/icons/OrbitMark.svelte';
 	import CitationLinks from '$lib/components/sources/CitationLinks.svelte';
 	import type { EssayTopic } from '$lib/data/essay';
 	import type { QaMessage } from '$lib/data/qaConversations';
@@ -36,6 +38,7 @@
 		continueLabel?: string;
 		onEditMessage?: (messageId: string, content: string) => void;
 		onSaveToNotebook?: (messageId: string) => void;
+		canSaveToNotebook?: boolean;
 		onQuickAction?: (prompt: string, displayContent?: string) => void;
 		onFollowUp?: (prompt: string, insertOnly?: boolean) => void;
 		onToast?: (message: string) => void;
@@ -75,6 +78,7 @@
 		continueLabel = '继续回答',
 		onEditMessage = () => {},
 		onSaveToNotebook = () => {},
+		canSaveToNotebook = true,
 		onQuickAction = () => {},
 		onFollowUp = () => {},
 		onToast = () => {},
@@ -146,7 +150,9 @@
 			return;
 		}
 		const utter = new SpeechSynthesisUtterance(text);
-		utter.lang = 'zh-CN';
+		const voice = readBrowserVoice();
+		if (voice) utter.voice = voice;
+		utter.lang = voice?.lang ?? 'zh-CN';
 		utter.onend = () => {
 			if (speakingId === messageId) speakingId = null;
 		};
@@ -281,7 +287,7 @@
 						{/if}
 						<div
 							class={`px-4 py-2 text-sm leading-6 text-gray-100 ${
-								chatBubble ? 'rounded-3xl bg-gray-800' : 'bg-transparent'
+								chatBubble ? 'qa-question rounded-3xl bg-gray-800' : 'bg-transparent'
 							}`}
 						>
 							{#if message.content.startsWith('▎')}
@@ -326,15 +332,15 @@
 				</article>
 			{:else}
 				<article
-					class="group flex w-full"
+					class="qa-answer group flex w-full"
 					data-message-id={message.id}
 					id={`message-${message.id}`}
 				>
 					<div class="mt-1 mr-3 hidden shrink-0 sm:flex">
 						<div
-							class="flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
+							class="qa-orbit-mark flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
 						>
-							T
+							<OrbitMark />
 						</div>
 					</div>
 
@@ -353,13 +359,15 @@
 									class="w-full resize-y rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm leading-6 text-gray-100 outline-none"
 									aria-label="编辑回答"></textarea>
 								<div class="mt-2 flex justify-end gap-2">
-									<button
-										type="button"
-										class="rounded-full px-3 py-1 text-xs text-gray-400 hover:bg-white/[0.06] hover:text-white"
-										onclick={cancelEdit}
-									>
-										取消
-									</button>
+									{#if canSaveToNotebook}
+										<button
+											type="button"
+											class="rounded-full px-3 py-1 text-xs text-gray-400 hover:bg-white/[0.06] hover:text-white"
+											onclick={cancelEdit}
+										>
+											取消
+										</button>
+									{/if}
 									<button
 										type="button"
 										class="rounded-full bg-white px-3 py-1 text-xs font-medium text-black hover:bg-gray-100"
@@ -714,9 +722,9 @@
 			<article class="flex w-full">
 				<div class="mt-1 mr-3 hidden shrink-0 sm:flex">
 					<div
-						class="flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
+						class="qa-orbit-mark flex size-8 items-center justify-center rounded-full bg-white text-sm font-black text-black"
 					>
-						T
+						<OrbitMark />
 					</div>
 				</div>
 

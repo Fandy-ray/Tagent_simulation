@@ -159,10 +159,8 @@
 						bind:value={selectedTheme}
 						onchange={() => themeChangeHandler(selectedTheme)}
 					>
-						<option value="system" class="bg-gray-800">⚙️ {$i18n.t('System')}</option>
-						<option value="dark" class="bg-gray-800">🌑 {$i18n.t('Dark')}</option>
-						<option value="oled-dark" class="bg-gray-800">🌃 {$i18n.t('OLED Dark')}</option>
-						<option value="light" class="bg-gray-800">☀️ {$i18n.t('Light')}</option>
+						<option value="dark" class="bg-gray-800">深空</option>
+						<option value="light" class="bg-gray-800">空间站</option>
 					</select>
 				</div>
 			</div>

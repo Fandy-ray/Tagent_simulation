@@ -1,0 +1,97 @@
+/* TAgent space theme */
+:root.dark {
+  --bg: #141218;
+  --bg-deep: #18151d;
+  --surface: #1d1b20;
+  --surface-raised: #25222a;
+  --surface-recessed: #25222a;
+  --surface-sunken: #2b2930;
+  --ink: #e6e0e9;
+  --ink-soft: #cac4d0;
+  --ink-faint: #b5aabc;
+  --ink-faintest: #a69caf;
+  --line: #49454f;
+  --line-soft: #37323e;
+  --line-strong: #e6e0e9;
+  --primary: #d0bcff;
+  --primary-hover: #e1d1ff;
+  --on-primary: #381e72;
+  --fern: #d0bcff;
+  --fern-deep: #e1d1ff;
+  --fern-tint: #342844;
+  --sage: #cab6e7;
+  --sage-deep: #eaddff;
+  --sage-tint: #342844;
+  --teal: #d0bcff;
+  --teal-deep: #e1d1ff;
+  --teal-tint: #342844;
+  --gold: #f6b45f;
+  --excerpt-wash: #251f30;
+  --best-match: #d0bcff22;
+  --best-match-ring: #d0bcff55;
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--ink);
+  --primary-foreground: var(--on-primary);
+  --secondary: var(--surface-recessed);
+  --secondary-foreground: var(--ink);
+  --muted: var(--surface-recessed);
+  --muted-foreground: var(--ink-soft);
+  --accent: #342844;
+  --accent-foreground: #eaddff;
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--primary);
+  --sidebar: var(--bg-deep);
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--on-primary);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--primary);
+  --radius: 10px;
+}
+
+:root:not(.dark) {
+  --bg: #f8f5fb;
+  --bg-deep: #f0eaf6;
+  --surface: #fffbff;
+  --surface-raised: #fffbff;
+  --surface-recessed: #f3edf8;
+  --surface-sunken: #eee5f6;
+  --ink: #261b34;
+  --ink-soft: #5f536b;
+  --ink-faint: #726780;
+  --ink-faintest: #726780;
+  --line: #d9cfe4;
+  --line-soft: #e5dcec;
+  --primary: #644798;
+  --primary-hover: #503780;
+  --on-primary: #ffffff;
+  --fern: #644798;
+  --fern-deep: #503780;
+  --fern-tint: #eee4fa;
+  --sage: #644798;
+  --sage-deep: #503780;
+  --sage-tint: #eee4fa;
+  --teal: #644798;
+  --teal-deep: #503780;
+  --teal-tint: #eee4fa;
+  --gold: #89520a;
+  --ring: var(--primary);
+  --sidebar: var(--bg-deep);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--on-primary);
+  --sidebar-accent: var(--surface-sunken);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--primary);
+}
+
+:root body {
+  font-family: Roboto, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}

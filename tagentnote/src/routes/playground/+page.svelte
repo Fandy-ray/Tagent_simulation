@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { authMode, logout } from '$lib/apis/auth';
 	import MockSidebar from '$lib/components/chat/MockSidebar.svelte';
 	import type { FolderFormValue } from '$lib/components/chat/FolderModal.svelte';
 	import { getAgentModels, streamAgentChat, type AgentModel } from '$lib/apis/agent';
@@ -313,9 +314,10 @@
 	<title>AI 对话探索区 | TAgent</title>
 </svelte:head>
 
-<div class="playground-shell">
+<div class="space-theme workspace-palette playground-shell">
 	{#if sidebarOpen}
 		<MockSidebar
+			spaceBrand
 			activeChatId={null}
 			{selectedFolderId}
 			chats={sidebarChats}
@@ -342,7 +344,10 @@
 			onPlayground={() => (activeTab = 'chat')}
 			onAdmin={() => goto(resolve('/admin/users/overview'))}
 			onShortcuts={() => goto(resolve('/qa?sidebar-action=shortcuts'))}
-			onSignOut={() => goto(resolve('/welcome'))}
+			onSignOut={async () => {
+				if ($authMode === 'enabled') await logout();
+				await goto(resolve($authMode === 'enabled' ? '/welcome' : '/space-exploration'));
+			}}
 		/>
 	{/if}
 	<div class="playground">
@@ -663,7 +668,8 @@
 		height: 100dvh;
 		max-height: 100dvh;
 		overflow: hidden;
-		color: #e5e7eb;
+		background: var(--qa-surface);
+		color: var(--qa-text);
 	}
 	.playground {
 		display: flex;
@@ -671,13 +677,13 @@
 		flex: 1;
 		flex-direction: column;
 		overflow: hidden;
-		color: #e5e7eb;
+		color: var(--qa-text);
 		background: transparent;
 	}
 	.sidebar-open {
 		flex: none;
 		margin-right: 2px;
-		color: #e5e7eb;
+		color: var(--qa-text);
 	}
 	.tabs {
 		display: flex;
@@ -691,7 +697,7 @@
 	.tabs button {
 		min-width: fit-content;
 		padding: 6px 8px;
-		color: #6b7280;
+		color: var(--qa-muted);
 		background: transparent;
 		border-radius: 7px;
 		font-size: 13px;
@@ -700,10 +706,11 @@
 			background 0.15s;
 	}
 	.tabs button:hover {
-		color: #d1d5db;
+		color: var(--qa-text);
 	}
 	.tabs button.active {
-		color: #f9fafb;
+		background: var(--qa-tint);
+		color: var(--qa-active);
 	}
 	.chat-panel,
 	.image-panel {
@@ -731,13 +738,13 @@
 		padding: 5px 6px;
 		color: inherit;
 		background: transparent;
-		border: 1px solid rgb(255 255 255 / 8%);
+		border: 1px solid var(--qa-line);
 		border-radius: 8px;
 		text-align: left;
 		font-size: 14px;
 	}
 	.system-toggle:hover {
-		background: rgb(255 255 255 / 3%);
+		background: var(--qa-raised);
 	}
 	.system-title {
 		flex: none;
@@ -748,7 +755,7 @@
 		min-width: 0;
 		flex: 1;
 		overflow: hidden;
-		color: #6b7280;
+		color: var(--qa-muted);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
@@ -758,7 +765,7 @@
 		align-items: center;
 		margin-left: auto;
 		padding: 3px;
-		color: #9ca3af;
+		color: var(--qa-muted);
 		border-radius: 6px;
 	}
 	.system-icon svg {
@@ -774,7 +781,7 @@
 		align-items: center;
 		justify-content: center;
 		padding: 6px;
-		color: #9ca3af;
+		color: var(--qa-muted);
 		background: transparent;
 		border-radius: 8px;
 		transition:
@@ -786,8 +793,8 @@
 		height: 16px;
 	}
 	.more-button:hover {
-		color: #e5e7eb;
-		background: rgb(255 255 255 / 5%);
+		color: var(--qa-text);
+		background: var(--qa-raised);
 	}
 	.more-backdrop {
 		position: fixed;
@@ -803,21 +810,21 @@
 		min-width: 140px;
 		flex-direction: column;
 		padding: 4px;
-		background: #22262b;
-		border: 1px solid rgb(255 255 255 / 10%);
+		background: var(--qa-panel);
+		border: 1px solid var(--qa-line);
 		border-radius: 12px;
 		box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
 	}
 	.more-menu button {
 		padding: 7px 10px;
-		color: #e5e7eb;
+		color: var(--qa-text);
 		background: transparent;
 		border-radius: 8px;
 		text-align: left;
 		font-size: 13px;
 	}
 	.more-menu button:hover {
-		background: rgb(255 255 255 / 6%);
+		background: var(--qa-raised);
 	}
 	.system-content {
 		flex: none;
@@ -874,15 +881,15 @@
 		height: 30px;
 		flex: none;
 		place-items: center;
-		color: #f3f4f6;
-		background: #3b82f6;
+		color: var(--qa-text);
+		background: var(--qa-tint);
 		border-radius: 50%;
 		font-size: 11px;
 		font-weight: 600;
 	}
 	.conversation-avatar.assistant-avatar {
-		color: #171717;
-		background: #f3f4f4;
+		color: var(--qa-text);
+		background: var(--qa-raised);
 	}
 	.conversation-content {
 		min-width: 0;
@@ -890,7 +897,7 @@
 	}
 	.conversation-author {
 		margin: 3px 0 5px;
-		color: #d1d5db;
+		color: var(--qa-text);
 		font-size: 13px;
 		font-weight: 600;
 	}
@@ -900,7 +907,7 @@
 		min-height: 28px;
 		padding: 0;
 		resize: vertical;
-		color: #e5e7eb;
+		color: var(--qa-text);
 		background: transparent;
 		border: 0;
 		outline: none;
@@ -909,7 +916,7 @@
 		white-space: pre-wrap;
 	}
 	.conversation-textarea:focus {
-		background: rgb(255 255 255 / 3%);
+		background: var(--qa-raised);
 	}
 	.conversation-message .delete-message {
 		position: absolute;
@@ -921,7 +928,7 @@
 		flex: none;
 		align-items: flex-start;
 		padding: 7px 2px;
-		color: #6b7280;
+		color: var(--qa-muted);
 		background: transparent;
 		opacity: 0;
 		transition:
@@ -936,7 +943,7 @@
 		opacity: 1;
 	}
 	.delete-message:hover {
-		color: #d1d5db;
+		color: var(--qa-text);
 	}
 	.input-area {
 		flex: none;
@@ -949,7 +956,7 @@
 		min-width: 0;
 		overflow: hidden;
 		padding: 10px 12px;
-		border: 1px solid rgb(255 255 255 / 12%);
+		border: 1px solid var(--qa-line);
 		border-radius: 12px;
 	}
 	.message-input {
@@ -979,7 +986,7 @@
 		height: 0;
 	}
 	textarea::placeholder {
-		color: #6b7280;
+		color: var(--qa-muted);
 	}
 	.composer-row {
 		display: flex;
@@ -1012,13 +1019,13 @@
 	.role-button,
 	.add-button,
 	.secondary-button {
-		color: #d1d5db;
-		background: #262a2f;
+		color: var(--qa-text);
+		background: var(--qa-raised);
 	}
 	.role-button:hover,
 	.add-button:hover:not(:disabled),
 	.secondary-button:hover:not(:disabled) {
-		background: #2f343a;
+		background: var(--qa-tint);
 	}
 	.add-button:disabled,
 	.secondary-button:disabled,
@@ -1033,28 +1040,28 @@
 		padding: 6px 8px;
 		color: inherit;
 		background: transparent;
-		border: 1px solid rgb(255 255 255 / 10%);
+		border: 1px solid var(--qa-line);
 		border-radius: 8px;
 		outline: none;
 		font-size: 13px;
 	}
 	.composer-right select option {
-		color: #111827;
-		background: #f9fafb;
+		color: var(--qa-text);
+		background: var(--qa-panel);
 	}
 	.run-button {
-		color: #000;
-		background: #fff;
+		color: var(--qa-on-active);
+		background: var(--qa-active);
 	}
 	.run-button:hover:not(:disabled) {
-		background: #e5e7eb;
+		filter: brightness(1.08);
 	}
 	.cancel-button {
-		color: #111827;
-		background: #d1d5db;
+		color: var(--qa-text);
+		background: var(--qa-raised);
 	}
 	.cancel-button:hover {
-		background: #e5e7eb;
+		background: var(--qa-tint);
 	}
 	.completion-panel {
 		display: flex;
@@ -1078,7 +1085,7 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 3px 2px;
-		color: #e5e7eb;
+		color: var(--qa-text);
 		background: transparent;
 		border: 0;
 		font-size: 13px;
@@ -1086,7 +1093,7 @@
 	}
 	.model-trigger svg {
 		flex: none;
-		color: #9ca3af;
+		color: var(--qa-muted);
 	}
 	.model-backdrop {
 		position: fixed;
@@ -1103,8 +1110,8 @@
 		max-height: min(370px, calc(100dvh - 100px));
 		overflow: auto;
 		padding: 8px;
-		background: #242424;
-		border: 1px solid rgb(255 255 255 / 8%);
+		background: var(--qa-panel);
+		border: 1px solid var(--qa-line);
 		border-radius: 18px;
 		box-shadow: 0 16px 36px rgb(0 0 0 / 45%);
 	}
@@ -1113,18 +1120,18 @@
 		align-items: center;
 		gap: 10px;
 		padding: 8px 9px;
-		color: #f3f4f6;
+		color: var(--qa-text);
 	}
 	.model-search input {
 		width: 100%;
-		color: #e5e7eb;
+		color: var(--qa-text);
 		background: transparent;
 		border: 0;
 		outline: none;
 		font-size: 14px;
 	}
 	.model-search input::placeholder {
-		color: #9ca3af;
+		color: var(--qa-muted);
 	}
 	.model-options {
 		padding: 0 1px 2px;
@@ -1136,7 +1143,7 @@
 		align-items: center;
 		gap: 9px;
 		padding: 7px 10px;
-		color: #e5e7eb;
+		color: var(--qa-text);
 		background: transparent;
 		border: 0;
 		border-radius: 13px;
@@ -1145,7 +1152,7 @@
 	}
 	.model-option:hover,
 	.model-option.highlighted {
-		background: #343434;
+		background: var(--qa-raised);
 	}
 	.model-logo {
 		display: grid;
@@ -1153,8 +1160,8 @@
 		height: 26px;
 		flex: none;
 		place-items: center;
-		color: #111;
-		background: #f5f5f5;
+		color: var(--qa-on-active);
+		background: var(--qa-active);
 		border-radius: 50%;
 		font-size: 9px;
 		font-weight: 800;
@@ -1162,7 +1169,7 @@
 	.model-empty {
 		margin: 0;
 		padding: 14px 10px;
-		color: #9ca3af;
+		color: var(--qa-muted);
 		font-size: 13px;
 	}
 	.completion-area {
@@ -1178,13 +1185,13 @@
 		resize: none;
 		color: inherit;
 		background: transparent;
-		border: 1px solid rgb(255 255 255 / 5%);
+		border: 1px solid var(--qa-line);
 		border-radius: 8px;
 		outline: none;
 		font-size: 14px;
 	}
 	.completion-area textarea::placeholder {
-		color: #8a8a8a;
+		color: var(--qa-muted);
 	}
 	.completion-actions {
 		display: flex;
@@ -1226,7 +1233,7 @@
 		align-items: center;
 		justify-content: center;
 		text-align: center;
-		color: #6b7280;
+		color: var(--qa-muted);
 		font-size: 14px;
 	}
 	.image-grid {
@@ -1237,7 +1244,7 @@
 	.image-grid img {
 		width: 100%;
 		aspect-ratio: 1;
-		border: 1px solid rgb(255 255 255 / 10%);
+		border: 1px solid var(--qa-line);
 		border-radius: 9px;
 		object-fit: cover;
 	}

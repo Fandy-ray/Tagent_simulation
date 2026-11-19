@@ -8,48 +8,15 @@
 		<link rel="icon" href="/favicon.svg" />
 
 		<script>
-			// On page load or when changing themes, best to add inline in `head` to avoid FOUC
 			(function () {
-				const metaThemeColorTag = document.querySelector('meta[name="theme-color"]');
-				const prefersDarkTheme = window.matchMedia('(prefers-color-scheme: dark)').matches;
-
-				// 默认暗色：和设置里的默认值（$lib/data/userSettings 的 theme: 'dark'）保持一致，
-				// 免得第一次打开时先是「系统」那套蓝灰配色、进了答疑页又跳成暗色
-				if (!localStorage.theme) {
-					localStorage.theme = 'dark';
-				}
-
-				const storedTheme = localStorage.theme;
-				const html = document.documentElement;
-
-				// 移除所有主题类
-				html.classList.remove('light', 'dark', 'oled-dark', 'system');
-
-				// 重置 CSS 变量
-				html.style.removeProperty('--color-gray-800');
-				html.style.removeProperty('--color-gray-850');
-				html.style.removeProperty('--color-gray-900');
-				html.style.removeProperty('--color-gray-950');
-
-				if (storedTheme === 'system') {
-					html.classList.add('system');
-					metaThemeColorTag.setAttribute('content', '#AEB8C4');
-				} else if (storedTheme === 'oled-dark') {
-					html.style.setProperty('--color-gray-800', '#101010');
-					html.style.setProperty('--color-gray-850', '#050505');
-					html.style.setProperty('--color-gray-900', '#000000');
-					html.style.setProperty('--color-gray-950', '#000000');
-					html.classList.add('dark');
-					metaThemeColorTag.setAttribute('content', '#000000');
-				} else if (storedTheme === 'light') {
-					html.classList.add('light');
-					metaThemeColorTag.setAttribute('content', '#ffffff');
-				} else {
-					html.classList.add('dark');
-					metaThemeColorTag.setAttribute('content', '#171717');
-				}
-				// 「系统」是一套固定的蓝灰配色（见 app.css 的 html.system），不跟随操作系统切换，
-				// 所以这里不监听 prefers-color-scheme：监听了反而会把这套配色换成暗色/浅色的类
+				let theme = 'dark';
+				try {
+					if (localStorage.getItem('theme') === 'light') theme = 'light';
+				} catch {}
+				document.documentElement.classList.add(theme);
+				document
+					.querySelector('meta[name="theme-color"]')
+					.setAttribute('content', theme === 'light' ? '#f7f5ef' : '#141218');
 			})();
 		</script>
 

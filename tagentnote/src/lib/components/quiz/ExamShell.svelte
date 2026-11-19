@@ -1,4 +1,7 @@
 <script lang="ts">
+	import '$lib/styles/space-theme.css';
+	import CosmicLayer from '$lib/components/space/CosmicLayer.svelte';
+	import OrbitMark from '$lib/components/icons/OrbitMark.svelte';
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
 
@@ -22,6 +25,8 @@
 
 	type Props = {
 		fullPage?: boolean;
+		spaceContext?: string;
+		onFullResult?: (score: number, examId: string) => void;
 		onClose?: (() => void) | null;
 		modelId?: string;
 		initialTopic?: string;
@@ -34,6 +39,8 @@
 
 	let {
 		fullPage = false,
+		spaceContext = '',
+		onFullResult,
 		onClose = null,
 		modelId = '',
 		initialTopic = '',
@@ -131,7 +138,7 @@
 	);
 
 	$effect(() => {
-		if (!initialTopic || notebooks.length === 0) {
+		if (!initialTopic) {
 			return;
 		}
 
@@ -174,8 +181,8 @@
 	const forgetSaved = () => {
 		resume = null;
 		resumeFlash = null;
-		clearFullExam();
-		clearFlashDeck();
+		clearFullExam(spaceContext);
+		if (!spaceContext) clearFlashDeck();
 	};
 
 	/**
@@ -256,8 +263,8 @@
 
 		// 整卷答到一半刷新了：接着做。这和「刷新不自动开跑」不冲突——那条是怕误刷新白花一轮
 		// 模型调用，这里只是把本地存档摆回来，一次调用都不花
-		const saved = loadFullExam();
-		const savedFlash = saved ? null : loadFlashDeck();
+		const saved = loadFullExam(spaceContext);
+		const savedFlash = saved || spaceContext ? null : loadFlashDeck();
 		if (saved) {
 			resume = saved;
 			mode = 'full';
@@ -317,10 +324,11 @@
 	});
 </script>
 
-<div bind:this={rootEl} class="flex h-full min-h-0 flex-col bg-gray-900 text-gray-100">
+<div bind:this={rootEl} class="space-theme exam-shell flex h-full min-h-0 flex-col text-gray-100">
+	{#if spaceContext}<CosmicLayer />{/if}
 	<!-- 顶栏照答疑页的样子：细边、胶囊、左边标题右边范围和模型 -->
 	<nav
-		class="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-white/[0.04] px-3 py-2"
+		class="exam-header flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-white/[0.04] px-3 py-2"
 	>
 		{#if running !== '' || onLeave}
 			<button
@@ -346,9 +354,10 @@
 		{/if}
 
 		<div class="flex min-w-0 items-center gap-2 text-sm">
+			<span class="orbit-mark"><OrbitMark /></span>
 			<span class="truncate font-medium text-white">{headerTitle}</span>
-			<span class="text-gray-600" aria-hidden="true">/</span>
-			<span class="shrink-0 text-gray-400">{headerSubtitle}</span>
+			<span class="hidden text-gray-600 sm:inline" aria-hidden="true">/</span>
+			<span class="hidden shrink-0 text-gray-400 sm:inline">{headerSubtitle}</span>
 		</div>
 
 		{#if confirmLeave}
@@ -412,7 +421,7 @@
 				</span>
 			{:else}
 				<select
-					class="hover:bg-gray-850 h-8 max-w-52 min-w-0 cursor-pointer rounded-lg bg-gray-900 px-1.5 text-sm text-gray-200 transition outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60 disabled:cursor-not-allowed disabled:opacity-60"
+					class="exam-model hover:bg-gray-850 h-8 max-w-52 min-w-0 cursor-pointer rounded-lg bg-gray-900 px-1.5 text-sm text-gray-200 transition outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60 disabled:cursor-not-allowed disabled:opacity-60"
 					bind:value={selectedModelId}
 					disabled={modelsLoading || availableModels.length === 0}
 					aria-label="测评模型"
@@ -557,11 +566,14 @@
 					onError={(value) => (errorMsg = value)}
 					onExit={() => backToPicker(true)}
 					onLeavingCost={(cost) => (leavingCost = cost)}
-					onSwitchToFlash={() => switchRunningMode('flash')}
+					onSwitchToFlash={() => (spaceContext && onLeave ? onLeave() : switchRunningMode('flash'))}
+					onResult={onFullResult}
+					storageScope={spaceContext}
 				/>
 			{:else}
 				<ExamModePicker
 					bind:mode
+					fullOnly={Boolean(spaceContext)}
 					bind:topic
 					bind:selectedKeys={selectedSourceKeys}
 					bind:collections={notebooks}
@@ -572,3 +584,58 @@
 		{/key}
 	</div>
 </div>
+
+<style>
+	.exam-shell {
+		--color-gray-900: var(--m3-background);
+		--color-gray-850: var(--m3-surface-low);
+		--color-gray-800: var(--m3-surface-high);
+		--color-gray-100: var(--m3-on-surface);
+		--color-gray-200: var(--m3-on-surface);
+		--color-gray-400: var(--m3-on-surface-variant);
+		--color-gray-500: #b5aabc;
+		--color-gray-600: #a69caf;
+		background: var(--m3-background);
+		color: var(--m3-on-surface);
+		color-scheme: inherit;
+		font-family: var(--space-font);
+	}
+	.exam-header {
+		min-height: 60px;
+		padding-inline: clamp(10px, 3vw, 30px);
+		background: var(--m3-surface-low);
+		border-color: var(--m3-outline-variant);
+	}
+	.orbit-mark {
+		display: grid;
+		width: 30px;
+		height: 30px;
+		flex: none;
+		place-items: center;
+		border: 1px solid color-mix(in srgb, var(--space-amber), transparent 48%);
+		border-radius: 50%;
+		color: var(--space-amber);
+		font-size: 19px;
+	}
+	.exam-model {
+		max-width: min(40vw, 208px);
+		min-height: 36px;
+		padding-inline: 10px;
+		border: 1px solid var(--m3-outline-variant);
+		background: var(--m3-background);
+		color: var(--m3-on-surface);
+	}
+	.exam-shell :global(:is(button, a, select):focus-visible) {
+		outline: 2px solid var(--m3-primary);
+		outline-offset: 2px;
+	}
+	:global(.space-exam) .exam-shell {
+		isolation: isolate;
+		background:
+			linear-gradient(#14121860, #14121880),
+			url('$lib/assets/starfield.png') center top / cover;
+	}
+	:global(html.light .space-exam) .exam-shell {
+		background: var(--m3-background);
+	}
+</style>

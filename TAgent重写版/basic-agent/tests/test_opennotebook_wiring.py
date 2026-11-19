@@ -1,12 +1,14 @@
 import json
 import pytest
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.config import AgentConfig, normalize_notebook_url
 from app.container import Services, build_knowledge_base
 from app.rag.composite_kb import CompositeKnowledgeBase
-from app.rag.opennotebook_kb import OpenNotebookKnowledgeBase
+from app.rag.opennotebook_kb import OpenNotebookError, OpenNotebookKnowledgeBase
+from app.infra.notebook_identity import NotebookIdentity, bind_notebook_identity, reset_notebook_identity
 
 
 class FakeResponse:
@@ -102,6 +104,55 @@ def test_opennotebook_retrieve_and_chunks():
     chunks = kb.chunks()
     assert [doc.metadata["h1"] for doc in chunks] == ["笔记A", "教材"]
     assert any("到达率" in text for text, _ in kb.sample_exam_pieces("排队"))
+
+
+def test_account_mode_forwards_only_current_verified_session_and_does_not_cache():
+    calls = []
+
+    class RecordingClient:
+        def request(self, method, path, **kwargs):
+            calls.append((method, path, kwargs.get("headers", {})))
+            return FakeResponse({"ok": True})
+
+    kb = OpenNotebookKnowledgeBase(
+        base_url="http://127.0.0.1:5055", token="legacy-shared-password",
+        account_mode=True, client=RecordingClient(),
+    )
+    with pytest.raises(OpenNotebookError, match="已验证"):
+        kb._request("GET", "/api/notebooks")
+
+    for name in ("account-a", "account-b"):
+        token = bind_notebook_identity(NotebookIdentity(
+            cookie=name, account_id=name, csrf=f"csrf-{name}",
+            public_origin="https://tagent.example.org",
+        ))
+        try:
+            kb._request("POST", "/api/search", json={"query": "test"})
+            kb._request("GET", "/api/notebooks")
+            kb._list_documents = lambda: [name]
+            assert kb.chunks() == [name]
+        finally:
+            reset_notebook_identity(token)
+    assert kb._chunks is None
+    assert calls[0][2] == {
+        "Cookie": "__Host-tagent_session=account-a",
+        "X-Tagent-Account-Id": "account-a",
+        "Origin": "https://tagent.example.org",
+        "X-Tagent-CSRF": "csrf-account-a",
+    }
+    assert calls[1][2] == {
+        "Cookie": "__Host-tagent_session=account-a",
+        "X-Tagent-Account-Id": "account-a",
+    }
+    assert calls[2][2]["Cookie"] == "__Host-tagent_session=account-b"
+    assert "legacy-shared-password" not in str(calls)
+
+
+def test_account_mode_refuses_to_forward_session_cookie_off_host():
+    with pytest.raises(ValueError, match="loopback HTTP"):
+        OpenNotebookKnowledgeBase(
+            base_url="https://notebook.example.org:5055", account_mode=True
+        )
 
 
 def test_opennotebook_falls_back_to_text_search():
@@ -290,6 +341,79 @@ def test_composite_skips_local_when_notebook_selected():
     context, _documents = composite.retrieve("延迟", notebook_ids=["notebook:net"])
     assert context.startswith("notebook:")
     assert "本地教材" not in context
+
+
+def test_student_notebook_scope_is_explicit_and_requires_account_mode_source():
+    from flask import Flask, g
+
+    from app.api.validators import optional_notebook_ids
+    from app.errors.api_errors import AgentAPIError
+
+    app = Flask(__name__)
+    app.config["AUTH_ENABLED"] = True
+    with app.test_request_context():
+        g.account = {"role": "student"}
+        assert optional_notebook_ids({}) == []
+        with pytest.raises(AgentAPIError) as denied:
+            optional_notebook_ids({"notebook_ids": ["notebook:mine"]})
+        assert denied.value.code == "notebook_source_unavailable"
+        app.extensions["settings"] = SimpleNamespace(
+            knowledge_source="composite", notebook_url="http://127.0.0.1:5055"
+        )
+        assert optional_notebook_ids({"notebook_ids": ["notebook:mine"]}) == ["notebook:mine"]
+        with pytest.raises(AgentAPIError) as invalid:
+            optional_notebook_ids({"notebook_ids": [f"notebook:{index}" for index in range(21)]})
+        assert invalid.value.code == "validation_error"
+
+    client = FakeClient({})
+    notebook = OpenNotebookKnowledgeBase(base_url="http://127.0.0.1:5055", client=client)
+    assert notebook.retrieve("私人问题", notebook_ids=[]) == ("", [])
+    assert notebook.search("私人问题", notebook_ids=[]) == []
+    assert notebook.chunks(notebook_ids=[]) == []
+    assert notebook.sample_exam_pieces("私人问题", notebook_ids=[]) == []
+    assert client.calls == []
+
+    composite = CompositeKnowledgeBase(
+        FakeSource("local", "公共教材"), FakeSource("notebook", "私人笔记")
+    )
+    context, _ = composite.retrieve("延迟", notebook_ids=[])
+    assert "公共教材" in context
+    assert "私人笔记" not in context
+
+
+def test_account_mode_rejects_foreign_notebook_before_search_or_document_reads():
+    client = FakeClient({
+        ("GET", "/api/notebooks"): FakeResponse([
+            {"id": "notebook:mine", "name": "我的笔记本"}
+        ]),
+        ("GET", "/api/notes?notebook_id=notebook:mine"): FakeResponse([
+            {"id": "note:mine", "title": "个人笔记", "content": "本人内容"}
+        ]),
+        ("GET", "/api/notes/note:mine"): FakeResponse(
+            {"id": "note:mine", "title": "个人笔记", "content": "本人内容"}
+        ),
+        ("GET", "/api/sources?notebook_id=notebook:mine&limit=100"): FakeResponse([]),
+        ("POST", "/api/search"): FakeResponse({"results": []}),
+    })
+    notebook = OpenNotebookKnowledgeBase(
+        base_url="http://127.0.0.1:5055", client=client, account_mode=True
+    )
+    token = bind_notebook_identity(NotebookIdentity(
+        cookie="student-session", account_id="student", csrf="csrf",
+        public_origin="https://tagent.example.org",
+    ))
+    try:
+        context, documents = notebook.retrieve("个人笔记", notebook_ids=["notebook:mine"])
+        assert "本人内容" in context and len(documents) == 1
+        calls_before = len(client.calls)
+        with pytest.raises(OpenNotebookError, match="不属于当前账号"):
+            notebook.retrieve("个人笔记", notebook_ids=["notebook:foreign"])
+        assert client.calls[calls_before:] == [("GET", "/api/notebooks", None)]
+        with pytest.raises(OpenNotebookError, match="不属于当前账号"):
+            notebook.chunks(notebook_ids=["notebook:foreign"])
+        assert all("notebook:foreign" not in path for _, path, _ in client.calls)
+    finally:
+        reset_notebook_identity(token)
 
 
 def test_config_stays_local_without_notebook_url():

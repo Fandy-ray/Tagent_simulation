@@ -6,9 +6,9 @@ import itertools
 import json
 import logging
 
-from flask import Blueprint, Response, stream_with_context
+from flask import Blueprint, Response, current_app, stream_with_context
 
-from app.api.deps import get_essay_service, get_exam_service, select_provider
+from app.api.deps import get_essay_service, get_exam_service, get_learning_store, select_provider
 from app.api.learner import (
     Learner,
     current_learner,
@@ -16,7 +16,7 @@ from app.api.learner import (
     note_exam_generated,
     note_exam_reviewed,
 )
-from app.api.response import envelope
+from app.api.response import envelope, public_value
 from app.api.validators import (
     annotate_payload,
     annotation_grade_context,
@@ -27,7 +27,7 @@ from app.api.validators import (
     optional_notebook_ids,
 )
 from app.config import IDEMPOTENT_REPLAY_SECONDS
-from app.errors.api_errors import ModelNotFoundError
+from app.errors.api_errors import AgentAPIError, ModelNotFoundError
 from app.errors.exam_errors import ExamGoneError, ExamServiceError
 from app.util.singleflight import SingleFlight, fingerprint
 
@@ -48,6 +48,16 @@ log = logging.getLogger(__name__)
 _flights = SingleFlight()
 
 
+def _require_exam_owner(exam_id: str, learner: Learner) -> None:
+    if not current_app.config.get("AUTH_ENABLED"):
+        return
+    store = get_learning_store()
+    if store is None:
+        raise AgentAPIError("学习记录库暂不可用。", 503, "learning_store_unavailable")
+    if not store.exam_belongs_to(exam_id, learner.id, learner.course_id):
+        raise AgentAPIError("这份试卷不属于当前账号或课程。", 403, "exam_forbidden")
+
+
 def _once(route: str, provider, fields: dict, run, *, replay: bool, learner: Learner):
     key = fingerprint(route, provider.served_model_id, learner.id, fields)
     return _flights.do(key, run, replay_seconds=IDEMPOTENT_REPLAY_SECONDS if replay else 0.0)
@@ -62,7 +72,25 @@ def generate_exam():
 
     def run():
         exam = get_exam_service().generate_exam(topic, provider, notebook_ids=notebook_ids)
-        note_exam_generated(learner, provider, topic=topic, exam=exam)
+        if current_app.config.get("AUTH_ENABLED"):
+            store = get_learning_store()
+            if store is None:
+                raise AgentAPIError("学习记录库暂不可用，无法保存试卷归属。", 503, "learning_store_unavailable")
+            paper = public_value(exam)
+            try:
+                store.touch_student(learner.id, learner.name)
+                store.record_exam_generated(
+                    student_id=learner.id, course_id=learner.course_id,
+                    exam_id=paper["exam_id"], model=provider.served_model_id,
+                    title=paper.get("title", ""), topic=topic,
+                    total_points=paper.get("total_points"), paper=paper,
+                )
+            except Exception as exc:
+                log.exception("账号试卷归属保存失败")
+                raise AgentAPIError("试卷归属暂时保存失败，请稍后重试。", 503,
+                                    "exam_owner_store_unavailable") from exc
+        else:
+            note_exam_generated(learner, provider, topic=topic, exam=exam)
         return exam
 
     result = _once(
@@ -150,6 +178,7 @@ def review_exam():
         raise ExamGoneError("出卷模型已不可用，请重新生成试卷") from exc
     exam_id, answers = exam_review_payload(payload)
     learner = current_learner()
+    _require_exam_owner(exam_id, learner)
 
     def run():
         review = get_exam_service().review_exam(exam_id, answers, provider)
@@ -180,6 +209,7 @@ def annotate_essay_answer():
     exam_id, question_id, answer = annotate_payload(payload)
     grading = annotation_grade_context(payload, question_id, answer)
     learner = current_learner()
+    _require_exam_owner(exam_id, learner)
 
     def run():
         question, rubric = get_exam_service().essay_question_for_annotation(

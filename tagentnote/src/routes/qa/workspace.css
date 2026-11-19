@@ -1,0 +1,384 @@
+.paper-workbench .paper-task-pane {
+	container-type: inline-size;
+	max-height: 46dvh;
+	border-bottom: 1px solid var(--qa-line);
+	background: var(--qa-panel);
+}
+
+.paper-divider {
+	display: none;
+}
+
+@media (min-width: 1100px) {
+	.paper-workbench {
+		position: relative;
+		flex-direction: row;
+	}
+
+	.paper-workbench .paper-task-pane {
+		width: var(--paper-split);
+		max-height: none;
+		padding: 0.75rem;
+		border-bottom: 0;
+		scrollbar-width: thin;
+	}
+
+	.paper-divider {
+		position: absolute;
+		inset-block: 0;
+		left: var(--paper-split);
+		z-index: 15;
+		display: block;
+		width: 10px;
+		transform: translateX(-50%);
+		cursor: col-resize;
+		touch-action: none;
+	}
+
+	.paper-divider::before {
+		position: absolute;
+		inset-block: 0;
+		left: 50%;
+		width: 1px;
+		background: var(--qa-line);
+		content: '';
+	}
+
+	.paper-divider:is(:hover, :active, :focus-visible)::before {
+		background: var(--qa-active);
+	}
+}
+
+.qa-workspace .chat-sidebar,
+.qa-workspace .chat-navbar {
+	background: var(--qa-panel);
+	border-color: var(--qa-line);
+}
+
+.qa-settings,
+.qa-archived,
+.qa-shortcuts {
+	display: contents;
+}
+
+.qa-settings > div > [role='dialog'],
+.qa-archived .modal-content,
+.qa-shortcuts [role='dialog'],
+.qa-workspace #controls-container {
+	background: var(--qa-panel) !important;
+	border-color: var(--qa-line);
+	color: var(--qa-text) !important;
+}
+
+.qa-workspace #controls-container .bg-gray-850 {
+	background: var(--qa-panel) !important;
+}
+
+.qa-workspace #controls-container [aria-pressed='true'] {
+	background: var(--qa-tint) !important;
+	color: var(--qa-active) !important;
+}
+
+.qa-shortcuts :is(kbd, .border-gray-800) {
+	border-color: var(--qa-line);
+}
+
+.qa-shortcuts kbd {
+	background: var(--qa-raised);
+	color: var(--qa-text);
+}
+
+.qa-shortcuts button:is(:hover, :focus-visible),
+.qa-workspace #controls-container button[aria-pressed='false']:is(:hover, :focus-visible),
+.qa-workspace #controls-container button[aria-label='关闭']:is(:hover, :focus-visible) {
+	background: var(--qa-raised) !important;
+	color: var(--qa-text) !important;
+}
+
+.qa-settings #settings-search {
+	background: var(--qa-raised);
+	color: var(--qa-text);
+}
+
+.qa-settings [role='tab'][aria-selected='true'] {
+	background: var(--qa-tint) !important;
+	color: var(--qa-active) !important;
+}
+
+.qa-settings [role='tab'][aria-selected='false']:is(:hover, :focus-visible) {
+	background: var(--qa-raised) !important;
+	color: var(--qa-text) !important;
+}
+
+.qa-workspace .chat-navbar {
+	min-height: 58px;
+}
+
+.qa-workspace .chat-navbar {
+	justify-content: center;
+}
+
+.qa-workspace .chat-navbar button[aria-pressed='true'] {
+	background: var(--qa-tint);
+	color: var(--qa-active);
+}
+
+.qa-workspace .chat-collection,
+.qa-workspace .chat-navbar [role='group'] {
+	background: var(--qa-raised);
+	border-color: var(--qa-line);
+}
+
+.qa-workspace #model-selector-0-button {
+	max-width: 10rem;
+}
+
+.qa-workspace .chat-collection {
+	min-height: 29px;
+}
+
+.qa-workspace .chat-navbar .bg-amber-500,
+.qa-workspace .user-menu-popup .bg-amber-500 {
+	background: var(--qa-tint);
+	color: var(--qa-active);
+}
+
+.qa-workspace .qa-intro {
+	margin-bottom: 24px;
+	color: var(--qa-text);
+}
+
+.qa-workspace .qa-intro .qa-orbit-mark {
+	width: 44px;
+	height: 44px;
+	font-size: 27px;
+}
+
+.qa-intro h1 {
+	margin: 14px 0 6px;
+	font-size: clamp(26px, 3.4vw, 36px);
+	font-weight: 600;
+	line-height: 1.25;
+}
+
+.qa-intro p {
+	color: var(--qa-muted);
+	font-size: 14px;
+	line-height: 1.65;
+}
+
+.qa-workspace #message-input-container {
+	border-radius: 16px;
+	border-color: var(--qa-line);
+	background: var(--qa-panel);
+	padding: 4px 5px;
+	backdrop-filter: none;
+}
+
+.qa-workspace #message-input-container:hover {
+	border-color: color-mix(in srgb, var(--qa-line), var(--qa-active) 35%);
+}
+
+.qa-workspace #message-input-container:focus-within {
+	border-color: var(--qa-active);
+}
+
+.qa-workspace #chat-input {
+	color: var(--qa-text);
+	caret-color: var(--qa-active);
+}
+
+.qa-workspace #chat-input::placeholder {
+	color: var(--qa-muted);
+}
+
+.qa-workspace #message-input-container :is(#send-message-button, [aria-label='停止生成']) {
+	background: var(--qa-active);
+	color: var(--qa-on-active);
+}
+
+.qa-workspace #message-input-container [aria-label='语音模式'] {
+	background: var(--qa-tint);
+	color: var(--qa-active);
+}
+
+.qa-workspace #message-input-container [aria-label='停止生成'] span {
+	background: currentColor;
+}
+
+.qa-workspace
+	#message-input-container
+	:is(#send-message-button, [aria-label='停止生成']):hover:not(:disabled) {
+	filter: brightness(1.12);
+}
+
+.qa-prompts {
+	margin-top: 24px;
+}
+
+.qa-prompts h2 {
+	margin-bottom: 10px;
+	color: var(--qa-muted);
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.qa-prompt-list {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 10px;
+}
+
+.qa-prompt {
+	display: flex;
+	min-width: 0;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid var(--qa-line);
+	border-radius: 12px;
+	background: var(--qa-panel);
+	color: var(--qa-text);
+	text-align: start;
+	transition:
+		background-color 180ms ease,
+		border-color 180ms ease;
+}
+
+.qa-prompt:hover {
+	background: var(--qa-raised);
+	border-color: var(--qa-active);
+}
+
+.qa-prompt strong {
+	display: block;
+	font-size: 13px;
+	font-weight: 600;
+}
+.qa-prompt small {
+	display: block;
+	margin-top: 3px;
+	color: var(--qa-muted);
+	font-size: 12px;
+}
+.qa-prompt svg {
+	width: 15px;
+	height: 15px;
+	flex: none;
+	color: var(--qa-active);
+}
+
+.qa-workspace .qa-question {
+	border: 1px solid var(--qa-line);
+	border-radius: 14px 14px 4px 14px;
+	background: var(--qa-tint);
+	overflow-wrap: anywhere;
+}
+
+.qa-workspace .qa-answer {
+	border-top: 1px solid var(--qa-line);
+	padding-top: 16px;
+}
+
+.qa-workspace .qa-citations {
+	padding: 10px 12px;
+	border: 1px solid var(--qa-line);
+	border-radius: 12px;
+	background: var(--qa-panel);
+}
+
+.qa-workspace .qa-citations a {
+	color: var(--qa-active);
+}
+
+.qa-workspace :is(a, button, select):focus-visible {
+	outline: 2px solid var(--qa-active);
+	outline-offset: 2px;
+}
+
+@media (max-width: 639px) {
+	.qa-workspace .qa-intro {
+		margin-bottom: 16px;
+	}
+	.qa-prompt-list {
+		grid-template-columns: 1fr;
+	}
+	.qa-prompt strong,
+	.qa-prompt small {
+		display: inline;
+	}
+	.qa-prompt small {
+		margin-inline-start: 6px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.qa-prompt {
+		transition: none;
+	}
+}
+
+.qa-workspace.space-context {
+	isolation: isolate;
+	background:
+		linear-gradient(#14121860, #14121880),
+		url('$lib/assets/starfield.png') center top / cover;
+}
+.qa-workspace.space-context > section {
+	background: transparent;
+}
+
+html.light .qa-workspace {
+	--qa-subtle: var(--qa-muted);
+	--color-gray-500: var(--qa-muted);
+	background: var(--qa-surface) !important;
+	color: var(--qa-text) !important;
+}
+
+html.light .qa-workspace > section {
+	background: transparent !important;
+}
+
+html.light .qa-workspace :is(.chat-sidebar, .chat-navbar) {
+	background: var(--qa-panel) !important;
+}
+
+html.light .qa-workspace .bg-gray-850 {
+	background-color: var(--qa-panel) !important;
+}
+
+html.light .qa-workspace .bg-gray-800 {
+	background-color: var(--qa-raised) !important;
+}
+
+html.light .qa-workspace .hover\:bg-gray-800:hover {
+	background-color: var(--qa-raised) !important;
+}
+
+html.light
+	.qa-workspace
+	#message-input-container
+	:is(#send-message-button, [aria-label='停止生成']) {
+	color: var(--qa-on-active) !important;
+}
+
+.space-context-bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 16px;
+	padding: 8px 14px;
+	background: var(--m3-surface-low);
+	border-bottom: 1px solid var(--m3-outline-variant);
+	font-size: 13px;
+}
+.space-context-bar a {
+	color: var(--m3-primary);
+}
+.space-source-notice {
+	color: var(--m3-on-surface-variant);
+}
+
+.qa-archived .hover\:bg-gray-850:hover {
+	background: var(--qa-raised);
+}
