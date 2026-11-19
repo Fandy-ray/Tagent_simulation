@@ -144,7 +144,9 @@
 		{/if}
 		<section class="mt-8 rounded-xl border border-white/15 p-6">
 			<h2 class="text-lg font-medium">个人数据</h2>
-			<p class="mt-2 text-sm text-slate-300">导出包包含学习内容、笔记和资料。模型密钥保留为加密数据，换服务器时需要重新配置。</p>
+			<p class="mt-2 text-sm text-slate-300">
+				导出包包含学习内容、笔记和资料。模型密钥保留为加密数据，换服务器时需要重新配置。
+			</p>
 			<button
 				type="button"
 				disabled={busy}
