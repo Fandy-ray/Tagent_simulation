@@ -165,11 +165,13 @@
 				<p class="mt-3 text-sm text-gray-300">
 					使用当前账号进入完整笔记工作空间。已有的共享笔记仅管理员可见。
 				</p>
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- accountNotebookUrl is a validated external HTTPS origin. -->
 				<a
 					href={accountNotebookUrl}
 					class="mt-6 inline-block rounded-lg bg-blue-500 px-4 py-2 font-medium text-white"
 					>打开 OpenNotebook</a
 				>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
 			{:else}
 				<p class="mt-3 text-sm text-amber-200">
 					笔记本地址必须是与本站同一主机的 HTTPS 地址，请联系管理员配置。
