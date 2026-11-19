@@ -13,7 +13,8 @@
 	const context = $derived.by(() => {
 		const params = statePage.url.searchParams;
 		if (statePage.route.id === '/space-assistant') return learningContext(params);
-		if (statePage.route.id === '/qa' || statePage.route.id === '/exam') return learningContext(params);
+		if (statePage.route.id === '/qa' || statePage.route.id === '/exam')
+			return learningContext(params);
 		if (
 			statePage.route.id !== '/space-exploration/learn/[stage]' &&
 			statePage.route.id !== '/space-exploration/learn/[stage]/resources'

@@ -162,78 +162,88 @@
 		<div class="max-w-md rounded-2xl border border-white/15 bg-gray-900 p-8 text-center">
 			<h1 class="text-2xl font-semibold">知识笔记本</h1>
 			{#if accountNotebookUrl}
-				<p class="mt-3 text-sm text-gray-300">使用当前账号进入完整笔记工作空间。已有的共享笔记仅管理员可见。</p>
-				<a href={accountNotebookUrl} class="mt-6 inline-block rounded-lg bg-blue-500 px-4 py-2 font-medium text-white">打开 OpenNotebook</a>
+				<p class="mt-3 text-sm text-gray-300">
+					使用当前账号进入完整笔记工作空间。已有的共享笔记仅管理员可见。
+				</p>
+				<a
+					href={accountNotebookUrl}
+					class="mt-6 inline-block rounded-lg bg-blue-500 px-4 py-2 font-medium text-white"
+					>打开 OpenNotebook</a
+				>
 			{:else}
-				<p class="mt-3 text-sm text-amber-200">笔记本地址必须是与本站同一主机的 HTTPS 地址，请联系管理员配置。</p>
+				<p class="mt-3 text-sm text-amber-200">
+					笔记本地址必须是与本站同一主机的 HTTPS 地址，请联系管理员配置。
+				</p>
 			{/if}
-			<a href={resolve(returnPath)} class="mt-5 block text-sm text-gray-300 underline">{returnLabel}</a>
+			<a href={resolve(returnPath)} class="mt-5 block text-sm text-gray-300 underline"
+				>{returnLabel}</a
+			>
 		</div>
 	</main>
 {:else}
-<div class="space-theme notebook-page">
-	<header class="topbar">
-		<a class="brand" href={resolve('/space-exploration')}>
-			<span class="brand-mark"><OrbitMark /></span>
-			<span>知识笔记本</span>
-		</a>
+	<div class="space-theme notebook-page">
+		<header class="topbar">
+			<a class="brand" href={resolve('/space-exploration')}>
+				<span class="brand-mark"><OrbitMark /></span>
+				<span>知识笔记本</span>
+			</a>
 
-		<nav aria-label="笔记本工作区">
-			<a class="button" href={resolve(returnPath)}>{returnLabel}</a>
-			{#if sourcesUrl}
-				<button
-					type="button"
-					class="button sources"
-					onclick={openSources}
-					disabled={status !== 'ready'}>来源</button
+			<nav aria-label="笔记本工作区">
+				<a class="button" href={resolve(returnPath)}>{returnLabel}</a>
+				{#if sourcesUrl}
+					<button
+						type="button"
+						class="button sources"
+						onclick={openSources}
+						disabled={status !== 'ready'}>来源</button
+					>
+				{/if}
+				<button type="button" class="button" onclick={refresh} disabled={status === 'checking'}
+					>刷新</button
 				>
-			{/if}
-			<button type="button" class="button" onclick={refresh} disabled={status === 'checking'}
-				>刷新</button
-			>
-			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- configured OpenNotebook URL -->
-			<a class="button external" href={openNotebookUrl} target="_blank" rel="noreferrer"
-				>新页面打开</a
-			>
-		</nav>
-	</header>
+				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- configured OpenNotebook URL -->
+				<a class="button external" href={openNotebookUrl} target="_blank" rel="noreferrer"
+					>新页面打开</a
+				>
+			</nav>
+		</header>
 
-	{#if sourceCollection}
-		<p class="source-context">
-			笔记本 <strong>{sourceCollection.name}</strong>
-			{#if sourceFileTitle}
-				· {sourceFileTitle}{/if}
-		</p>
-	{/if}
-
-	<main>
-		{#key iframeKey}
-			<iframe
-				title="OpenNotebook 知识工作区"
-				src={frameUrl}
-				allow="clipboard-read; clipboard-write"
-				class:hidden={status !== 'ready'}
-			></iframe>
-		{/key}
-
-		{#if status === 'checking'}
-			<div class="state" role="status">正在连接 OpenNotebook…</div>
-		{:else if status === 'offline'}
-			<div class="state">
-				<div>
-					<h1>{serviceUp ? '暂时无法打开笔记本工作区' : '无法连接 OpenNotebook'}</h1>
-					<p>
-						{serviceUp
-							? '笔记本接口仍可用，请检查工作区地址后重试。'
-							: '请启动 OpenNotebook 服务，然后重试。'}
-					</p>
-					<code>{openNotebookUrl}</code>
-					<button type="button" class="button sources" onclick={refresh}>重新连接</button>
-				</div>
-			</div>
+		{#if sourceCollection}
+			<p class="source-context">
+				笔记本 <strong>{sourceCollection.name}</strong>
+				{#if sourceFileTitle}
+					· {sourceFileTitle}{/if}
+			</p>
 		{/if}
-	</main>
-</div>
+
+		<main>
+			{#key iframeKey}
+				<iframe
+					title="OpenNotebook 知识工作区"
+					src={frameUrl}
+					allow="clipboard-read; clipboard-write"
+					class:hidden={status !== 'ready'}
+				></iframe>
+			{/key}
+
+			{#if status === 'checking'}
+				<div class="state" role="status">正在连接 OpenNotebook…</div>
+			{:else if status === 'offline'}
+				<div class="state">
+					<div>
+						<h1>{serviceUp ? '暂时无法打开笔记本工作区' : '无法连接 OpenNotebook'}</h1>
+						<p>
+							{serviceUp
+								? '笔记本接口仍可用，请检查工作区地址后重试。'
+								: '请启动 OpenNotebook 服务，然后重试。'}
+						</p>
+						<code>{openNotebookUrl}</code>
+						<button type="button" class="button sources" onclick={refresh}>重新连接</button>
+					</div>
+				</div>
+			{/if}
+		</main>
+	</div>
 {/if}
 
 <style>
