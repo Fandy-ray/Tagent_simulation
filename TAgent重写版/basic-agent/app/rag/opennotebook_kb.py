@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import random
 import threading
 from typing import Any
@@ -209,7 +210,7 @@ class OpenNotebookKnowledgeBase:
             if not identity.cookie:
                 raise OpenNotebookError("账号模式检索缺少会话。")
             headers = dict(kwargs.pop("headers", {}))
-            headers["Cookie"] = f"__Host-tagent_session={identity.cookie}"
+            headers["Cookie"] = f"{os.getenv('TAGENT_SESSION_COOKIE_NAME', '__Host-tagent_session')}={identity.cookie}"
             headers["X-Tagent-Account-Id"] = identity.account_id
             if method.upper() not in {"GET", "HEAD", "OPTIONS"}:
                 headers["Origin"] = identity.public_origin

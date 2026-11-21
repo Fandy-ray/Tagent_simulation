@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from urllib.parse import urlsplit
 
 from flask import Flask, g, request
@@ -31,7 +32,7 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
     if app.config["AUTH_ENABLED"]:
         # 个人文档允许 5 MiB 明文；加密和 JSON 请求包装需要额外余量。
         app.config["MAX_CONTENT_LENGTH"] = max(app.config["MAX_CONTENT_LENGTH"], 8 * 1024 * 1024)
-    app.config["AUTH_COOKIE_NAME"] = (
+    app.config["AUTH_COOKIE_NAME"] = os.getenv("TAGENT_SESSION_COOKIE_NAME") or (
         "__Host-tagent_session" if app.config["AUTH_COOKIE_SECURE"] else "tagent_session_dev"
     )
     app.json.ensure_ascii = False
@@ -47,7 +48,10 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
         if not app.config.get("TESTING") and settings.host not in {"127.0.0.1", "::1"}:
             raise ValueError("TAgent login requires a loopback backend bind address")
         origin = app.config["AUTH_PUBLIC_ORIGIN"]
-        if not origin or (not app.config.get("TESTING") and not origin.startswith("https://")):
+        # 部署补丁 0002：默认仍强制 HTTPS；仅当显式设置 TAGENT_ALLOW_INSECURE_HTTP=1 时放行 http。
+        allow_insecure = os.getenv("TAGENT_ALLOW_INSECURE_HTTP") == "1"
+        allowed_schemes = ("https://", "http://") if allow_insecure else ("https://",)
+        if not origin or (not app.config.get("TESTING") and not origin.startswith(allowed_schemes)):
             raise ValueError("TAgent login requires a configured HTTPS public origin")
         notebook_origin = app.config["AUTH_NOTEBOOK_ORIGIN"]
         if not notebook_origin and not app.config.get("TESTING"):
@@ -56,7 +60,7 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
             notebook_url = urlsplit(notebook_origin)
             main_url = urlsplit(origin)
             if (
-                notebook_url.scheme != "https"
+                notebook_url.scheme not in (("https", "http") if allow_insecure else ("https",))
                 or not notebook_url.hostname
                 or notebook_url.hostname != main_url.hostname
                 or notebook_url.username is not None
@@ -68,7 +72,7 @@ def create_app(config: dict | None = None, *, registry=None, services=None) -> F
                 raise ValueError(
                     "OpenNotebook origin must be HTTPS on the TAgent hostname"
                 )
-        if not app.config["AUTH_COOKIE_SECURE"] and not app.config.get("TESTING"):
+        if not app.config["AUTH_COOKIE_SECURE"] and not app.config.get("TESTING") and not allow_insecure:
             raise ValueError("TAgent login requires Secure session cookies")
         mail_mode = auth_settings.mail_mode
         if app.config.get("TESTING") and mail_mode == "memory":
